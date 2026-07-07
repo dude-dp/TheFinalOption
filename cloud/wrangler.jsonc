@@ -1,0 +1,60 @@
+{
+  "name": "thefinaloption",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-07",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  // KV Namespace for ultra-low-latency state (auth tokens, bot status, pending orders)
+  "kv_namespaces": [
+    {
+      "binding": "TRADING_KV",
+      "id": "YOUR_KV_NAMESPACE_ID_HERE"
+    }
+  ],
+  // D1 SQLite for persistent trade logs, telemetry, and configuration
+  "d1_databases": [
+    {
+      "binding": "TRADING_DB",
+      "database_name": "thefinaloption-db",
+      "database_id": "YOUR_D1_DATABASE_ID_HERE"
+    }
+  ],
+  // Queues for async order status tracking
+  "queues": {
+    "producers": [
+      {
+        "binding": "ORDER_QUEUE",
+        "queue": "thefinaloption-orders"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "thefinaloption-orders",
+        "max_batch_size": 1,
+        "max_retries": 2,
+        "dead_letter_queue": "thefinaloption-orders-dlq"
+      }
+    ]
+  },
+  // Cron: Every minute during IST market hours (9:00 AM - 4:00 PM IST = 3:30 - 10:30 UTC)
+  // Using 3-10 UTC window to cover 8:30 AM - 3:30 PM IST with buffer
+  "triggers": {
+    "crons": [
+      "*/1 3-10 * * 1-5"
+    ]
+  },
+  // Static assets for CSS and client-side JS
+  "assets": {
+    "directory": "./src/static"
+  },
+  // Environment variables (set via `wrangler secret put`)
+  "vars": {
+    "UPSTOX_CLIENT_ID": "",
+    "UPSTOX_REDIRECT_URI": "",
+    "ENVIRONMENT": "production"
+  }
+  // Secrets (set via CLI, not in config):
+  // - UPSTOX_CLIENT_SECRET
+  // - POLL_SECRET (shared secret for local daemon authentication)
+}

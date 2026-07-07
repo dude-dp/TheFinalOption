@@ -1,0 +1,16 @@
+{
+  "name": "the-final-option",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hybrid NIFTY Options Trading Bot — Cloud Brain (Cloudflare) + Local Muscle (Node.js Daemon)",
+  "workspaces": [
+    "cloud",
+    "local-daemon"
+  ],
+  "scripts": {
+    "dev:cloud": "cd cloud && npx wrangler dev",
+    "deploy:cloud": "cd cloud && npx wrangler deploy",
+    "dev:daemon": "cd local-daemon && npx tsx src/index.ts",
+    "daemon:pm2": "cd local-daemon && pm2 start ecosystem.config.js"
+  }
+}
