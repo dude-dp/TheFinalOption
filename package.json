@@ -11,6 +11,11 @@
     "dev:cloud": "cd cloud && npx wrangler dev",
     "deploy:cloud": "cd cloud && npx wrangler deploy",
     "dev:daemon": "cd local-daemon && npx tsx src/index.ts",
-    "daemon:pm2": "cd local-daemon && pm2 start ecosystem.config.js"
+    "daemon:pm2": "cd local-daemon && npx pm2 start ecosystem.config.cjs",
+    "db:init": "cd cloud && npx wrangler d1 execute thefinaloption-db --remote --file=./schema.sql",
+    "db:init:local": "cd cloud && npx wrangler d1 execute thefinaloption-db --local --file=./schema.sql"
+  },
+  "devDependencies": {
+    "wrangler": "^4.108.0"
   }
 }

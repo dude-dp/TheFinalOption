@@ -266,8 +266,8 @@ api.get('/api/auth/login', (c) => {
   return c.redirect(url);
 });
 
-/** GET /api/auth/callback — Handle Upstox OAuth callback */
-api.get('/api/auth/callback', async (c) => {
+/** GET /oauth/callback — Handle Upstox OAuth callback */
+api.get('/oauth/callback', async (c) => {
   const code = c.req.query('code');
   if (!code) return c.text('Missing authorization code', 400);
 

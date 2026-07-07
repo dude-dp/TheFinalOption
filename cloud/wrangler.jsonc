@@ -9,7 +9,7 @@
   "kv_namespaces": [
     {
       "binding": "TRADING_KV",
-      "id": "YOUR_KV_NAMESPACE_ID_HERE"
+      "id": "b6afdd31728c4a4d8e3bb7690014b579"
     }
   ],
   // D1 SQLite for persistent trade logs, telemetry, and configuration
@@ -17,7 +17,7 @@
     {
       "binding": "TRADING_DB",
       "database_name": "thefinaloption-db",
-      "database_id": "YOUR_D1_DATABASE_ID_HERE"
+      "database_id": "a3b9df2e-d18b-41a1-82f1-d4369c2bb74d"
     }
   ],
   // Queues for async order status tracking
@@ -50,8 +50,7 @@
   },
   // Environment variables (set via `wrangler secret put`)
   "vars": {
-    "UPSTOX_CLIENT_ID": "",
-    "UPSTOX_REDIRECT_URI": "",
+    "UPSTOX_REDIRECT_URI": "https://thefinaloption.thefinaloptionautomation.workers.dev/oauth/callback",
     "ENVIRONMENT": "production"
   }
   // Secrets (set via CLI, not in config):
