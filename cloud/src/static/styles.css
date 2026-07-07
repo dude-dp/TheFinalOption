@@ -7,26 +7,34 @@
 
 /* --- Design Tokens --- */
 :root {
-  --canvas-bg: #301934;
-  --surface: #1e0f21;
-  --surface-elevated: #2a1530;
-  --surface-hover: #3d2244;
-  --accent-buy: #39ff14;
-  --accent-sell: #ff073a;
-  --accent-blue: #7b68ee;
-  --accent-gold: #ffd700;
-  --text-primary: #e6e6fa;
-  --text-muted: #9b8aa0;
-  --text-dim: #6b5a70;
-  --border: #3d2244;
-  --border-glow: rgba(123, 104, 238, 0.3);
-  --shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
-  --shadow-glow: 0 0 20px rgba(123, 104, 238, 0.15);
-  --radius: 12px;
-  --radius-sm: 8px;
+  /* Premium Off-White Canvas */
+  --canvas-bg: #f6f8fa;
+  --bg-gradient: radial-gradient(circle at 0% 0%, #ffffff 0%, #f1f5f9 100%);
+  
+  /* Glassmorphism Specs (Frosted Glass Core) */
+  --surface: rgba(255, 255, 255, 0.45);
+  --surface-elevated: rgba(255, 255, 255, 0.75);
+  --glass-blur: blur(16px);
+  --glass-border: rgba(255, 255, 255, 0.6);
+  --glass-shadow: 0 8px 32px 0 rgba(31, 41, 55, 0.04), 
+                  0 1px 2px 0 rgba(0, 0, 0, 0.02);
+  --inner-glow: inset 0 1px 0 0 rgba(255, 255, 255, 0.8);
+
+  /* Deep High-Contrast Typography */
+  --text-primary: #0f172a;       /* Deep Slate */
+  --text-muted: #64748b;         /* Muted Slate Gray */
+  
+  /* Light-Optimized Trading Accents */
+  --accent-buy: #059669;         /* High-visibility Emerald Green */
+  --accent-sell: #dc2626;        /* Crisp Crimson Red */
+  --accent-blue: #4f46e5;        /* Deep Indigo for Neutral Charts */
+  --border: rgba(15, 23, 42, 0.06); /* Ultra-fine layout lines */
+  
   --font-sans: 'Inter', -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
   --transition: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --radius: 16px;
+  --radius-sm: 8px;
 }
 
 /* --- Reset & Base --- */
@@ -39,11 +47,14 @@ html {
 }
 
 body {
-  font-family: var(--font-sans);
   background: var(--canvas-bg);
+  background-image: var(--bg-gradient);
   color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   min-height: 100vh;
   line-height: 1.5;
+  margin: 0;
+  padding: 24px;
 }
 
 /* --- Layout --- */
@@ -59,10 +70,12 @@ body {
   justify-content: space-between;
   padding: 16px 24px;
   background: var(--surface);
-  border: 1px solid var(--border);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow), var(--inner-glow);
   border-radius: var(--radius);
   margin-bottom: 20px;
-  box-shadow: var(--shadow);
 }
 
 .dashboard-header h1 {
@@ -137,16 +150,19 @@ body {
 /* --- Cards --- */
 .card {
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
   padding: 20px;
-  box-shadow: var(--shadow);
-  transition: border-color var(--transition), box-shadow var(--transition);
+  box-shadow: var(--glass-shadow), var(--inner-glow);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .card:hover {
-  border-color: rgba(123, 104, 238, 0.4);
-  box-shadow: var(--shadow-glow);
+  background: var(--surface-elevated);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 40px 0 rgba(31, 41, 55, 0.06), var(--inner-glow);
 }
 
 .card-header {
@@ -203,14 +219,17 @@ body {
 .btn-stop:hover { background: rgba(155, 138, 160, 0.2); }
 
 .btn-emergency {
-  background: rgba(255, 7, 58, 0.15);
-  color: var(--accent-sell);
-  border-color: rgba(255, 7, 58, 0.4);
-  font-weight: 700;
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.2);
+  transition: all 0.2s ease;
 }
 .btn-emergency:hover {
-  background: rgba(255, 7, 58, 0.3);
-  box-shadow: 0 0 20px rgba(255, 7, 58, 0.2);
+  transform: scale(1.02);
+  box-shadow: 0 6px 16px rgba(220, 38, 38, 0.3);
 }
 
 .btn-auth {
@@ -318,27 +337,31 @@ body {
 
 /* --- System Log Console --- */
 .log-console {
-  background: #0d0710;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 12px 16px;
+  background: rgba(15, 23, 42, 0.03); /* Soft translucent indentation */
+  border: 1px solid rgba(15, 23, 42, 0.05);
+  border-radius: 12px;
+  padding: 16px;
+  font-family: "SFMono-Regular", Consolas, Monaco, monospace;
+  font-size: 0.85rem;
+  color: #334155;
   height: 280px;
   overflow-y: auto;
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
   line-height: 1.8;
 }
 
 .log-console::-webkit-scrollbar { width: 6px; }
 .log-console::-webkit-scrollbar-track { background: transparent; }
-.log-console::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.log-console::-webkit-scrollbar-thumb { background: rgba(15, 23, 42, 0.1); border-radius: 3px; }
 
 .log-entry { white-space: nowrap; }
 .log-entry .timestamp { color: var(--text-dim); margin-right: 8px; }
 .log-entry.info .level { color: var(--accent-blue); }
 .log-entry.warn .level { color: var(--accent-gold); }
+.log-entry.error { color: #b91c1c; background: rgba(239, 68, 68, 0.05); }
 .log-entry.error .level { color: var(--accent-sell); }
 .log-entry.signal .level { color: var(--accent-buy); font-weight: 700; }
+.log-row.signal-buy { color: var(--accent-buy); font-weight: 600; }
+.log-row.signal-sell { color: var(--accent-sell); font-weight: 600; }
 .log-entry .message { color: var(--text-primary); }
 
 /* --- Summary Panel --- */

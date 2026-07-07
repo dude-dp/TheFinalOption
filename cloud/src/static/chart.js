@@ -7,14 +7,14 @@
   'use strict';
 
   const COLORS = {
-    bg: '#301934',
-    grid: 'rgba(61, 34, 68, 0.5)',
-    spot: '#7b68ee',
-    macd: '#e6e6fa',
-    zeroline: 'rgba(155, 138, 160, 0.4)',
-    crossBuy: '#39ff14',
-    crossSell: '#ff073a',
-    text: '#9b8aa0',
+    bg: 'transparent',
+    grid: 'rgba(15, 23, 42, 0.04)',
+    spot: '#4f46e5',
+    macd: '#0f172a',
+    zeroline: '#64748b',
+    crossBuy: '#059669',
+    crossSell: '#dc2626',
+    text: '#475569',
   };
 
   class TradingChart {
@@ -55,9 +55,18 @@
       const macdH = h * 0.35;
       const gap = h * 0.1;
 
+      // Dynamically fetch theme colors from CSS variables
+      const rootStyles = getComputedStyle(document.documentElement);
+      COLORS.grid = rootStyles.getPropertyValue('--border').trim() || 'rgba(15, 23, 42, 0.06)';
+      COLORS.text = rootStyles.getPropertyValue('--text-muted').trim() || '#64748b';
+      COLORS.crossBuy = rootStyles.getPropertyValue('--accent-buy').trim() || '#059669';
+      COLORS.crossSell = rootStyles.getPropertyValue('--accent-sell').trim() || '#dc2626';
+      COLORS.spot = rootStyles.getPropertyValue('--accent-blue').trim() || '#4f46e5';
+      COLORS.macd = rootStyles.getPropertyValue('--text-primary').trim() || '#0f172a';
+      COLORS.zeroline = rootStyles.getPropertyValue('--text-muted').trim() || '#64748b';
+
       // Clear
-      ctx.fillStyle = COLORS.bg;
-      ctx.fillRect(0, 0, w, h);
+      ctx.clearRect(0, 0, w, h);
 
       if (this.spotData.length < 2) {
         ctx.fillStyle = COLORS.text;

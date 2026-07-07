@@ -26,7 +26,7 @@ export interface BotState {
   status: BotStatus;
   lastUpdated: string;
   activePosition: ActivePosition | null;
-  positionLock: boolean;
+  lockTimestamp: number | null;
   lastMacdLine: number | null;
 }
 

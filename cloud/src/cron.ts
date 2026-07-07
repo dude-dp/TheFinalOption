@@ -41,7 +41,7 @@ async function getBotState(kv: KVNamespace): Promise<BotState> {
       status: 'STOPPED',
       lastUpdated: new Date().toISOString(),
       activePosition: null,
-      positionLock: false,
+      lockTimestamp: null,
       lastMacdLine: null,
     };
   }
@@ -173,14 +173,21 @@ export async function handleScheduled(env: Env): Promise<void> {
 
     // --- SIGNAL DETECTED ---
 
-    // Check position lock
-    if (state.positionLock) {
-      await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, signal, state.status, 'SKIP: Position locked');
-      return;
+    // Check position lock and handle deadlock recovery
+    if (state.lockTimestamp) {
+      const lockAgeMinutes = (Date.now() - state.lockTimestamp) / 60000;
+      if (lockAgeMinutes > 3) {
+        state.lockTimestamp = null;
+        await saveBotState(env.TRADING_KV, state);
+        await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, 'NONE', state.status, `WARN: Deadlock detected (lock >3m). Cleared lock.`);
+      } else {
+        await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, signal, state.status, 'SKIP: Position locked');
+        return;
+      }
     }
 
     // Lock position
-    state.positionLock = true;
+    state.lockTimestamp = Date.now();
     await saveBotState(env.TRADING_KV, state);
 
     // If there's an active opposite position, square it off first
@@ -204,7 +211,7 @@ export async function handleScheduled(env: Env): Promise<void> {
     );
 
     if (!targetOption) {
-      state.positionLock = false;
+      state.lockTimestamp = null;
       await saveBotState(env.TRADING_KV, state);
       await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, signal, state.status, `ERROR: No option found for ${strike}${optionType} exp ${expiry}`);
       return;
@@ -215,7 +222,7 @@ export async function handleScheduled(env: Env): Promise<void> {
     const premium = ltpMap[targetOption.instrumentKey] || targetOption.ltp;
 
     if (premium <= 0) {
-      state.positionLock = false;
+      state.lockTimestamp = null;
       await saveBotState(env.TRADING_KV, state);
       await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, signal, state.status, 'ERROR: Zero premium');
       return;
@@ -226,7 +233,7 @@ export async function handleScheduled(env: Env): Promise<void> {
     const lots = calculateLots(funds.availableMargin, premium, config.niftyLotSize, config.maxRiskPct);
 
     if (lots === 0) {
-      state.positionLock = false;
+      state.lockTimestamp = null;
       await saveBotState(env.TRADING_KV, state);
       await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, signal, state.status, `SKIP: Insufficient margin (avail=${funds.availableMargin}, premium=${premium})`);
       return;
@@ -234,6 +241,9 @@ export async function handleScheduled(env: Env): Promise<void> {
 
     const quantity = lotsToQuantity(lots, config.niftyLotSize);
     const correlationId = generateCorrelationId();
+
+    // Use aggressive limit order with 1% buffer, snapped to nearest 0.05 tick size
+    const bufferedPrice = Math.round((premium * 1.01) * 20) / 20;
 
     // Build order payload
     const order: OrderPayload = {
@@ -246,7 +256,7 @@ export async function handleScheduled(env: Env): Promise<void> {
       transactionType: 'BUY',
       quantity,
       lots,
-      orderPrice: premium,
+      orderPrice: bufferedPrice,
       status: 'PENDING',
       createdAt: new Date().toISOString(),
     };
@@ -277,7 +287,7 @@ export async function handleScheduled(env: Env): Promise<void> {
       enteredAt: new Date().toISOString(),
     };
     state.lastMacdLine = currentMacd;
-    state.positionLock = false;
+    state.lockTimestamp = null;
     await saveBotState(env.TRADING_KV, state);
 
     await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, signal, state.status,
@@ -285,7 +295,7 @@ export async function handleScheduled(env: Env): Promise<void> {
 
   } catch (error: any) {
     // Ensure lock is released on error
-    state.positionLock = false;
+    state.lockTimestamp = null;
     await saveBotState(env.TRADING_KV, state);
     await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, 'NONE', state.status, `CRON_ERROR: ${error.message}`);
   }
@@ -325,8 +335,7 @@ async function dispatchSquareOff(env: Env, state: BotState, token: string, confi
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(sellOrder.orderId, correlationId, pos.instrumentToken, pos.tradingSymbol, pos.optionType, pos.strikePrice, 'SELL', pos.quantity, pos.lots, 0, 'PENDING').run();
 
-  // Clear active position
-  state.activePosition = null;
+  // Active position will be cleared by /api/confirm once the order is FILLED
 }
 
 // --- EOD Summary (Cloudflare Workers AI) ---

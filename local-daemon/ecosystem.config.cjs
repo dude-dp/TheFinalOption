@@ -22,6 +22,7 @@ module.exports = {
       // Environment
       env: {
         NODE_ENV: 'production',
+        TZ: 'Asia/Kolkata' // Add this to force IST evaluation
       },
 
       // Logging

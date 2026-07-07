@@ -41,8 +41,8 @@ export function calculateLots(
   // Calculate allocable capital
   const allocatedCapital = availableMargin * (clampedRisk / 100);
 
-  // Cost per lot = premium × lot_size
-  const costPerLot = premium * lotSize;
+  // Cost per lot = premium × lot_size + 2% safety buffer for charges & slippage
+  const costPerLot = (premium * lotSize) * 1.02;
 
   // Guard: Insufficient margin for even 1 lot
   if (allocatedCapital < costPerLot) {

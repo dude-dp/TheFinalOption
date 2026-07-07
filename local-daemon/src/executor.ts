@@ -8,6 +8,21 @@ import { logInfo, logWarn, logError, logTrade } from './logger.js';
 const HFT_URL = 'https://api-hft.upstox.com';
 const API_URL = 'https://api.upstox.com';
 
+async function fetchWithBackoff(url: string, options: any, maxRetries = 2) {
+  for (let i = 0; i <= maxRetries; i++) {
+    const res = await fetch(url, options);
+    if (res.status === 429) {
+      const retryAfter = res.headers.get('Retry-After');
+      const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : 2000;
+      logWarn(`HTTP 429 Too Many Requests. Retrying after ${waitTime}ms...`);
+      await sleep(waitTime);
+      continue;
+    }
+    return res;
+  }
+  return fetch(url, options);
+}
+
 interface OrderPayload {
   orderId: string;
   correlationId: string;
@@ -57,7 +72,7 @@ export async function executeOrder(
 
   try {
     // Place order via Upstox v3
-    const placeRes = await fetch(`${HFT_URL}/v3/order/place`, {
+    const placeRes = await fetchWithBackoff(`${HFT_URL}/v3/order/place`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -70,8 +85,8 @@ export async function executeOrder(
         quantity: order.quantity,
         product: 'I', // Intraday
         validity: 'DAY',
-        order_type: 'MARKET',
-        price: 0,
+        order_type: 'LIMIT',
+        price: order.orderPrice,
         trigger_price: 0,
         disclosed_quantity: 0,
         is_amo: false,
@@ -127,21 +142,21 @@ export async function executeOrder(
 
 /**
  * Poll Upstox order book for status updates.
- * Polls every 500ms for up to 3 seconds.
+ * Polls every 500ms for up to 10 seconds.
  */
 async function pollOrderStatus(
   upstoxOrderId: string,
   accessToken: string,
   correlationId: string
 ): Promise<ExecutionResult> {
-  const MAX_POLLS = 6;
+  const MAX_POLLS = 20; // Increased to 10 seconds total (20 * 500ms)
   const POLL_DELAY = 500;
 
   for (let i = 0; i < MAX_POLLS; i++) {
     await sleep(POLL_DELAY);
 
     try {
-      const res = await fetch(`${API_URL}/v2/order/details?order_id=${upstoxOrderId}`, {
+      const res = await fetchWithBackoff(`${API_URL}/v2/order/details?order_id=${upstoxOrderId}`, {
         headers: {
           'Accept': 'application/json',
           'Authorization': `Bearer ${accessToken}`,
@@ -197,7 +212,7 @@ async function pollOrderStatus(
     status: 'PARTIALLY_FILLED',
     executionPrice: null,
     filledQuantity: null,
-    rejectionReason: 'Status poll timeout after 3s',
+    rejectionReason: 'Status poll timeout after 10s',
   };
 }
 

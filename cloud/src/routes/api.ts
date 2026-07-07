@@ -4,6 +4,7 @@
 // ============================================
 
 import { Hono } from 'hono';
+import { basicAuth } from 'hono/basic-auth';
 import type { Env, BotState, ConfirmRequest, OrderPayload, PollResponse } from '../lib/types';
 import { KV_KEYS } from '../lib/types';
 import { getAuthorizationUrl, exchangeCodeForToken } from '../lib/upstox';
@@ -20,6 +21,22 @@ function requirePollSecret(c: any, next: any) {
   }
   return next();
 }
+
+const dashboardAuth = basicAuth({
+  verifyUser: (username, password, c) => {
+    return username === 'vdineshprabu' && password === 'Healthywealth007#';
+  },
+});
+
+// Apply it to ALL dashboard UI & control routes:
+api.use('/api/status', dashboardAuth);
+api.use('/api/control', dashboardAuth);
+api.use('/api/emergency-squareoff', dashboardAuth);
+api.use('/api/orders', dashboardAuth);
+api.use('/api/telemetry', dashboardAuth);
+api.use('/api/chart-data', dashboardAuth);
+api.use('/api/summary', dashboardAuth);
+api.use('/api/config', dashboardAuth);
 
 // =====================
 // DAEMON ENDPOINTS
@@ -97,20 +114,31 @@ api.post('/api/confirm', requirePollSecret, async (c) => {
       if (state.activePosition?.correlationId === correlationId) {
         state.activePosition = null;
       }
-      state.positionLock = false;
+      state.lockTimestamp = null;
       await c.env.TRADING_KV.put(KV_KEYS.BOT_STATE, JSON.stringify(state));
     }
   }
 
-  // If FILLED BUY, update entry price in bot state
+  // If FILLED, check if it was a square-off (SELL) or entry (BUY)
   if (status === 'FILLED' && executionPrice) {
     const stateRaw = await c.env.TRADING_KV.get(KV_KEYS.BOT_STATE);
     if (stateRaw) {
       const state: BotState = JSON.parse(stateRaw);
-      if (state.activePosition?.correlationId === correlationId) {
+
+      // Look up the original order type from D1 to know if this was a BUY or SELL
+      const order = await c.env.TRADING_DB.prepare(
+        'SELECT transaction_type FROM order_ledger WHERE correlation_id = ?'
+      ).bind(correlationId).first();
+
+      if (order?.transaction_type === 'SELL') {
+        // It was a successful square-off. Now it's safe to clear the position.
+        state.activePosition = null;
+      } else if (order?.transaction_type === 'BUY' && state.activePosition?.correlationId === correlationId) {
+        // It was an entry. Update entry price.
         state.activePosition.entryPrice = executionPrice;
       }
-      state.positionLock = false;
+
+      state.lockTimestamp = null;
       await c.env.TRADING_KV.put(KV_KEYS.BOT_STATE, JSON.stringify(state));
     }
   }
@@ -126,7 +154,7 @@ api.post('/api/confirm', requirePollSecret, async (c) => {
 api.get('/api/status', async (c) => {
   const stateRaw = await c.env.TRADING_KV.get(KV_KEYS.BOT_STATE);
   const state: BotState = stateRaw ? JSON.parse(stateRaw) : {
-    status: 'STOPPED', lastUpdated: '', activePosition: null, positionLock: false, lastMacdLine: null
+    status: 'STOPPED', lastUpdated: '', activePosition: null, lockTimestamp: null, lastMacdLine: null
   };
   const hasToken = !!(await c.env.TRADING_KV.get(KV_KEYS.UPSTOX_ACCESS_TOKEN));
   return c.json({ ...state, hasAccessToken: hasToken });
@@ -137,7 +165,7 @@ api.post('/api/control', async (c) => {
   const { action } = await c.req.json<{ action: string }>();
   const stateRaw = await c.env.TRADING_KV.get(KV_KEYS.BOT_STATE);
   const state: BotState = stateRaw ? JSON.parse(stateRaw) : {
-    status: 'STOPPED', lastUpdated: '', activePosition: null, positionLock: false, lastMacdLine: null
+    status: 'STOPPED', lastUpdated: '', activePosition: null, lockTimestamp: null, lastMacdLine: null
   };
 
   if (action === 'START') state.status = 'RUNNING';
