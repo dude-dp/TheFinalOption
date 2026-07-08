@@ -20,120 +20,108 @@ dashboard.get('/', (c) => {
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <div class="app-container fade-in">
-
+  <div class="dashboard-container">
     <!-- Header -->
-    <header class="dashboard-header" id="dashboard-header">
-      <h1>⚡ TheFinalOption</h1>
-      <div class="header-right">
-        <div class="status-badge" style="background: rgba(123, 104, 238, 0.1); border-color: rgba(123, 104, 238, 0.3);">
-          <span style="color: var(--text-muted)">Capital:</span>
-          <span id="margin-value" style="color: var(--accent-blue); font-weight: 700; font-family: var(--font-mono);">₹---</span>
+    <header class="header-bar">
+      <div>
+        <h1 style="margin: 0; font-size: 1.5rem; display: flex; align-items: center; gap: 8px;">
+          <span style="color: var(--accent-blue)">⚡</span> TheFinalOption
+        </h1>
+        <div style="color: var(--text-muted); font-size: 0.9rem; margin-top: 4px;">Hybrid Algorithmic Trading Terminal</div>
+      </div>
+      
+      <div style="display: flex; gap: 16px; align-items: center;">
+        <div class="metric-box" style="padding: 8px 16px; flex-direction: row; align-items: center;">
+          <span class="metric-label">Capital:</span>
+          <span id="margin-value" class="metric-value" style="font-size: 1rem;">₹---</span>
         </div>
-
-        <span id="token-status" style="font-size:0.75rem;font-family:var(--font-mono)">⏳ Loading...</span>
-        <div id="status-badge" class="status-badge stopped">
-          <span id="status-dot" class="status-dot stopped"></span>
-          <span id="status-text">LOADING</span>
+        <div id="status-badge" class="metric-box" style="padding: 8px 16px; flex-direction: row; align-items: center;">
+          <span id="status-dot" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--text-muted);"></span>
+          <span id="status-text" style="font-size: 0.85rem; font-weight: 600;">LOADING</span>
         </div>
       </div>
     </header>
 
-    <!-- Main Grid -->
-    <div class="dashboard-grid">
+    <!-- BENTO GRID -->
+    <main class="bento-grid">
+      
+      <!-- Col 1: System Controls (Spans 4 of 12 columns) -->
+      <section class="bento-card col-span-4">
+        <h2 class="bento-card-title">⚙️ Operations Control</h2>
+        <div class="control-group">
+          <button id="toggle-bot-btn" class="btn">▶ Start Autonomous Trading</button>
+          <button id="emergency-btn" class="btn emergency">🚨 EMERGENCY SQUARE-OFF</button>
+          <hr style="border: 0; border-top: 1px solid var(--border); width: 100%; margin: 8px 0;" />
+          <a href="/api/auth/login" class="btn">🔑 Refresh Upstox Token</a>
+        </div>
+      </section>
 
-      <!-- Control Matrix -->
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title">🎛️ Control Matrix</span>
+      <!-- Col 2: Active Position (Spans 8 of 12 columns) -->
+      <section class="bento-card col-span-8">
+        <h2 class="bento-card-title">🎯 Active Position Tracker</h2>
+        <div id="no-position" style="color: var(--text-muted); display: flex; height: 100%; align-items: center; justify-content: center;">
+          Searching for MACD Crossovers...
         </div>
-        <div class="control-matrix">
-          <button class="btn btn-start" id="btn-start">▶ Start Bot</button>
-          <button class="btn btn-stop" id="btn-stop">⏹ Stop Bot</button>
-          <button class="btn btn-emergency" id="btn-emergency">🚨 Emergency Square-Off</button>
-          <button class="btn btn-auth" id="btn-auth">🔑 Re-Authenticate Upstox</button>
-        </div>
-        <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
-          <div class="config-row">
-            <label>Max Risk Per Trade</label>
-            <input type="range" id="risk-slider" min="5" max="50" value="20" step="5">
-            <span class="config-value" id="risk-value">20%</span>
+        <div id="active-position" class="metrics-grid" style="display: none;">
+          <div class="metric-box">
+            <span class="metric-label">Contract</span>
+            <span id="pos-symbol" class="metric-value">--</span>
+          </div>
+          <div class="metric-box">
+            <span class="metric-label">Entry Price</span>
+            <span id="pos-entry" class="metric-value">₹--</span>
+          </div>
+          <div class="metric-box">
+            <span class="metric-label">Current LTP</span>
+            <span id="pos-ltp" class="metric-value">₹--</span>
+          </div>
+          <div class="metric-box">
+            <span class="metric-label">Unrealized PnL</span>
+            <span id="pos-pnl" class="metric-value">₹--</span>
           </div>
         </div>
-      </div>
+      </section>
 
-      <!-- Active Position -->
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title">📊 Active Position</span>
-        </div>
-        <div id="position-container">
-          <p class="no-position">No active position</p>
-        </div>
-      </div>
-
-      <!-- NIFTY + MACD Chart -->
-      <div class="card full-width">
-        <div class="card-header">
-          <span class="card-title">📈 NIFTY Spot &amp; MACD Zero-Line</span>
-        </div>
-        <div class="chart-container">
+      <!-- Col 3: Canvas Chart (Spans full width - 12 columns) -->
+      <section class="bento-card col-span-12">
+        <h2 class="bento-card-title">📈 NIFTY Spot & MACD Zero-Line</h2>
+        <div style="width: 100%; height: 350px; position: relative;">
           <canvas id="trading-chart"></canvas>
         </div>
-      </div>
+      </section>
 
-      <!-- Trade Log -->
-      <div class="card full-width">
-        <div class="card-header">
-          <span class="card-title">📋 Trade Log</span>
-        </div>
-        <div style="overflow-x:auto">
-          <table class="trade-table">
+      <!-- Col 4: Trade Ledger (Spans 6 columns) -->
+      <section class="bento-card col-span-6">
+        <h2 class="bento-card-title">📔 Order Ledger</h2>
+        <div class="table-wrapper">
+          <table id="ledger-table">
             <thead>
               <tr>
                 <th>Time</th>
-                <th>Symbol</th>
-                <th>Action</th>
-                <th>Lots (Qty)</th>
-                <th>Price</th>
+                <th>Contract</th>
+                <th>Type</th>
                 <th>Status</th>
-                <th>P&amp;L</th>
+                <th>Price</th>
               </tr>
             </thead>
-            <tbody id="orders-tbody">
-              <tr><td colspan="7" style="text-align:center;color:var(--text-dim);padding:20px">Loading trade data...</td></tr>
+            <tbody id="ledger-body">
+              <!-- Populated by JS -->
             </tbody>
           </table>
         </div>
-      </div>
+      </section>
 
-      <!-- System Log Console -->
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title">🖥️ System Log</span>
+      <!-- Col 5: System Telemetry (Spans 6 columns) -->
+      <section class="bento-card col-span-6">
+        <h2 class="bento-card-title">💻 Execution Logs</h2>
+        <div id="system-logs" class="log-console">
+          <!-- Populated by JS -->
         </div>
-        <div class="log-console" id="log-console">
-          <div class="log-entry info">
-            <span class="timestamp">--:--:--</span>
-            <span class="level">[INFO]</span>
-            <span class="message">Dashboard initialized. Waiting for data...</span>
-          </div>
-        </div>
-      </div>
+      </section>
 
-      <!-- Daily Summary -->
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title">🤖 Daily AI Summary</span>
-        </div>
-        <div id="summary-container">
-          <p class="no-position">Generated at market close (3:35 PM IST)</p>
-        </div>
-      </div>
-
-    </div>
+    </main>
   </div>
-
+  
   <script src="/chart.js"></script>
   <script src="/dashboard.js"></script>
 </body>
