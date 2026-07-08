@@ -89,6 +89,16 @@ export async function handleScheduled(env: Env): Promise<void> {
     return;
   }
 
+  // --- NEW: FETCH & CACHE AVAILABLE MARGIN ---
+  if (isMarketOpen() || isPreMarketWarmup()) {
+    try {
+      const funds = await getFundsAndMargin(accessToken);
+      await env.TRADING_KV.put(KV_KEYS.ACCOUNT_MARGIN, JSON.stringify(funds));
+    } catch (e: any) {
+      // Fail silently to avoid interrupting trade logic
+    }
+  }
+
   // PRE-MARKET: Update lot size from instrument master
   if (isPreMarketWarmup()) {
     try {
@@ -150,6 +160,87 @@ export async function handleScheduled(env: Env): Promise<void> {
 
     currentMacd = macdResult.current;
     prevMacd = macdResult.previous;
+
+    // ==========================================
+    // RISK MANAGEMENT: 6% HARD SL & TRAILING SL
+    // ==========================================
+    if (state.activePosition && !state.lockTimestamp) {
+      try {
+        // 1. Fetch current LTP of the active option contract
+        const ltpData = await getLTP(accessToken, [state.activePosition.instrumentToken]);
+        const currentLTP = ltpData[state.activePosition.instrumentToken];
+
+        if (currentLTP && state.activePosition.entryPrice) {
+          const entry = state.activePosition.entryPrice;
+
+          // 2. Track the highest price seen so far
+          state.activePosition.highestPrice = Math.max(
+            state.activePosition.highestPrice || entry,
+            currentLTP
+          );
+
+          const peak = state.activePosition.highestPrice;
+
+          // Calculate percentages based on premium 
+          // (1:1 correlation with % return on used capital)
+          const currentProfitPct = ((currentLTP - entry) / entry) * 100;
+          const maxProfitPct = ((peak - entry) / entry) * 100;
+
+          // 3. Evaluate Conditions
+          // Hard SL: Price drops 6% below our initial entry
+          const isHardSLHit = currentProfitPct <= -6.0;
+
+          // Trailing SL logic
+          let isTrailingSLHit = false;
+          let activeTSLPrice = 0;
+
+          // If we have hit the 6% profit milestone
+          if (maxProfitPct >= 6.0) {
+            // Lock in 2% at 6% profit. (Distance is always peak - 4%)
+            // Example: 6% peak -> 2% SL. 7% peak -> 3% SL.
+            const trailingSLPct = maxProfitPct - 4.0;
+            activeTSLPrice = entry * (1 + (trailingSLPct / 100));
+
+            // If current price falls back to or below our trailing line
+            if (currentLTP <= activeTSLPrice) {
+              isTrailingSLHit = true;
+            }
+          }
+
+          if (isHardSLHit || isTrailingSLHit) {
+            const exitReason = isHardSLHit ? 'HARD_SL_HIT_6_PERCENT' : 'TRAILING_SL_HIT';
+
+            // Log the exact math that triggered the exit to the console/D1
+            await logTelemetry(
+              env.TRADING_DB,
+              spotPrice, // Note: spotPrice must be available in this scope
+              state.activePosition.strikePrice,
+              currentMacd,
+              prevMacd,
+              'NONE',
+              state.status,
+              `EXIT: ${exitReason}. LTP: ₹${currentLTP}, Peak: ₹${peak}, Entry: ₹${entry}, TSL Line: ₹${activeTSLPrice.toFixed(2)}`
+            );
+
+            // Dispatch square off order
+            await dispatchSquareOff(env, state, accessToken, config);
+
+            // Save state and exit the cron for this minute to prevent MACD from double-triggering
+            await saveBotState(env.TRADING_KV, state);
+            return;
+          } else {
+            // If no SL is hit, we still save the state to persist the updated highestPrice
+            await saveBotState(env.TRADING_KV, state);
+          }
+        }
+      } catch (error: any) {
+        console.error("Failed to fetch LTP for Risk Management check:", error);
+        // Fail silently here, allowing the MACD logic below to continue as a safety net
+      }
+    }
+    // ==========================================
+    // END RISK MANAGEMENT
+    // ==========================================
 
     // AUTO SQUARE-OFF CHECK
     if (isSquareOffTime(config.squareOffTime)) {

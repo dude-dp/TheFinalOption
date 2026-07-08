@@ -40,6 +40,7 @@ export interface ActivePosition {
   quantity: number;
   lots: number;
   enteredAt: string;
+  highestPrice?: number;
 }
 
 // --- KV Key Constants ---
@@ -50,6 +51,7 @@ export const KV_KEYS = {
   UPSTOX_TOKEN_EXPIRY: 'upstox_token_expiry',
   PENDING_ORDER_PREFIX: 'pending_order:',
   DAILY_CANDLE_CACHE: 'candle_cache',
+  ACCOUNT_MARGIN: 'account_margin',
 } as const;
 
 // --- Order Types ---

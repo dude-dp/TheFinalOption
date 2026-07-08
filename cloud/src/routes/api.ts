@@ -7,7 +7,7 @@ import { Hono } from 'hono';
 import { basicAuth } from 'hono/basic-auth';
 import type { Env, BotState, ConfirmRequest, OrderPayload, PollResponse } from '../lib/types';
 import { KV_KEYS } from '../lib/types';
-import { getAuthorizationUrl, exchangeCodeForToken } from '../lib/upstox';
+import { getAuthorizationUrl, exchangeCodeForToken, fetchNiftyCandles } from '../lib/upstox';
 import { getTodayDateStr } from '../lib/time';
 
 const api = new Hono<{ Bindings: Env }>();
@@ -89,6 +89,29 @@ api.get('/api/poll', requirePollSecret, async (c) => {
 });
 
 /**
+ * GET /api/unresolved-orders
+ * Local daemon polls this every 15s to clean up 'Phantom Orders'
+ */
+api.get('/api/unresolved-orders', requirePollSecret, async (c) => {
+  // Find orders that were dispatched but never reached a final state
+  const rows = await c.env.TRADING_DB.prepare(
+    `SELECT correlation_id, upstox_order_id, order_status 
+     FROM order_ledger 
+     WHERE order_status IN ('PARTIALLY_FILLED', 'DISPATCHED') 
+     AND upstox_order_id IS NOT NULL 
+     AND upstox_order_id != ''`
+  ).all();
+
+  const accessToken = await c.env.TRADING_KV.get(KV_KEYS.UPSTOX_ACCESS_TOKEN);
+
+  return c.json({
+    hasOrphans: (rows.results && rows.results.length > 0),
+    accessToken: accessToken,
+    orders: rows.results || []
+  });
+});
+
+/**
  * POST /api/confirm
  * Daemon sends execution slip after Upstox order placement.
  */
@@ -150,14 +173,19 @@ api.post('/api/confirm', requirePollSecret, async (c) => {
 // DASHBOARD ENDPOINTS
 // =====================
 
-/** GET /api/status — Bot state + active position */
+/** GET /api/status — Bot state + active position + margin */
 api.get('/api/status', async (c) => {
   const stateRaw = await c.env.TRADING_KV.get(KV_KEYS.BOT_STATE);
   const state: BotState = stateRaw ? JSON.parse(stateRaw) : {
     status: 'STOPPED', lastUpdated: '', activePosition: null, lockTimestamp: null, lastMacdLine: null
   };
   const hasToken = !!(await c.env.TRADING_KV.get(KV_KEYS.UPSTOX_ACCESS_TOKEN));
-  return c.json({ ...state, hasAccessToken: hasToken });
+
+  // Fetch cached margin
+  const marginRaw = await c.env.TRADING_KV.get(KV_KEYS.ACCOUNT_MARGIN);
+  const margin = marginRaw ? JSON.parse(marginRaw) : null;
+
+  return c.json({ ...state, hasAccessToken: hasToken, margin });
 });
 
 /** POST /api/control — Toggle bot status */
@@ -240,17 +268,49 @@ api.get('/api/orders', async (c) => {
   return c.json({ data: rows.results || [] });
 });
 
-/** GET /api/chart-data — Spot + MACD for canvas chart */
+/** GET /api/chart-data — NIFTY OHLC Candles + MACD */
 api.get('/api/chart-data', async (c) => {
+  // 1. Get MACD telemetry from your D1 database
   const rows = await c.env.TRADING_DB.prepare(
     `SELECT timestamp, nifty_spot, macd_line FROM system_telemetry 
      WHERE date(timestamp) = ? ORDER BY timestamp`
   ).bind(getTodayDateStr()).all();
 
-  const data = rows.results || [];
+  const telemetryData = rows.results || [];
+  let spots: any[] = [];
+
+  // 2. Try to fetch rich OHLC candles directly from Upstox
+  const accessToken = await c.env.TRADING_KV.get(KV_KEYS.UPSTOX_ACCESS_TOKEN);
+  if (accessToken) {
+    try {
+      const upstoxCandles = await fetchNiftyCandles(accessToken, getTodayDateStr());
+      spots = upstoxCandles.map(c => ({
+        timestamp: c.timestamp,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close
+      }));
+    } catch (e) {
+      console.warn("Failed to fetch Upstox candles, falling back to telemetry.");
+    }
+  }
+
+  // 3. Fallback: If Upstox fetch fails, synthesize flat candles from telemetry 
+  // to prevent the dashboard from breaking.
+  if (spots.length === 0) {
+    spots = telemetryData.map((r: any) => ({
+      timestamp: r.timestamp,
+      open: r.nifty_spot,
+      high: r.nifty_spot,
+      low: r.nifty_spot,
+      close: r.nifty_spot
+    }));
+  }
+
   return c.json({
-    spots: data.map((r: any) => ({ timestamp: r.timestamp, value: r.nifty_spot })),
-    macd: data.map((r: any) => ({ timestamp: r.timestamp, value: r.macd_line })),
+    spots: spots,
+    macd: telemetryData.map((r: any) => ({ timestamp: r.timestamp, value: r.macd_line })),
   });
 });
 

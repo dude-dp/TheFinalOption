@@ -109,6 +109,72 @@ async function pollWorker(): Promise<void> {
   }
 }
 
+// --- Background Orphan Sweeper ---
+let isCheckingOrphans = false;
+
+async function sweepOrphanedOrders(): Promise<void> {
+  if (isCheckingOrphans) return; // Prevent overlapping sweeps
+  isCheckingOrphans = true;
+
+  try {
+    const res = await fetch(`${CONFIG.workerUrl}/api/unresolved-orders`, {
+      method: 'GET',
+      headers: { 'X-Poll-Secret': CONFIG.pollSecret },
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!res.ok) return;
+    
+    const data: any = await res.json();
+    if (!data.hasOrphans || !data.accessToken) return;
+
+    for (const order of data.orders) {
+      logWarn(`🔍 Sweeping Phantom Order: ${order.upstox_order_id}`);
+
+      // Query Upstox directly for the true status of this order
+      const statusRes = await fetch(`https://api.upstox.com/v2/order/details?order_id=${order.upstox_order_id}`, {
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${data.accessToken}`,
+        },
+      });
+
+      if (!statusRes.ok) continue;
+
+      const statusData: any = await statusRes.json();
+      const uOrder = statusData?.data;
+      if (!uOrder) continue;
+
+      const upstoxStatus = uOrder.status?.toUpperCase();
+
+      // If the order has finally reached a terminal state on the exchange...
+      if (upstoxStatus === 'COMPLETE' || upstoxStatus === 'FILLED' || upstoxStatus === 'REJECTED' || upstoxStatus === 'CANCELLED') {
+        
+        const finalStatus = upstoxStatus === 'COMPLETE' ? 'FILLED' : upstoxStatus as any;
+        
+        const result = {
+          correlationId: order.correlation_id,
+          upstoxOrderId: order.upstox_order_id,
+          status: finalStatus,
+          executionPrice: uOrder.average_price || uOrder.traded_price || null,
+          filledQuantity: uOrder.filled_quantity || uOrder.quantity || null,
+          rejectionReason: uOrder.status_message || null,
+        };
+
+        // Push the final confirmation back to Cloudflare
+        await confirmOrder(result);
+        logInfo(`✅ Phantom Order Resolved: ${order.upstox_order_id} -> ${finalStatus}`);
+      }
+    }
+  } catch (error: any) {
+    if (error.name !== 'TimeoutError' && error.name !== 'AbortError') {
+      logError(`Orphan Sweeper error: ${error.message}`);
+    }
+  } finally {
+    isCheckingOrphans = false;
+  }
+}
+
 // --- Confirm Order ---
 async function confirmOrder(result: any): Promise<void> {
   try {
@@ -172,6 +238,11 @@ async function main(): Promise<void> {
 
   // Start health check server
   startHealthServer();
+
+  // NEW: Start the Phantom Order Sweeper (runs every 15 seconds)
+  setInterval(() => {
+    sweepOrphanedOrders().catch(e => logError(`Sweeper crash: ${e.message}`));
+  }, 15000);
 
   // Graceful shutdown
   process.on('SIGINT', () => {

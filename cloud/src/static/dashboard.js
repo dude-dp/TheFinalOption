@@ -59,6 +59,16 @@
       tokenEl.style.color = data.hasAccessToken ? '#39ff14' : '#ff073a';
     }
 
+    // Update Margin
+    const marginEl = document.getElementById('margin-value');
+    if (marginEl) {
+      if (data.margin && data.margin.availableMargin !== undefined) {
+        marginEl.textContent = '₹' + data.margin.availableMargin.toLocaleString('en-IN', { minimumFractionDigits: 2 });
+      } else {
+        marginEl.textContent = '₹---';
+      }
+    }
+
     // Active position
     const posContainer = document.getElementById('position-container');
     if (posContainer) {

@@ -53,7 +53,7 @@ export async function fetchNiftyCandles(
   toDate: string // YYYY-MM-DD
 ): Promise<UpstoxCandle[]> {
   const encodedKey = encodeURIComponent(NIFTY_INDEX_KEY);
-  const path = `/v3/historical-candle/intraday/${encodedKey}/1minute`;
+  const path = `/v2/historical-candle/intraday/${encodedKey}/1minute`;
   const data = await upstoxGet(path, token);
 
   if (!data?.data?.candles) return [];
@@ -75,7 +75,7 @@ export async function fetchNiftyCandles(
 
 // --- Option Chain ---
 
-/**
+/**https://api.upstox.com/v2/historical-candle/intraday/NSE_INDEX%7CNifty%2050/1minute
  * Fetch the option chain for NIFTY at a given expiry.
  * Returns entries filtered to relevant strikes.
  */

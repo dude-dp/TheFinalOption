@@ -26,6 +26,11 @@ dashboard.get('/', (c) => {
     <header class="dashboard-header" id="dashboard-header">
       <h1>⚡ TheFinalOption</h1>
       <div class="header-right">
+        <div class="status-badge" style="background: rgba(123, 104, 238, 0.1); border-color: rgba(123, 104, 238, 0.3);">
+          <span style="color: var(--text-muted)">Capital:</span>
+          <span id="margin-value" style="color: var(--accent-blue); font-weight: 700; font-family: var(--font-mono);">₹---</span>
+        </div>
+
         <span id="token-status" style="font-size:0.75rem;font-family:var(--font-mono)">⏳ Loading...</span>
         <div id="status-badge" class="status-badge stopped">
           <span id="status-dot" class="status-dot stopped"></span>
