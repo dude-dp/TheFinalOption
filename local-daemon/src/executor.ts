@@ -71,8 +71,8 @@ export async function executeOrder(
   }
 
   try {
-    // Place order via Upstox v3
-    const placeRes = await fetchWithBackoff(`${HFT_URL}/v3/order/place`, {
+    // Place order via Upstox standard API (bypassing HFT static IP restriction)
+    const placeRes = await fetchWithBackoff(`${API_URL}/v2/order/place`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -51,7 +51,16 @@ dashboard.get('/', (c) => {
         <div class="control-group">
           <button id="toggle-bot-btn" class="btn">▶ Start Autonomous Trading</button>
           <button id="emergency-btn" class="btn emergency">🚨 EMERGENCY SQUARE-OFF</button>
+          
           <hr style="border: 0; border-top: 1px solid var(--border); width: 100%; margin: 8px 0;" />
+          
+          <div style="display: flex; gap: 12px; width: 100%;">
+            <button id="manual-ce-btn" class="btn" style="flex: 1; border-color: var(--accent-buy); color: var(--accent-buy);">📈 Buy CE</button>
+            <button id="manual-pe-btn" class="btn" style="flex: 1; border-color: var(--accent-sell); color: var(--accent-sell);">📉 Buy PE</button>
+          </div>
+          
+          <hr style="border: 0; border-top: 1px solid var(--border); width: 100%; margin: 8px 0;" />
+          
           <a href="/api/auth/login" class="btn">🔑 Refresh Upstox Token</a>
         </div>
       </section>

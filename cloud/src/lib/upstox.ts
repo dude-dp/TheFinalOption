@@ -25,8 +25,8 @@ async function upstoxGet(path: string, token: string): Promise<any> {
   return res.json();
 }
 
-async function upstoxHftPost(path: string, token: string, body: any): Promise<any> {
-  const res = await fetch(`${HFT_URL}${path}`, {
+async function upstoxPost(path: string, token: string, body: any): Promise<any> {
+  const res = await fetch(`${BASE_URL}${path}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -190,7 +190,7 @@ export async function placeOrder(token: string, params: {
     tag: params.tag || '',
   };
 
-  const data = await upstoxHftPost('/v3/order/place', token, body);
+  const data = await upstoxPost('/v2/order/place', token, body);
 
   return {
     orderId: data?.data?.order_id || '',

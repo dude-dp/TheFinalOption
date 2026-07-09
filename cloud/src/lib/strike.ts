@@ -65,6 +65,29 @@ export function selectStrike(
 }
 
 /**
+ * Generate preferred strikes cascading from ATM to OTM.
+ * Returns an array starting with ATM, followed by OTM levels 1 through 4.
+ */
+export function getPreferredStrikes(
+  spotPrice: number,
+  optionType: OptionType,
+  interval: number = 50,
+  maxOtmLevels: number = 4
+): number[] {
+  const atm = calculateATM(spotPrice, interval);
+  const strikes = [atm];
+
+  for (let i = 1; i <= maxOtmLevels; i++) {
+    if (optionType === 'CE') {
+      strikes.push(atm + (i * interval)); // Higher strikes are OTM for CE
+    } else {
+      strikes.push(atm - (i * interval)); // Lower strikes are OTM for PE
+    }
+  }
+  return strikes;
+}
+
+/**
  * Determine whether the bot should roll to the next weekly expiry.
  * 
  * On expiry day (Tuesday), theta decay and gamma spikes make

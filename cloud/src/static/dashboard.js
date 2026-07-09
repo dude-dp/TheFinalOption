@@ -123,27 +123,41 @@
 
   // --- Telemetry (System Log) ---
   async function fetchTelemetry() {
-    const res = await fetch('/api/telemetry?limit=80');
+    const res = await fetch('/api/telemetry?limit=100');
     const data = await res.json();
-    const console = document.getElementById('system-logs');
-    if (!console || !data.data) return;
+    const consoleEl = document.getElementById('system-logs');
+    if (!consoleEl || !data.data) return;
 
-    console.innerHTML = data.data.map(entry => {
-      const ts = entry.timestamp ? entry.timestamp.split('T')[1]?.substring(0, 8) || '' : '';
-      const msg = entry.log_message || `SPOT=${entry.nifty_spot} MACD=${parseFloat(entry.macd_line).toFixed(4)}`;
-      let level = 'info';
-      if (msg.includes('ERROR')) level = 'error';
-      else if (msg.includes('SKIP') || msg.includes('WARN')) level = 'warn';
-      else if (msg.includes('SIGNAL')) level = 'signal';
+    consoleEl.innerHTML = data.data.map(entry => {
+      // Parse UTC to IST
+      const ts = formatIST(entry.timestamp);
+      const msg = entry.log_message || `MACD: ${parseFloat(entry.macd_line).toFixed(4)}`;
+      const spot = entry.nifty_spot ? parseFloat(entry.nifty_spot).toFixed(2) : '---';
 
-      return `<div class="log-entry ${level}">` +
-        `<span class="timestamp">${ts}</span>` +
-        `<span class="level">[${level.toUpperCase()}]</span> ` +
-        `<span class="message">${escapeHtml(msg)}</span>` +
-        `</div>`;
+      // Dynamic Color Coding
+      let level = 'INFO';
+      let color = 'var(--text-muted)';
+      
+      if (msg.includes('ERROR')) { 
+        level = 'ERR'; color = 'var(--accent-sell)'; 
+      } else if (msg.includes('WARN') || msg.includes('SKIP') || msg.includes('Deadlock')) { 
+        level = 'WARN'; color = '#f59e0b'; // Orange
+      } else if (msg.includes('SIGNAL') || msg.includes('EXIT')) { 
+        level = 'TRD'; color = 'var(--accent-buy)'; 
+      } else if (msg.includes('AUTO_SQUAREOFF')) { 
+        level = 'TRD'; color = 'var(--accent-blue)'; 
+      }
+
+      // Flexbox grid for perfectly aligned log columns
+      return `<div style="display: flex; gap: 12px; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.03); color: ${color}; font-family: var(--font-mono);">
+        <span style="width: 70px; flex-shrink: 0; font-weight: 500; opacity: 0.8;">${ts}</span>
+        <span style="width: 50px; flex-shrink: 0; font-weight: 700;">[${level}]</span>
+        <span style="width: 95px; flex-shrink: 0; color: var(--text-primary);">Spot: ${spot}</span>
+        <span style="flex-grow: 1; word-break: break-word;">${escapeHtml(msg)}</span>
+      </div>`;
     }).join('');
 
-    console.scrollTop = console.scrollHeight;
+    consoleEl.scrollTop = consoleEl.scrollHeight; // Auto-scroll to bottom
   }
 
   // --- Orders ---
@@ -154,20 +168,23 @@
     if (!tbody || !data.data) return;
 
     tbody.innerHTML = data.data.map(o => {
-      const statusClass = o.order_status === 'FILLED' ? 'status-filled' :
-        o.order_status === 'REJECTED' ? 'status-rejected' : 'status-pending';
-      const time = o.created_at ? o.created_at.split('T')[1]?.substring(0, 8) || '' : '';
+      const statusClass = o.order_status === 'FILLED' ? 'text-green' :
+                          o.order_status === 'REJECTED' ? 'text-red' : 'text-muted';
+      const time = formatIST(o.created_at);
       const pnl = o.pnl || 0;
-      const pnlClass = pnl >= 0 ? 'profit' : 'loss';
+      const pnlClass = pnl > 0 ? 'text-green' : (pnl < 0 ? 'text-red' : 'text-muted');
+      const typeColor = o.transaction_type === 'BUY' ? 'var(--accent-buy)' : 'var(--accent-sell)';
 
       return `<tr>
-        <td>${time}</td>
-        <td>${o.trading_symbol || ''}</td>
-        <td><span class="option-badge ${(o.option_type || '').toLowerCase()}">${o.transaction_type} ${o.option_type}</span></td>
+        <td style="font-family: var(--font-mono); color: var(--text-muted);">${time}</td>
+        <td style="font-weight: 600;">${o.trading_symbol || '--'}</td>
+        <td style="color: ${typeColor}; font-weight: bold;">${o.transaction_type} ${o.option_type}</td>
         <td>${o.lots || 0} (${o.quantity || 0})</td>
-        <td>₹${(o.execution_price || o.order_price || 0).toFixed(2)}</td>
-        <td class="${statusClass}">${o.order_status}</td>
-        <td class="metric-value ${pnlClass}">${pnl >= 0 ? '+' : ''}₹${pnl.toFixed(2)}</td>
+        <td style="font-family: var(--font-mono);">₹${(o.execution_price || o.order_price || 0).toFixed(2)}</td>
+        <td class="${statusClass}" style="font-weight: 600;">${o.order_status}</td>
+        <td class="${pnlClass}" style="font-family: var(--font-mono); font-weight: 700;">
+          ${pnl > 0 ? '+' : ''}₹${pnl.toFixed(2)}
+        </td>
       </tr>`;
     }).join('');
   }
@@ -209,6 +226,40 @@
     // Start/Stop toggle
     const toggleBtn = document.getElementById('toggle-bot-btn');
     const btnEmergency = document.getElementById('emergency-btn');
+
+    // NEW: Manual Trade Injection
+    const btnManualCE = document.getElementById('manual-ce-btn');
+    const btnManualPE = document.getElementById('manual-pe-btn');
+
+    async function handleManualEntry(direction) {
+      if (!confirm(`Are you sure you want to force enter a ${direction} position?\n\nThe bot will automatically manage the Stop-Loss and exits once executed.`)) return;
+      
+      try {
+        const res = await fetch('/api/manual-entry', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ direction })
+        });
+        
+        const data = await res.json();
+        if (data.error) {
+          alert(`❌ Error: ${data.error}`);
+        } else {
+          // Temporarily show success on the UI
+          const targetBtn = direction === 'CE' ? btnManualCE : btnManualPE;
+          const originalText = targetBtn.textContent;
+          targetBtn.textContent = '✅ Dispatched!';
+          setTimeout(() => targetBtn.textContent = originalText, 2000);
+          
+          fetchStatus(); // Refresh dashboard
+        }
+      } catch (e) {
+        alert('Network error connecting to Cloudflare Worker.');
+      }
+    }
+
+    if (btnManualCE) btnManualCE.addEventListener('click', () => handleManualEntry('CE'));
+    if (btnManualPE) btnManualPE.addEventListener('click', () => handleManualEntry('PE'));
 
     if (toggleBtn) {
       toggleBtn.addEventListener('click', async () => {
@@ -266,5 +317,28 @@
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+  }
+
+  // NEW: Robust UTC to IST Time Converter
+  function formatIST(dbDateString) {
+    if (!dbDateString) return '--:--:--';
+    
+    // Check if SQLite returned a raw string without a timezone specifier
+    let parseStr = dbDateString;
+    if (!parseStr.includes('Z') && !parseStr.includes('+')) {
+      // Force it to be parsed as UTC by appending 'Z'
+      parseStr = parseStr.replace(' ', 'T') + 'Z';
+    }
+    
+    const d = new Date(parseStr);
+    if (isNaN(d.getTime())) return dbDateString; // Fallback if parse fails
+    
+    return d.toLocaleTimeString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false // 24-hour format (e.g., 14:30:45) is best for trading logs
+    });
   }
 })();

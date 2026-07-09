@@ -7,7 +7,7 @@
 import type { Env, BotState, BotConfig, OrderPayload, SignalType } from './lib/types';
 import { KV_KEYS } from './lib/types';
 import { getLatestMACDValues, detectZeroCrossover } from './lib/macd';
-import { calculateATM, selectStrike, shouldRollExpiry, getNearestWeeklyExpiry } from './lib/strike';
+import { calculateATM, selectStrike, shouldRollExpiry, getNearestWeeklyExpiry, getPreferredStrikes } from './lib/strike';
 import { calculateLots, lotsToQuantity } from './lib/lot-sizing';
 import { isMarketOpen, isSquareOffTime, isEODSummaryTime, isPreMarketWarmup, getTodayDateStr, generateCorrelationId } from './lib/time';
 import { fetchNiftyCandles, getOptionChain, getFundsAndMargin, getLTP } from './lib/upstox';
@@ -22,7 +22,7 @@ async function loadConfig(db: D1Database): Promise<BotConfig> {
     map[(r as any).config_key] = (r as any).config_value;
   }
   return {
-    maxRiskPct: parseFloat(map['max_risk_pct'] || '20'),
+    maxRiskPct: parseFloat(map['max_risk_pct'] || '100'),
     niftyLotSize: parseInt(map['nifty_lot_size'] || '65', 10),
     rolloverOnExpiry: map['rollover_on_expiry'] === 'true',
     defaultExpiry: map['default_expiry'] || 'weekly',
@@ -293,44 +293,62 @@ export async function handleScheduled(env: Env): Promise<void> {
       }
     }
 
-    // Determine expiry and strike
+    // Determine expiry and base option type
     const rollover = shouldRollExpiry(new Date(), config.rolloverOnExpiry);
     const expiry = getNearestWeeklyExpiry(new Date(), rollover);
     const optionType = signal === 'BUY_CE' ? 'CE' : 'PE';
-    const strike = selectStrike(spotPrice, optionType as any, config.strikeInterval);
 
-    // Fetch option chain to get instrument token and current premium
+    // 1. Generate fallback strike preferences (ATM -> OTM1 -> OTM2 -> OTM3 -> OTM4)
+    const preferredStrikes = getPreferredStrikes(spotPrice, optionType as any, config.strikeInterval, 4);
+
+    // 2. Fetch Option Chain
     const chain = await getOptionChain(accessToken, expiry);
-    const targetOption = chain.find(
-      e => e.strikePrice === strike && e.optionType === optionType
-    );
 
-    if (!targetOption) {
+    // 3. Map preferred strikes to actual option instruments in the chain
+    const candidateOptions = preferredStrikes.map(strike =>
+      chain.find(e => e.strikePrice === strike && e.optionType === optionType)
+    ).filter(Boolean); // Removes any undefined if the chain data is incomplete
+
+    if (candidateOptions.length === 0) {
       state.lockTimestamp = null;
       await saveBotState(env.TRADING_KV, state);
-      await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, signal, state.status, `ERROR: No option found for ${strike}${optionType} exp ${expiry}`);
+      await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, signal, state.status, `ERROR: No valid options found for exp ${expiry}`);
       return;
     }
 
-    // Get current premium via LTP
-    const ltpMap = await getLTP(accessToken, [targetOption.instrumentKey]);
-    const premium = ltpMap[targetOption.instrumentKey] || targetOption.ltp;
+    // 4. Batch fetch LTP for all 5 candidates simultaneously (Saves API calls & execution time)
+    const candidateKeys = candidateOptions.map((opt: any) => opt.instrumentKey);
+    const ltpMap = await getLTP(accessToken, candidateKeys);
 
-    if (premium <= 0) {
-      state.lockTimestamp = null;
-      await saveBotState(env.TRADING_KV, state);
-      await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, signal, state.status, 'ERROR: Zero premium');
-      return;
-    }
-
-    // Calculate lot size
+    // 5. Get available margin to test affordability
     const funds = await getFundsAndMargin(accessToken);
-    const lots = calculateLots(funds.availableMargin, premium, config.niftyLotSize, config.maxRiskPct);
 
-    if (lots === 0) {
+    let targetOption = null;
+    let lots = 0;
+    let premium = 0;
+    let strike = 0;
+
+    // 6. Evaluate candidates in order. Break loop on the first affordable one.
+    for (const opt of candidateOptions) {
+      const currentPremium = (ltpMap as any)[(opt as any).instrumentKey]?.last_price || ltpMap[(opt as any).instrumentKey] || (opt as any).ltp;
+      if (currentPremium <= 0) continue;
+
+      const calcLots = calculateLots(funds.availableMargin, currentPremium, config.niftyLotSize, config.maxRiskPct);
+
+      if (calcLots > 0) {
+        targetOption = opt;
+        lots = calcLots;
+        premium = currentPremium;
+        strike = (opt as any).strikePrice;
+        break; // We found our affordable strike! Exit the loop.
+      }
+    }
+
+    // 7. If all 5 levels (ATM + 4 OTMs) are still too expensive
+    if (!targetOption || lots === 0) {
       state.lockTimestamp = null;
       await saveBotState(env.TRADING_KV, state);
-      await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, signal, state.status, `SKIP: Insufficient margin (avail=${funds.availableMargin}, premium=${premium})`);
+      await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, signal, state.status, `SKIP: Insufficient margin for ATM & all 4 OTM levels (avail=₹${funds.availableMargin.toFixed(2)})`);
       return;
     }
 
