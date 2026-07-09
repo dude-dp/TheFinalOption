@@ -13,6 +13,8 @@
       this.ctx = this.canvas.getContext('2d');
       this.spots = [];
       this.macd = []; // Will hold {timestamp, value, signal, hist}
+      this.orders = []; // Store orders for execution flags
+      this._lastData = null; // Cache for fullscreen sync
       this.dpr = window.devicePixelRatio || 1;
       this.crosshair = null;
 
@@ -71,9 +73,11 @@
       });
     }
 
-    updateData(spots, rawMacd) {
+    updateData(spots, rawMacd, orders = []) {
       this.spots = spots || [];
       this.macd = this.processMACD(rawMacd);
+      this.orders = orders;
+      this._lastData = { spots: this.spots, macd: rawMacd }; // Cache for overlay sync
       this.draw();
     }
 
@@ -202,6 +206,65 @@
         const bodyHeight = Math.max(Math.abs(oY - cY), 1);
         ctx.fillRect(cx - candleW / 2, bodyTop, candleW, bodyHeight);
       });
+
+      // ==================== ON-CHART EXECUTION FLAGS ====================
+      if (this.orders && this.orders.length > 0) {
+        this.orders.forEach(o => {
+          if (o.order_status !== 'FILLED') return;
+          
+          const orderTime = new Date(o.created_at).getTime();
+          let closestDist = Infinity;
+          let bestIdx = -1;
+          
+          this.spots.forEach((d, i) => {
+            const t = new Date(d.timestamp).getTime();
+            const dist = Math.abs(t - orderTime);
+            if (dist < closestDist) {
+              closestDist = dist;
+              bestIdx = i;
+            }
+          });
+          
+          if (bestIdx !== -1) {
+            const cx = plotX + (bestIdx / (this.spots.length - 1)) * plotW;
+            const isBuy = o.transaction_type === 'BUY';
+            const color = isBuy ? this.theme.buy : this.theme.sell;
+            
+            // Draw horizontal dotted line extending right
+            const spotAtEntry = this.spots[bestIdx].close;
+            const y = plotY + plotH - ((spotAtEntry - min) / (max - min)) * plotH;
+            
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1;
+            ctx.setLineDash([2, 4]);
+            ctx.beginPath();
+            ctx.moveTo(cx, y);
+            ctx.lineTo(plotX + plotW, y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            
+            // Draw Flag (Triangle)
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            if (isBuy) {
+               ctx.moveTo(cx, y + 8);
+               ctx.lineTo(cx - 5, y + 16);
+               ctx.lineTo(cx + 5, y + 16);
+            } else {
+               ctx.moveTo(cx, y - 8);
+               ctx.lineTo(cx - 5, y - 16);
+               ctx.lineTo(cx + 5, y - 16);
+            }
+            ctx.fill();
+            
+            // Draw Label (Option Price)
+            ctx.fillStyle = this.theme.textDark;
+            ctx.font = '10px var(--font-mono)';
+            ctx.textAlign = 'center';
+            ctx.fillText(`${o.transaction_type} @ ₹${(o.execution_price || 0).toFixed(1)}`, cx, isBuy ? y + 28 : y - 22);
+          }
+        });
+      }
     }
 
     drawMACD(ctx, startX, startY, w, h, padding) {
@@ -302,6 +365,27 @@
       ctx.lineTo(this.width - padding.right, this.crosshair.y);
       ctx.stroke();
       ctx.setLineDash([]);
+
+      // Magnetic Close Price Dot
+      const plotH = (this.height * 0.55) - padding.top - 25; // Matching spotH logic roughly
+      // Actually we need to calculate exact Y of close to draw the dot.
+      // Re-calculate min/max for spot
+      let min = Infinity, max = -Infinity;
+      this.spots.forEach(d => { if (d.low < min) min = d.low; if (d.high > max) max = d.high; });
+      const range = max - min || 1;
+      min -= range * 0.05; max += range * 0.05;
+      
+      const closeY = padding.top + plotH - ((spot.close - min) / (max - min)) * plotH;
+      
+      // Draw glowing magnetic dot on the close price
+      ctx.fillStyle = this.theme.textDark;
+      ctx.beginPath();
+      ctx.arc(this.crosshair.x, closeY, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 10;
+      ctx.shadowColor = this.theme.textDark;
+      ctx.fill();
+      ctx.shadowBlur = 0;
 
       // Legend Tooltip
       const time = this.formatTime(spot.timestamp);
