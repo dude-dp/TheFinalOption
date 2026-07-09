@@ -7,8 +7,9 @@ import { Hono } from 'hono';
 import { basicAuth } from 'hono/basic-auth';
 import type { Env, BotState, ConfirmRequest, OrderPayload, PollResponse } from '../lib/types';
 import { KV_KEYS } from '../lib/types';
-import { getAuthorizationUrl, exchangeCodeForToken, fetchNiftyCandles } from '../lib/upstox';
+import { getAuthorizationUrl, exchangeCodeForToken, fetchNiftyCandles, getFundsAndMargin } from '../lib/upstox';
 import { getTodayDateStr } from '../lib/time';
+import { addPendingOrder, removePendingOrder } from '../lib/orders';
 
 const api = new Hono<{ Bindings: Env }>();
 
@@ -54,25 +55,30 @@ api.get('/api/poll', requirePollSecret, async (c) => {
   const stateRaw = await kv.get(KV_KEYS.BOT_STATE);
   const state: BotState = stateRaw ? JSON.parse(stateRaw) : { status: 'STOPPED' };
 
-  // List all pending orders from KV
-  const listResult = await kv.list({ prefix: KV_KEYS.PENDING_ORDER_PREFIX });
+  // Get pending orders array from KV
+  const rawPending = await kv.get(KV_KEYS.PENDING_ORDERS);
+  const pendingList: OrderPayload[] = rawPending ? JSON.parse(rawPending) : [];
+  
   const orders: OrderPayload[] = [];
+  const remainingList: OrderPayload[] = [];
+  let changed = false;
 
-  for (const key of listResult.keys) {
-    const raw = await kv.get(key.name);
-    if (raw) {
-      const order: OrderPayload = JSON.parse(raw);
-      if (order.status === 'PENDING') {
-        orders.push(order);
-        // Mark as DISPATCHED to prevent duplicate pickup
-        order.status = 'DISPATCHED';
-        await kv.put(key.name, JSON.stringify(order), { expirationTtl: 300 });
-        // Update D1
-        await c.env.TRADING_DB.prepare(
-          `UPDATE order_ledger SET order_status = 'DISPATCHED', updated_at = datetime('now') WHERE correlation_id = ?`
-        ).bind(order.correlationId).run();
-      }
+  for (const order of pendingList) {
+    if (order.status === 'PENDING') {
+      orders.push(order);
+      // Mark as DISPATCHED to prevent duplicate pickup
+      order.status = 'DISPATCHED';
+      changed = true;
+      // Update D1
+      await c.env.TRADING_DB.prepare(
+        `UPDATE order_ledger SET order_status = 'DISPATCHED', updated_at = datetime('now') WHERE correlation_id = ?`
+      ).bind(order.correlationId).run();
     }
+    remainingList.push(order);
+  }
+
+  if (changed) {
+    await kv.put(KV_KEYS.PENDING_ORDERS, JSON.stringify(remainingList));
   }
 
   // Get access token for daemon to use
@@ -127,7 +133,7 @@ api.post('/api/confirm', requirePollSecret, async (c) => {
   ).bind(status, executionPrice, upstoxOrderId, rejectionReason, correlationId).run();
 
   // Remove from KV pending
-  await c.env.TRADING_KV.delete(`${KV_KEYS.PENDING_ORDER_PREFIX}${correlationId}`);
+  await removePendingOrder(c.env.TRADING_KV, correlationId);
 
   // If order was REJECTED, release position lock and clear active position
   if (status === 'REJECTED' || status === 'CANCELLED') {
@@ -179,11 +185,29 @@ api.get('/api/status', async (c) => {
   const state: BotState = stateRaw ? JSON.parse(stateRaw) : {
     status: 'STOPPED', lastUpdated: '', activePosition: null, lockTimestamp: null, lastMacdLine: null
   };
-  const hasToken = !!(await c.env.TRADING_KV.get(KV_KEYS.UPSTOX_ACCESS_TOKEN));
+  const accessToken = await c.env.TRADING_KV.get(KV_KEYS.UPSTOX_ACCESS_TOKEN);
+  const hasToken = !!accessToken;
 
   // Fetch cached margin
-  const marginRaw = await c.env.TRADING_KV.get(KV_KEYS.ACCOUNT_MARGIN);
-  const margin = marginRaw ? JSON.parse(marginRaw) : null;
+  let marginRaw = await c.env.TRADING_KV.get(KV_KEYS.ACCOUNT_MARGIN);
+  let margin = marginRaw ? JSON.parse(marginRaw) : null;
+
+  // Dynamically refresh if missing, empty, or older than 5 minutes
+  const now = Date.now();
+  const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  if (hasToken && (!margin || !margin.timestamp || (now - margin.timestamp > CACHE_TTL_MS) || (margin.availableMargin === 0 && margin.totalBalance === 0))) {
+    try {
+      const funds = await getFundsAndMargin(accessToken);
+      const marginData = {
+        ...funds,
+        timestamp: now
+      };
+      await c.env.TRADING_KV.put(KV_KEYS.ACCOUNT_MARGIN, JSON.stringify(marginData));
+      margin = marginData;
+    } catch (e) {
+      // Fail silently and fallback to cached value
+    }
+  }
 
   return c.json({ ...state, hasAccessToken: hasToken, margin });
 });
@@ -232,11 +256,7 @@ api.post('/api/emergency-squareoff', async (c) => {
       createdAt: new Date().toISOString(),
     };
 
-    await c.env.TRADING_KV.put(
-      `${KV_KEYS.PENDING_ORDER_PREFIX}${correlationId}`,
-      JSON.stringify(sellOrder),
-      { expirationTtl: 300 }
-    );
+    await addPendingOrder(c.env.TRADING_KV, sellOrder);
 
     await c.env.TRADING_DB.prepare(
       `INSERT INTO order_ledger (order_id, correlation_id, instrument_token, trading_symbol, option_type, strike_price, transaction_type, quantity, lots, order_price, order_status)

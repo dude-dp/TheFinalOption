@@ -6,9 +6,9 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
-    "pm2:start": "pm2 start ecosystem.config.cjs",
-    "pm2:stop": "pm2 stop thefinaloption-daemon",
-    "pm2:logs": "pm2 logs thefinaloption-daemon"
+    "pm2:start": "npx pm2 start ecosystem.config.cjs",
+    "pm2:stop": "npx pm2 stop thefinaloption-daemon",
+    "pm2:logs": "npx pm2 logs thefinaloption-daemon"
   },
   "dependencies": {
     "dotenv": "^16.4.0"

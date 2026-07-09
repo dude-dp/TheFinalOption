@@ -1,6 +1,6 @@
 // ============================================
-// HTML5 Canvas Chart — Professional OHLC + MACD
-// Client-side rendering with Crosshairs & Time Axis
+// HTML5 Canvas Chart — Professional OHLC + MACD Complete
+// Client-side rendering with Crosshairs & Axes
 // ============================================
 
 (function () {
@@ -12,27 +12,27 @@
       if (!this.canvas) return;
       this.ctx = this.canvas.getContext('2d');
       this.spots = [];
-      this.macd = [];
+      this.macd = []; // Will hold {timestamp, value, signal, hist}
       this.dpr = window.devicePixelRatio || 1;
       this.crosshair = null;
 
-      // Extract colors dynamically from your CSS variables
+      // Extract colors dynamically from CSS variables
       const style = getComputedStyle(document.body);
       this.theme = {
-        bg: style.getPropertyValue('--canvas-bg').trim() || '#f6f8fa',
-        grid: style.getPropertyValue('--border').trim() || 'rgba(15, 23, 42, 0.06)',
-        text: style.getPropertyValue('--text-muted').trim() || '#64748b',
-        textDark: style.getPropertyValue('--text-primary').trim() || '#0f172a',
-        buy: style.getPropertyValue('--accent-buy').trim() || '#059669',
-        sell: style.getPropertyValue('--accent-sell').trim() || '#dc2626',
-        macdLine: style.getPropertyValue('--accent-blue').trim() || '#4f46e5',
-        crosshair: 'rgba(15, 23, 42, 0.2)'
+        bg: 'transparent',
+        grid: style.getPropertyValue('--border').trim() || 'rgba(255, 255, 255, 0.08)',
+        text: style.getPropertyValue('--text-muted').trim() || '#a1a1aa',
+        textDark: style.getPropertyValue('--text-primary').trim() || '#f8fafc',
+        buy: style.getPropertyValue('--accent-buy').trim() || '#10b981',
+        sell: style.getPropertyValue('--accent-sell').trim() || '#ef4444',
+        macdLine: style.getPropertyValue('--accent-blue').trim() || '#3b82f6',
+        signalLine: style.getPropertyValue('--accent-orange').trim() || '#f59e0b',
+        crosshair: 'rgba(255, 255, 255, 0.2)',
+        tooltipBg: style.getPropertyValue('--surface-elevated').trim() || '#27272a'
       };
 
       this.resize();
       window.addEventListener('resize', () => this.resize());
-      
-      // Interactivity Events
       this.canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
       this.canvas.addEventListener('mouseleave', () => {
         this.crosshair = null;
@@ -43,25 +43,43 @@
     resize() {
       const rect = this.canvas.parentElement.getBoundingClientRect();
       this.canvas.width = rect.width * this.dpr;
-      this.canvas.height = 350 * this.dpr; // Increased height slightly for breathing room
+      this.canvas.height = 400 * this.dpr; // Slightly taller to fit axes
       this.canvas.style.width = rect.width + 'px';
-      this.canvas.style.height = '350px';
+      this.canvas.style.height = '400px';
       this.ctx.scale(this.dpr, this.dpr);
       this.width = rect.width;
-      this.height = 350;
+      this.height = 400;
       this.draw();
     }
 
-    updateData(spots, macd) {
+    // --- On-The-Fly Signal & Histogram Calculation ---
+    processMACD(rawData) {
+      if (!rawData || rawData.length === 0) return [];
+      const period = 9;
+      const k = 2 / (period + 1);
+      let ema = rawData[0].value; // Seed with first MACD value
+
+      return rawData.map((d, i) => {
+        if (i > 0) ema = (d.value * k) + (ema * (1 - k)); // Calculate 9-EMA
+        const hist = d.value - ema; // Histogram = MACD - Signal
+        return {
+          timestamp: d.timestamp,
+          value: d.value, // MACD Line
+          signal: ema,    // Signal Line
+          hist: hist      // Histogram
+        };
+      });
+    }
+
+    updateData(spots, rawMacd) {
       this.spots = spots || [];
-      this.macd = macd || [];
+      this.macd = this.processMACD(rawMacd);
       this.draw();
     }
 
     formatTime(isoString) {
       if (!isoString) return '';
       const d = new Date(isoString);
-      // Format to HH:MM IST
       return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
     }
 
@@ -72,10 +90,9 @@
 
       if (this.spots.length === 0) return;
 
-      const padding = { left: 10, right: 60, top: 20, bottom: 20 };
+      const padding = { left: 10, right: 65, top: 20, bottom: 25 };
       const plotW = this.width - padding.left - padding.right;
       
-      // Find closest data point based on X coordinate
       let closestIdx = Math.round(((x - padding.left) / plotW) * (this.spots.length - 1));
       closestIdx = Math.max(0, Math.min(closestIdx, this.spots.length - 1));
 
@@ -93,32 +110,24 @@
       const w = this.width;
       const h = this.height;
       
-      // Panel dimensions
       const gap = h * 0.05;
-      const spotH = h * 0.60;
+      const spotH = h * 0.55;
       const macdH = h * 0.30;
-      const padding = { left: 10, right: 60, top: 20, bottom: 20 };
+      const padding = { left: 10, right: 65, top: 20, bottom: 25 };
 
-      // Clear Canvas
-      ctx.fillStyle = this.theme.bg;
-      ctx.fillRect(0, 0, w, h);
+      ctx.clearRect(0, 0, w, h); // Clear for transparent bento background
 
       if (this.spots.length < 2) {
         ctx.fillStyle = this.theme.text;
-        ctx.font = '13px Inter, sans-serif';
+        ctx.font = '13px var(--font-sans)';
         ctx.textAlign = 'center';
-        ctx.fillText('Awaiting market data...', w / 2, h / 2);
+        ctx.fillText('Awaiting live market data...', w / 2, h / 2);
         return;
       }
 
-      // 1. Draw Candlesticks
       this.drawCandles(ctx, 0, 0, w, spotH, padding);
-
-      // 2. Draw MACD
       this.drawMACD(ctx, 0, spotH + gap, w, macdH, padding);
-
-      // 3. Draw Crosshair & Legend
-      this.drawCrosshair(ctx, spotH, spotH + gap, macdH, padding);
+      this.drawCrosshair(ctx, padding);
     }
 
     drawCandles(ctx, startX, startY, w, h, padding) {
@@ -127,7 +136,6 @@
       const plotX = startX + padding.left;
       const plotY = startY + padding.top;
 
-      // Find Min/Max for Y-Axis
       let min = Infinity, max = -Infinity;
       this.spots.forEach(d => {
         if (d.low < min) min = d.low;
@@ -137,13 +145,12 @@
       min -= range * 0.05;
       max += range * 0.05;
 
-      // Draw Grid & Y-Axis Labels
       ctx.strokeStyle = this.theme.grid;
-      ctx.lineWidth = 1;
       ctx.fillStyle = this.theme.text;
-      ctx.font = '10px JetBrains Mono, monospace';
+      ctx.font = '10px var(--font-mono)';
       ctx.textAlign = 'left';
 
+      // Y-Axis for Candles
       for (let i = 0; i <= 4; i++) {
         const gy = plotY + (plotH / 4) * i;
         const val = max - ((max - min) / 4) * i;
@@ -152,23 +159,29 @@
         ctx.moveTo(plotX, gy);
         ctx.lineTo(plotX + plotW, gy);
         ctx.stroke();
-        
-        ctx.fillText(val.toFixed(2), plotX + plotW + 5, gy + 3);
+        ctx.fillText(val.toFixed(1), plotX + plotW + 8, gy + 3);
       }
 
-      // Draw X-Axis Time Labels (Every ~30 mins)
+      // X-Axis Time Labels & Vertical Grid
       ctx.textAlign = 'center';
       for (let i = 0; i < this.spots.length; i++) {
         const timeStr = this.formatTime(this.spots[i].timestamp);
+        // Draw label every ~30 mins
         if (timeStr.endsWith('00') || timeStr.endsWith('30')) {
           const cx = plotX + (i / (this.spots.length - 1)) * plotW;
-          ctx.fillText(timeStr, cx, plotY + plotH + 15);
+          
+          // Vertical Grid line extending down through MACD
+          ctx.beginPath();
+          ctx.moveTo(cx, plotY);
+          ctx.lineTo(cx, this.height - padding.bottom);
+          ctx.stroke();
+
+          ctx.fillText(timeStr, cx, this.height - 5);
         }
       }
 
-      // Draw Candlesticks
-      const candleW = Math.max(1, (plotW / this.spots.length) * 0.7);
-
+      // Candlesticks
+      const candleW = Math.max(1, (plotW / this.spots.length) * 0.6);
       this.spots.forEach((d, i) => {
         const cx = plotX + (i / (this.spots.length - 1)) * plotW;
         const oY = plotY + plotH - ((d.open - min) / (max - min)) * plotH;
@@ -180,81 +193,94 @@
         ctx.fillStyle = isBull ? this.theme.buy : this.theme.sell;
         ctx.strokeStyle = ctx.fillStyle;
 
-        // Draw Wick
         ctx.beginPath();
         ctx.moveTo(cx, hY);
         ctx.lineTo(cx, lY);
         ctx.stroke();
 
-        // Draw Body
         const bodyTop = Math.min(oY, cY);
-        const bodyHeight = Math.max(Math.abs(oY - cY), 1); // Minimum 1px height
+        const bodyHeight = Math.max(Math.abs(oY - cY), 1);
         ctx.fillRect(cx - candleW / 2, bodyTop, candleW, bodyHeight);
       });
     }
 
     drawMACD(ctx, startX, startY, w, h, padding) {
       const plotW = w - padding.left - padding.right;
-      const plotH = h - padding.bottom; // No top padding for MACD
+      const plotH = h - padding.bottom;
       const plotX = startX + padding.left;
       const plotY = startY;
 
       if (this.macd.length === 0) return;
 
-      const values = this.macd.map(d => d.value);
-      let min = Math.min(...values);
-      let max = Math.max(...values);
-      
-      // Ensure zero is visually centered if possible
-      const absMax = Math.max(Math.abs(min), Math.abs(max));
-      max = absMax * 1.1;
-      min = -absMax * 1.1;
+      // Find max absolute value to center zero perfectly
+      let maxAbs = 0;
+      this.macd.forEach(d => {
+        maxAbs = Math.max(maxAbs, Math.abs(d.value), Math.abs(d.signal), Math.abs(d.hist));
+      });
+      const max = maxAbs * 1.1 || 1;
+      const min = -max;
 
-      // Draw Zero Line
-      const zeroY = plotY + plotH - ((0 - min) / (max - min)) * plotH;
-      ctx.strokeStyle = this.theme.text;
-      ctx.lineWidth = 1;
-      ctx.setLineDash([3, 3]);
-      ctx.beginPath();
-      ctx.moveTo(plotX, zeroY);
-      ctx.lineTo(plotX + plotW, zeroY);
-      ctx.stroke();
-      ctx.setLineDash([]);
+      ctx.strokeStyle = this.theme.grid;
+      ctx.fillStyle = this.theme.text;
+      ctx.font = '10px var(--font-mono)';
+      ctx.textAlign = 'left';
 
-      // Draw MACD Line
+      // Y-Axis for MACD (Upper, Zero, Lower)
+      [max, 0, min].forEach((val, i) => {
+        const gy = plotY + (plotH / 2) * i;
+        ctx.beginPath();
+        ctx.moveTo(plotX, gy);
+        ctx.lineTo(plotX + plotW, gy);
+        ctx.stroke();
+        
+        if (val !== 0) ctx.fillText(val.toFixed(2), plotX + plotW + 8, gy + 3);
+        else ctx.fillText("0.00", plotX + plotW + 8, gy + 3);
+      });
+
+      const zeroY = plotY + (plotH / 2);
+      const barW = Math.max(1, (plotW / this.macd.length) * 0.5);
+
+      // 1. Draw Histogram
+      this.macd.forEach((d, i) => {
+        const cx = plotX + (i / (this.macd.length - 1)) * plotW;
+        const histH = (Math.abs(d.hist) / max) * (plotH / 2);
+        
+        // Slightly transparent bars for aesthetics
+        ctx.fillStyle = d.hist >= 0 ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)';
+        
+        if (d.hist >= 0) {
+          ctx.fillRect(cx - barW / 2, zeroY - histH, barW, histH);
+        } else {
+          ctx.fillRect(cx - barW / 2, zeroY, barW, histH);
+        }
+      });
+
+      // 2. Draw MACD Line
       ctx.strokeStyle = this.theme.macdLine;
       ctx.lineWidth = 2;
-      ctx.lineJoin = 'round';
       ctx.beginPath();
-
-      for (let i = 0; i < this.macd.length; i++) {
+      this.macd.forEach((d, i) => {
         const cx = plotX + (i / (this.macd.length - 1)) * plotW;
-        const cy = plotY + plotH - ((this.macd[i].value - min) / (max - min)) * plotH;
-        
+        const cy = plotY + plotH - ((d.value - min) / (max - min)) * plotH;
         if (i === 0) ctx.moveTo(cx, cy);
         else ctx.lineTo(cx, cy);
-      }
+      });
       ctx.stroke();
-      
-      // Draw Histogram representation (coloring the line under/over zero)
-      for (let i = 1; i < this.macd.length; i++) {
-         const prev = this.macd[i-1].value;
-         const curr = this.macd[i].value;
-         
-         // Mark zero crossovers clearly
-         if ((prev <= 0 && curr > 0) || (prev >= 0 && curr < 0)) {
-            const cx = plotX + (i / (this.macd.length - 1)) * plotW;
-            const cy = plotY + plotH - ((curr - min) / (max - min)) * plotH;
-            
-            ctx.fillStyle = curr > 0 ? this.theme.buy : this.theme.sell;
-            ctx.beginPath();
-            ctx.arc(cx, cy, 4, 0, Math.PI * 2);
-            ctx.fill();
-         }
-      }
+
+      // 3. Draw Signal Line
+      ctx.strokeStyle = this.theme.signalLine;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      this.macd.forEach((d, i) => {
+        const cx = plotX + (i / (this.macd.length - 1)) * plotW;
+        const cy = plotY + plotH - ((d.signal - min) / (max - min)) * plotH;
+        if (i === 0) ctx.moveTo(cx, cy);
+        else ctx.lineTo(cx, cy);
+      });
+      ctx.stroke();
     }
 
-    drawCrosshair(ctx, spotH, macdStartY, macdH, padding) {
+    drawCrosshair(ctx, padding) {
       if (!this.crosshair) return;
 
       const idx = this.crosshair.index;
@@ -262,41 +288,35 @@
       const macd = this.macd[idx];
       if (!spot) return;
 
-      // Draw Vertical & Horizontal Lines
       ctx.strokeStyle = this.theme.crosshair;
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 4]);
 
-      // Vertical Line
+      // Crosshairs
       ctx.beginPath();
       ctx.moveTo(this.crosshair.x, padding.top);
       ctx.lineTo(this.crosshair.x, this.height - padding.bottom);
       ctx.stroke();
-
-      // Horizontal Line
       ctx.beginPath();
       ctx.moveTo(padding.left, this.crosshair.y);
       ctx.lineTo(this.width - padding.right, this.crosshair.y);
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Draw Legend Tooltip
+      // Legend Tooltip
       const time = this.formatTime(spot.timestamp);
-      const isBull = spot.close >= spot.open;
-      const color = isBull ? this.theme.buy : this.theme.sell;
+      let legendText = `Time: ${time} | O: ${spot.open.toFixed(1)}  H: ${spot.high.toFixed(1)}  L: ${spot.low.toFixed(1)}  C: ${spot.close.toFixed(1)}`;
       
-      const legendText = `Time: ${time}  O: ${spot.open.toFixed(2)}  H: ${spot.high.toFixed(2)}  L: ${spot.low.toFixed(2)}  C: ${spot.close.toFixed(2)}  |  MACD: ${macd ? macd.value.toFixed(4) : '--'}`;
+      if (macd) {
+        legendText += `  ||  MACD: ${macd.value.toFixed(2)}  Sig: ${macd.signal.toFixed(2)}  Hist: ${macd.hist.toFixed(2)}`;
+      }
       
-      ctx.font = '600 11px Inter, sans-serif';
+      ctx.font = '600 11px var(--font-mono)';
       const textWidth = ctx.measureText(legendText).width;
       
-      // Tooltip Background
-      ctx.fillStyle = this.theme.bg;
-      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = this.theme.tooltipBg;
       ctx.fillRect(padding.left + 5, padding.top - 15, textWidth + 20, 24);
-      ctx.globalAlpha = 1.0;
       
-      // Tooltip Border & Text
       ctx.strokeStyle = this.theme.grid;
       ctx.strokeRect(padding.left + 5, padding.top - 15, textWidth + 20, 24);
       
@@ -306,6 +326,5 @@
     }
   }
 
-  // Expose globally
   window.TradingChart = TradingChart;
 })();

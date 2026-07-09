@@ -9,6 +9,7 @@
   const POLL_INTERVAL = 3000;
   let chart = null;
   let pollTimer = null;
+  let currentStatus = 'STOPPED';
 
   // --- Init ---
   document.addEventListener('DOMContentLoaded', () => {
@@ -42,6 +43,8 @@
     const res = await fetch('/api/status');
     const data = await res.json();
 
+    currentStatus = data.status;
+
     // Status badge
     const badge = document.getElementById('status-badge');
     const dot = document.getElementById('status-dot');
@@ -50,6 +53,18 @@
       badge.className = 'status-badge ' + data.status.toLowerCase();
       dot.className = 'status-dot ' + data.status.toLowerCase();
       statusText.textContent = data.status;
+    }
+
+    // Update Toggle Button label & style
+    const toggleBtn = document.getElementById('toggle-bot-btn');
+    if (toggleBtn) {
+      if (data.status === 'RUNNING') {
+        toggleBtn.textContent = '■ Stop Autonomous Trading';
+        toggleBtn.classList.add('running');
+      } else {
+        toggleBtn.textContent = '▶ Start Autonomous Trading';
+        toggleBtn.classList.remove('running');
+      }
     }
 
     // Token indicator
@@ -70,41 +85,29 @@
     }
 
     // Active position
-    const posContainer = document.getElementById('position-container');
-    if (posContainer) {
+    const noPosEl = document.getElementById('no-position');
+    const activePosEl = document.getElementById('active-position');
+    
+    if (noPosEl && activePosEl) {
       if (data.activePosition) {
         const p = data.activePosition;
-        const pnlClass = 'metric-value'; // Will be updated with LTP
-        posContainer.innerHTML = `
-          <div class="position-card">
-            <div class="metric">
-              <span class="metric-label">Symbol</span>
-              <span class="metric-value">${p.tradingSymbol}</span>
-            </div>
-            <div class="metric">
-              <span class="metric-label">Type</span>
-              <span class="option-badge ${p.optionType.toLowerCase()}">${p.optionType}</span>
-            </div>
-            <div class="metric">
-              <span class="metric-label">Strike</span>
-              <span class="metric-value">${p.strikePrice}</span>
-            </div>
-            <div class="metric">
-              <span class="metric-label">Entry Price</span>
-              <span class="metric-value">₹${p.entryPrice.toFixed(2)}</span>
-            </div>
-            <div class="metric">
-              <span class="metric-label">Lots</span>
-              <span class="metric-value">${p.lots}</span>
-            </div>
-            <div class="metric">
-              <span class="metric-label">Quantity</span>
-              <span class="metric-value">${p.quantity}</span>
-            </div>
-          </div>
-        `;
+        
+        // Hide the "Searching..." text, show the grid
+        noPosEl.style.display = 'none';
+        activePosEl.style.display = 'grid';
+        
+        // Update the specific metric spans
+        document.getElementById('pos-symbol').textContent = p.tradingSymbol;
+        document.getElementById('pos-entry').textContent = `₹${p.entryPrice.toFixed(2)}`;
+        
+        // Note: LTP and PnL require real-time Upstox data, 
+        // they will populate as your bot fetches them in the background.
+        document.getElementById('pos-ltp').textContent = 'Tracking...'; 
+        
       } else {
-        posContainer.innerHTML = '<p class="no-position">No active position</p>';
+        // Show the "Searching..." text, hide the grid
+        noPosEl.style.display = 'flex';
+        activePosEl.style.display = 'none';
       }
     }
   }
@@ -122,7 +125,7 @@
   async function fetchTelemetry() {
     const res = await fetch('/api/telemetry?limit=80');
     const data = await res.json();
-    const console = document.getElementById('log-console');
+    const console = document.getElementById('system-logs');
     if (!console || !data.data) return;
 
     console.innerHTML = data.data.map(entry => {
@@ -147,7 +150,7 @@
   async function fetchOrders() {
     const res = await fetch('/api/orders');
     const data = await res.json();
-    const tbody = document.getElementById('orders-tbody');
+    const tbody = document.getElementById('ledger-body');
     if (!tbody || !data.data) return;
 
     tbody.innerHTML = data.data.map(o => {
@@ -204,30 +207,17 @@
   // --- Control Bindings ---
   function bindControls() {
     // Start/Stop toggle
-    const btnStart = document.getElementById('btn-start');
-    const btnStop = document.getElementById('btn-stop');
-    const btnEmergency = document.getElementById('btn-emergency');
-    const btnAuth = document.getElementById('btn-auth');
+    const toggleBtn = document.getElementById('toggle-bot-btn');
+    const btnEmergency = document.getElementById('emergency-btn');
 
-    if (btnStart) {
-      btnStart.addEventListener('click', async () => {
-        if (!confirm('Start the trading bot?')) return;
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', async () => {
+        const action = currentStatus === 'RUNNING' ? 'STOP' : 'START';
+        if (!confirm(`${action === 'START' ? 'Start' : 'Stop'} the trading bot?`)) return;
         await fetch('/api/control', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'START' }),
-        });
-        fetchStatus();
-      });
-    }
-
-    if (btnStop) {
-      btnStop.addEventListener('click', async () => {
-        if (!confirm('Stop the trading bot?')) return;
-        await fetch('/api/control', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'STOP' }),
+          body: JSON.stringify({ action }),
         });
         fetchStatus();
       });
@@ -242,25 +232,19 @@
           btnEmergency.textContent = '⚠️ Click Again to Confirm';
           clickTimer = setTimeout(() => {
             clickCount = 0;
-            btnEmergency.textContent = '🚨 Emergency Square-Off';
+            btnEmergency.textContent = '🚨 EMERGENCY SQUARE-OFF';
           }, 3000);
         } else if (clickCount >= 2) {
           clearTimeout(clickTimer);
           clickCount = 0;
-          btnEmergency.textContent = '🚨 Emergency Square-Off';
+          btnEmergency.textContent = '🚨 EMERGENCY SQUARE-OFF';
           fetch('/api/emergency-squareoff', { method: 'POST' })
             .then(() => fetchStatus());
         }
       });
     }
 
-    if (btnAuth) {
-      btnAuth.addEventListener('click', () => {
-        window.open('/api/auth/login', '_blank', 'width=500,height=600');
-      });
-    }
-
-    // Risk slider
+    // Risk slider (if exists)
     const riskSlider = document.getElementById('risk-slider');
     const riskValue = document.getElementById('risk-value');
     if (riskSlider && riskValue) {

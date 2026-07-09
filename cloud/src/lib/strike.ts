@@ -67,7 +67,7 @@ export function selectStrike(
 /**
  * Determine whether the bot should roll to the next weekly expiry.
  * 
- * On expiry day (Thursday), theta decay and gamma spikes make
+ * On expiry day (Tuesday), theta decay and gamma spikes make
  * current-week options extremely risky. The bot rolls to next week.
  * 
  * @param currentDate - Current date in IST
@@ -80,14 +80,14 @@ export function shouldRollExpiry(
 ): boolean {
   if (!rolloverEnabled) return false;
 
-  // Thursday = day 4 in JavaScript Date
+  // Tuesday = day 2 in JavaScript Date
   const dayOfWeek = currentDate.getDay();
-  return dayOfWeek === 4;
+  return dayOfWeek === 2;
 }
 
 /**
  * Get the nearest weekly expiry date for NIFTY options.
- * NIFTY weekly options expire on Thursday.
+ * NIFTY weekly options expire on Tuesday.
  * 
  * @param fromDate - Reference date
  * @param rollToNext - If true, skip the current week's expiry
@@ -98,23 +98,23 @@ export function getNearestWeeklyExpiry(
   rollToNext: boolean = false
 ): string {
   const date = new Date(fromDate);
-  const dayOfWeek = date.getDay(); // 0=Sun, 4=Thu
+  const dayOfWeek = date.getDay(); // 0=Sun, 2=Tue
 
-  // Calculate days until next Thursday
-  let daysUntilThursday = (4 - dayOfWeek + 7) % 7;
+  // Calculate days until next Tuesday
+  let daysUntilTuesday = (2 - dayOfWeek + 7) % 7;
 
-  // If today IS Thursday and we're not rolling, use today's expiry
-  if (daysUntilThursday === 0 && !rollToNext) {
-    // Today is Thursday — this is the expiry
-  } else if (daysUntilThursday === 0 && rollToNext) {
-    // Today is Thursday but we're rolling — jump to next Thursday
-    daysUntilThursday = 7;
+  // If today IS Tuesday and we're not rolling, use today's expiry
+  if (daysUntilTuesday === 0 && !rollToNext) {
+    // Today is Tuesday — this is the expiry
+  } else if (daysUntilTuesday === 0 && rollToNext) {
+    // Today is Tuesday but we're rolling — jump to next Tuesday
+    daysUntilTuesday = 7;
   } else if (rollToNext) {
     // Roll adds 7 days to skip current week's expiry
-    daysUntilThursday += 7;
+    daysUntilTuesday += 7;
   }
 
-  date.setDate(date.getDate() + daysUntilThursday);
+  date.setDate(date.getDate() + daysUntilTuesday);
 
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');

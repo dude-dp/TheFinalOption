@@ -11,6 +11,7 @@ import { calculateATM, selectStrike, shouldRollExpiry, getNearestWeeklyExpiry } 
 import { calculateLots, lotsToQuantity } from './lib/lot-sizing';
 import { isMarketOpen, isSquareOffTime, isEODSummaryTime, isPreMarketWarmup, getTodayDateStr, generateCorrelationId } from './lib/time';
 import { fetchNiftyCandles, getOptionChain, getFundsAndMargin, getLTP } from './lib/upstox';
+import { addPendingOrder } from './lib/orders';
 
 // --- Config Loader ---
 
@@ -93,7 +94,10 @@ export async function handleScheduled(env: Env): Promise<void> {
   if (isMarketOpen() || isPreMarketWarmup()) {
     try {
       const funds = await getFundsAndMargin(accessToken);
-      await env.TRADING_KV.put(KV_KEYS.ACCOUNT_MARGIN, JSON.stringify(funds));
+      await env.TRADING_KV.put(KV_KEYS.ACCOUNT_MARGIN, JSON.stringify({
+        ...funds,
+        timestamp: Date.now()
+      }));
     } catch (e: any) {
       // Fail silently to avoid interrupting trade logic
     }
@@ -353,11 +357,7 @@ export async function handleScheduled(env: Env): Promise<void> {
     };
 
     // Write to KV for local daemon polling
-    await env.TRADING_KV.put(
-      `${KV_KEYS.PENDING_ORDER_PREFIX}${correlationId}`,
-      JSON.stringify(order),
-      { expirationTtl: 300 } // 5 min TTL — if not picked up, it expires
-    );
+    await addPendingOrder(env.TRADING_KV, order);
 
     // Log to D1
     await env.TRADING_DB.prepare(
@@ -415,11 +415,7 @@ async function dispatchSquareOff(env: Env, state: BotState, token: string, confi
     createdAt: new Date().toISOString(),
   };
 
-  await env.TRADING_KV.put(
-    `${KV_KEYS.PENDING_ORDER_PREFIX}${correlationId}`,
-    JSON.stringify(sellOrder),
-    { expirationTtl: 300 }
-  );
+  await addPendingOrder(env.TRADING_KV, sellOrder);
 
   await env.TRADING_DB.prepare(
     `INSERT INTO order_ledger (order_id, correlation_id, instrument_token, trading_symbol, option_type, strike_price, transaction_type, quantity, lots, order_price, order_status)

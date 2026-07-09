@@ -49,7 +49,7 @@ export const KV_KEYS = {
   BOT_STATE: 'bot_state',
   UPSTOX_ACCESS_TOKEN: 'upstox_access_token',
   UPSTOX_TOKEN_EXPIRY: 'upstox_token_expiry',
-  PENDING_ORDER_PREFIX: 'pending_order:',
+  PENDING_ORDERS: 'pending_orders',
   DAILY_CANDLE_CACHE: 'candle_cache',
   ACCOUNT_MARGIN: 'account_margin',
 } as const;

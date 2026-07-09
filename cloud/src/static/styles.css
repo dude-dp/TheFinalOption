@@ -15,6 +15,7 @@
   --accent-buy: #10b981;         /* Vibrant Green */
   --accent-sell: #ef4444;        /* Vibrant Red */
   --accent-blue: #3b82f6;        /* Info Blue */
+  --accent-orange: #f59e0b;      /* Add this for the Signal Line */
   --radius-xl: 20px;             /* Smooth Bento corners */
   --radius-md: 12px;
 }
@@ -118,6 +119,13 @@ body {
   border-color: rgba(239, 68, 68, 0.2);
 }
 .btn.emergency:hover { background: rgba(239, 68, 68, 0.2); }
+
+.btn.running {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--accent-sell);
+  border-color: rgba(239, 68, 68, 0.2);
+}
+.btn.running:hover { background: rgba(239, 68, 68, 0.2); }
 
 /* Position Tracker Metrics */
 .metrics-grid {

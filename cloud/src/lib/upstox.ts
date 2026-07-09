@@ -126,10 +126,14 @@ export async function getFundsAndMargin(token: string): Promise<UpstoxFundsRespo
   const data = await upstoxGet('/v3/user/get-funds-and-margin', token);
   const funds = data?.data;
 
+  const v3Available = funds?.available_to_trade?.total || funds?.available_to_trade?.cash_available_to_trade?.total;
+  const v3Used = funds?.available_to_trade?.cash_available_to_trade?.margin_used?.total;
+  const v3Total = v3Available; // In V3, total available represents the total equity balance
+
   return {
-    availableMargin: funds?.equity?.available_margin || funds?.available_margin || 0,
-    usedMargin: funds?.equity?.used_margin || funds?.used_margin || 0,
-    totalBalance: funds?.equity?.total_balance || funds?.total_balance || 0,
+    availableMargin: v3Available ?? funds?.equity?.available_margin ?? funds?.available_margin ?? 0,
+    usedMargin: v3Used ?? funds?.equity?.used_margin ?? funds?.used_margin ?? 0,
+    totalBalance: v3Total ?? funds?.equity?.total_balance ?? funds?.total_balance ?? 0,
   };
 }
 
