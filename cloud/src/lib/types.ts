@@ -16,6 +16,9 @@ export interface Env {
   UPSTOX_REDIRECT_URI: string;
   POLL_SECRET: string;
   ENVIRONMENT: string;
+  
+  // Discord Alerting
+  DISCORD_WEBHOOK_URL: string;
 }
 
 // --- Bot State ---

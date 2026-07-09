@@ -10,7 +10,7 @@ import { getLatestMACDValues, detectZeroCrossover } from './lib/macd';
 import { calculateATM, selectStrike, shouldRollExpiry, getNearestWeeklyExpiry, getPreferredStrikes } from './lib/strike';
 import { calculateLots, lotsToQuantity } from './lib/lot-sizing';
 import { isMarketOpen, isSquareOffTime, isEODSummaryTime, isPreMarketWarmup, getTodayDateStr, generateCorrelationId } from './lib/time';
-import { fetchNiftyCandles, getOptionChain, getFundsAndMargin, getLTP } from './lib/upstox';
+import { fetchNiftyCandles, getOptionChain, getFundsAndMargin, getLTP, notifyDiscord } from './lib/upstox';
 import { addPendingOrder } from './lib/orders';
 
 // --- Config Loader ---
@@ -226,6 +226,11 @@ export async function handleScheduled(env: Env): Promise<void> {
               `EXIT: ${exitReason}. LTP: ₹${currentLTP}, Peak: ₹${peak}, Entry: ₹${entry}, TSL Line: ₹${activeTSLPrice.toFixed(2)}`
             );
 
+            await notifyDiscord(
+              env.DISCORD_WEBHOOK_URL,
+              `🛡️ **STOP LOSS TRIGGERED: ${exitReason}**\nContract: \`${state.activePosition.tradingSymbol}\`\nLTP: ₹${currentLTP} (Peak was: ₹${peak})`
+            );
+
             // Dispatch square off order
             await dispatchSquareOff(env, state, accessToken, config);
 
@@ -402,11 +407,21 @@ export async function handleScheduled(env: Env): Promise<void> {
     await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, signal, state.status,
       `SIGNAL: ${signal} → ${targetOption.tradingSymbol} × ${lots} lots @ ₹${premium}`);
 
+    await notifyDiscord(
+      env.DISCORD_WEBHOOK_URL,
+      `🟢 **NEW ENTRY EXECUTED**\nSignal: **${signal}**\nContract: \`${targetOption.tradingSymbol}\`\nLots: **${lots}**\nEst. Premium: ₹${premium}\nBuffered Limit: ₹${bufferedPrice}`
+    );
+
   } catch (error: any) {
     // Ensure lock is released on error
     state.lockTimestamp = null;
     await saveBotState(env.TRADING_KV, state);
     await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, 'NONE', state.status, `CRON_ERROR: ${error.message}`);
+    
+    await notifyDiscord(
+      env.DISCORD_WEBHOOK_URL,
+      `🚨 **SYSTEM ERROR (CRON)**\n\`${error.message}\``
+    );
   }
 }
 
@@ -439,6 +454,11 @@ async function dispatchSquareOff(env: Env, state: BotState, token: string, confi
     `INSERT INTO order_ledger (order_id, correlation_id, instrument_token, trading_symbol, option_type, strike_price, transaction_type, quantity, lots, order_price, order_status)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(sellOrder.orderId, correlationId, pos.instrumentToken, pos.tradingSymbol, pos.optionType, pos.strikePrice, 'SELL', pos.quantity, pos.lots, 0, 'PENDING').run();
+
+  await notifyDiscord(
+    env.DISCORD_WEBHOOK_URL,
+    `⚡ **SQUARE-OFF DISPATCHED**\nClosing \`${pos.tradingSymbol}\` (${pos.lots} lots) at Market Price.`
+  );
 
   // Active position will be cleared by /api/confirm once the order is FILLED
 }

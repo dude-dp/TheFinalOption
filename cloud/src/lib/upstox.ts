@@ -248,3 +248,25 @@ export async function exchangeCodeForToken(
     expiresIn: data.expires_in || 86400,
   };
 }
+
+// ============================================
+// Notifications
+// ============================================
+export async function notifyDiscord(webhookUrl: string | undefined, message: string): Promise<void> {
+  if (!webhookUrl) return; // Fail silently if not configured
+  
+  try {
+    await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: "TheFinalOption Bot",
+        // Optional: Adds a flame icon to the bot's avatar
+        avatar_url: "https://raw.githubusercontent.com/tabler/icons/master/icons/flame.svg",
+        content: message
+      }),
+    });
+  } catch (error) {
+    console.error('Discord webhook failed:', error);
+  }
+}
