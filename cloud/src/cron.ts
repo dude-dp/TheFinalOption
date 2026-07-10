@@ -90,9 +90,11 @@ async function checkDailyDrawdown(db: D1Database, margin: number): Promise<boole
 // --- Main Cron Handler ---
 
 export async function handleScheduled(env: Env): Promise<void> {
+  console.log("CRON START");
   const config = await loadConfig(env.TRADING_DB);
   const state = await getBotState(env.TRADING_KV);
 
+  console.log("GATE 1:", state.status);
   // GATE 1: Bot must be RUNNING
   if (state.status !== 'RUNNING') {
     return;
@@ -100,6 +102,7 @@ export async function handleScheduled(env: Env): Promise<void> {
 
   // GATE 2: Get access token
   const accessToken = await env.TRADING_KV.get(KV_KEYS.UPSTOX_ACCESS_TOKEN);
+  console.log("GATE 2 token exists:", !!accessToken);
   if (!accessToken) {
     await logTelemetry(env.TRADING_DB, 0, 0, 0, 0, 'NONE', state.status, 'SKIP: No Upstox access token');
     return;
@@ -116,6 +119,7 @@ export async function handleScheduled(env: Env): Promise<void> {
 
       // Daily Drawdown Check
       const isDrawdownBreached = await checkDailyDrawdown(env.TRADING_DB, funds.totalBalance || funds.availableMargin);
+      console.log("Drawdown breached:", isDrawdownBreached);
       if (isDrawdownBreached) {
         state.status = 'SYSTEM_HALT' as any;
         await saveBotState(env.TRADING_KV, state);
@@ -130,6 +134,7 @@ export async function handleScheduled(env: Env): Promise<void> {
 
   // Daemon Heartbeat Check
   const lastHeartbeat = await env.TRADING_KV.get('daemon_last_heartbeat');
+  console.log("lastHeartbeat:", lastHeartbeat, "Age:", lastHeartbeat ? Date.now() - parseInt(lastHeartbeat) : 'none');
   if (lastHeartbeat && Date.now() - parseInt(lastHeartbeat) > 3 * 60 * 1000) {
     state.status = 'ORPHANED' as any;
     await saveBotState(env.TRADING_KV, state);
@@ -157,6 +162,7 @@ export async function handleScheduled(env: Env): Promise<void> {
   }
 
   // GATE 3: Market must be open
+  console.log("isMarketOpen:", isMarketOpen(), "isEODSummary:", isEODSummaryTime());
   if (!isMarketOpen()) {
     // Check for EOD summary
     if (isEODSummaryTime()) {

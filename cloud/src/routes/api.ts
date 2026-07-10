@@ -480,6 +480,27 @@ api.get('/api/orders', async (c) => {
   return c.json({ data: rows.results || [] });
 });
 
+/** GET /api/trigger-cron — Manually trigger cron (DEBUG) */
+import { handleScheduled } from '../cron';
+api.get('/api/trigger-cron', async (c) => {
+  try {
+    await handleScheduled(c.env);
+    return c.json({ success: true });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message });
+  }
+});
+
+import { getISTComponents, isMarketOpen, getCurrentIST } from '../lib/time';
+api.get('/api/debug-time', (c) => {
+  return c.json({
+    now: Date.now(),
+    ist: getCurrentIST().toISOString(),
+    components: getISTComponents(),
+    isOpen: isMarketOpen(),
+  });
+});
+
 /** GET /api/chart-data — NIFTY OHLC Candles + MACD */
 api.get('/api/chart-data', async (c) => {
   // 1. Get MACD telemetry from your D1 database

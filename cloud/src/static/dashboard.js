@@ -128,8 +128,16 @@
     const statusDot  = document.getElementById('status-dot');
     if (statusText) statusText.textContent = data.status;
     if (statusDot) {
-      if (data.status === 'RUNNING') statusDot.classList.add('running');
-      else statusDot.classList.remove('running');
+      if (data.status === 'RUNNING') {
+        statusDot.style.background = 'var(--accent-buy)';
+        statusDot.style.boxShadow = '0 0 8px var(--accent-buy)';
+      } else if (data.status === 'EMERGENCY_HALT') {
+        statusDot.style.background = 'var(--accent-sell)';
+        statusDot.style.boxShadow = '0 0 8px var(--accent-sell)';
+      } else {
+        statusDot.style.background = 'var(--text-muted)';
+        statusDot.style.boxShadow = 'none';
+      }
     }
 
     // Toggle button (Icon Morphing)
@@ -233,10 +241,10 @@
   }
 
   function classifyLog(msg) {
-    if (!msg) return { level: 'INFO', label: 'INFO' };
-    if (msg.match(/ERROR|CRON_ERROR|WARMUP_ERROR/i))                     return { level: 'ERR',  label: 'ERR' };
-    if (msg.match(/SIGNAL|EXIT|MANUAL|SQUAREOFF|ENTRY|SQUARE-OFF/i))     return { level: 'TRD',  label: 'TRD' };
-    if (msg.match(/WARN|SKIP|Deadlock|ORPHAN|SYSTEM.*HALT|HALT/i))       return { level: 'WARN', label: 'WARN' };
+    if (!msg || msg.trim().length === 0) return { level: 'TICK', label: 'TICK' };
+    if (msg.match(/ERROR|HALT|FAILED|REJECTED/i))        return { level: 'ERR',  label: 'ERR' };
+    if (msg.match(/WARN|SKIP|INSUFFICIENT/i))            return { level: 'WARN', label: 'WARN' };
+    if (msg.match(/SIGNAL|NEW ENTRY|SQUARE-OFF|FILLED/i))return { level: 'TRD',  label: 'TRD' };
     if (msg.match(/AUTO_SQUAREOFF|DRAWDOWN|DAEMON|HEARTBEAT|WARMUP/i))   return { level: 'SYS',  label: 'SYS' };
     return { level: 'INFO', label: 'INFO' };
   }
@@ -246,12 +254,8 @@
     const badge = document.getElementById('log-count-badge');
     if (!consoleEl) return;
 
-    // Filter out null/empty log messages for cleaner view (keep only meaningful entries)
-    let meaningful = allLogEntries.filter(entry => {
-      const msg = entry.log_message;
-      // Keep entries with actual log messages, skip bare MACD ticks
-      return msg && msg.trim().length > 0;
-    });
+    // We will show all entries, even MACD ticks, so the log feels "alive"
+    let meaningful = allLogEntries;
 
     // Apply category filter
     const filtered = meaningful.filter(entry => {
@@ -260,7 +264,7 @@
       if (activeLogFilter === 'trade')  return level === 'TRD';
       if (activeLogFilter === 'warn')   return level === 'WARN';
       if (activeLogFilter === 'error')  return level === 'ERR';
-      if (activeLogFilter === 'system') return level === 'SYS';
+      if (activeLogFilter === 'system') return level === 'SYS' || level === 'TICK';
       return true;
     });
 
@@ -283,8 +287,13 @@
 
     consoleEl.innerHTML = searched.map(entry => {
       const ts  = formatIST(entry.timestamp);
-      const msg = entry.log_message || '';
-      const { level, label } = classifyLog(msg);
+      let msg = entry.log_message || '';
+      
+      if (!msg || msg.trim().length === 0) {
+        msg = `Heartbeat | Spot: ${entry.nifty_spot?.toFixed(2)} | MACD: ${entry.macd_line?.toFixed(2)}`;
+      }
+      
+      const { level, label } = classifyLog(entry.log_message);
 
       // Highlight search term in message
       let displayMsg = escapeHtml(msg);

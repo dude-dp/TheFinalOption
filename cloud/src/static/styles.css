@@ -115,27 +115,46 @@ body.market-down::before { background: radial-gradient(circle at center, rgba(23
 }
 
 /* Grid Spanning */
+.col-span-2 {
+  grid-column: span 2;
+}
+
+.col-span-3 {
+  grid-column: span 3;
+}
+
 .col-span-4 {
   grid-column: span 4;
-}
-
-.col-span-8 {
-  grid-column: span 8;
-}
-
-.col-span-12 {
-  grid-column: span 12;
 }
 
 .col-span-6 {
   grid-column: span 6;
 }
 
-@media (max-width: 1100px) {
+.col-span-8 {
+  grid-column: span 8;
+}
 
+.col-span-9 {
+  grid-column: span 9;
+}
+
+.col-span-10 {
+  grid-column: span 10;
+}
+
+.col-span-12 {
+  grid-column: span 12;
+}
+
+@media (max-width: 1100px) {
+  .col-span-2,
+  .col-span-3,
   .col-span-4,
+  .col-span-6,
   .col-span-8,
-  .col-span-6 {
+  .col-span-9,
+  .col-span-10 {
     grid-column: span 12;
   }
 }
@@ -703,6 +722,114 @@ td {
 .log-search-wrapper:focus-within .log-search-icon {
   color: var(--accent-blue);
 }
+
+/* Stunning Execution Logs Console */
+.log-console {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: #09090b;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 12px;
+  height: 350px;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
+.log-console::-webkit-scrollbar {
+  width: 6px;
+}
+.log-console::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+.log-console::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.log-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: rgba(255, 255, 255, 0.3);
+  text-align: center;
+  gap: 12px;
+}
+
+.log-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  border-left: 3px solid transparent;
+  background: rgba(255, 255, 255, 0.02);
+  transition: all 0.2s ease;
+  animation: logEnter 0.3s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+.log-entry:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+@keyframes logEnter {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.log-time {
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+.log-badge {
+  font-size: 0.6rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+  min-width: 44px;
+  text-align: center;
+}
+
+.log-msg {
+  color: #e4e4e7;
+  word-break: break-word;
+}
+
+.log-highlight {
+  background: rgba(59, 130, 246, 0.3);
+  color: #fff;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+/* Level Specific Styles */
+.log-entry[data-level="INFO"] { border-left-color: rgba(255, 255, 255, 0.2); }
+.log-entry[data-level="INFO"] .log-badge { background: rgba(255, 255, 255, 0.1); color: #fff; }
+
+.log-entry[data-level="TICK"] { border-left-color: rgba(161, 161, 170, 0.2); opacity: 0.7; }
+.log-entry[data-level="TICK"] .log-badge { background: rgba(161, 161, 170, 0.1); color: #a1a1aa; }
+
+.log-entry[data-level="SYS"] { border-left-color: var(--accent-blue); background: linear-gradient(90deg, rgba(59,130,246,0.05) 0%, transparent 100%); }
+.log-entry[data-level="SYS"] .log-badge { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+
+.log-entry[data-level="TRD"] { border-left-color: var(--accent-buy); background: linear-gradient(90deg, rgba(16,185,129,0.05) 0%, transparent 100%); }
+.log-entry[data-level="TRD"] .log-badge { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+
+.log-entry[data-level="WARN"] { border-left-color: #f59e0b; background: linear-gradient(90deg, rgba(245,158,11,0.05) 0%, transparent 100%); }
+.log-entry[data-level="WARN"] .log-badge { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+
+.log-entry[data-level="ERR"] { border-left-color: var(--accent-sell); background: linear-gradient(90deg, rgba(239,68,68,0.05) 0%, transparent 100%); }
+.log-entry[data-level="ERR"] .log-badge { background: rgba(239, 68, 68, 0.2); color: #f87171; }
 
 /* ==================== DYNAMIC ISLAND ==================== */
 #position-island {

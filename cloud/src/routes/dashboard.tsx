@@ -80,7 +80,8 @@ dashboard.get('/', (c) => {
           <span id="margin-value" class="metric-value" style="font-size: 1rem;">---</span>
         </div>
         <div id="status-badge" class="metric-box" style="padding: 6px 12px; flex-direction: row; align-items: center; border-radius: 99px;">
-          <span id="status-dot" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--text-muted);"></span>
+          <span id="status-dot" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--text-muted); transition: background 0.3s, box-shadow 0.3s;"></span>
+          <span id="status-text" style="font-weight: bold; font-size: 0.85rem; margin-left: 8px; letter-spacing: 0.5px;">STOPPED</span>
         </div>
       </div>
     </header>
@@ -112,7 +113,7 @@ dashboard.get('/', (c) => {
     <main class="bento-grid">
 
       <!-- Chart -->
-      <section class="bento-card col-span-9" data-tab="chart" data-tab-label="Chart" style="padding:12px;">
+      <section class="bento-card col-span-10" data-tab="chart" data-tab-label="Chart" style="padding:12px;">
         <div class="chart-header" style="margin-bottom:0;">
           <h2 class="bento-card-title" style="margin-bottom:0;">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 19l6 -6l4 4l6 -7"/><path d="M20 16v3h-3"/><path d="M4 5v14M4 19h16"/></svg>
@@ -128,7 +129,7 @@ dashboard.get('/', (c) => {
       </section>
 
       <!-- Active Position Tracker -->
-      <section class="bento-card col-span-3" data-tab="controls" data-tab-label="Controls">
+      <section class="bento-card col-span-2" data-tab="controls" data-tab-label="Controls">
         <h2 class="bento-card-title">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/><path d="M12 12m-5 0a5 5 0 1 0 10 0a5 5 0 1 0 -10 0"/><path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"/><path d="M3 12h3m12 0h3M12 3v3m0 12v3"/></svg>
           Active Position
