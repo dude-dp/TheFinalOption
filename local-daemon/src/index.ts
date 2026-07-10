@@ -5,6 +5,9 @@
 // ============================================
 
 import 'dotenv/config';
+import { setDefaultResultOrder } from 'node:dns';
+setDefaultResultOrder('ipv4first');
+
 import { createServer } from 'node:http';
 import { logInfo, logWarn, logError, logTrade } from './logger.js';
 import { executeOrder } from './executor.js';

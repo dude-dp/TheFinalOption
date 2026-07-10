@@ -31,6 +31,11 @@ async function loadConfig(db: D1Database): Promise<BotConfig> {
     squareOffTime: map['square_off_time'] || '15:15',
     paperMode: map['paper_mode'] === 'true',
     maxSlippagePct: parseFloat(map['max_slippage_pct'] || '1'),
+    gexAvoidanceEnabled: map['gex_avoidance_enabled'] === 'true',
+    gexStrikeBuffer: parseInt(map['gex_strike_buffer'] || '25', 10),
+    adxFilterEnabled: map['adx_filter_enabled'] === 'true',
+    adxThreshold: parseInt(map['adx_threshold'] || '20', 10),
+    momentumDecayEnabled: map['momentum_decay_enabled'] === 'true',
   };
 }
 
@@ -94,17 +99,15 @@ export async function handleScheduled(env: Env): Promise<void> {
   const config = await loadConfig(env.TRADING_DB);
   const state = await getBotState(env.TRADING_KV);
 
-  console.log("GATE 1:", state.status);
-  // GATE 1: Bot must be RUNNING
-  if (state.status !== 'RUNNING') {
-    return;
-  }
-
+  // We will check the RUNNING state AFTER calculating MACD
+  // so that the chart continues to plot even when the bot is stopped or orphaned.
   // GATE 2: Get access token
   const accessToken = await env.TRADING_KV.get(KV_KEYS.UPSTOX_ACCESS_TOKEN);
   console.log("GATE 2 token exists:", !!accessToken);
   if (!accessToken) {
-    await logTelemetry(env.TRADING_DB, 0, 0, 0, 0, 'NONE', state.status, 'SKIP: No Upstox access token');
+    if (state.status === 'RUNNING') {
+      await logTelemetry(env.TRADING_DB, 0, 0, 0, 0, 'NONE', state.status, 'SKIP: No Upstox access token');
+    }
     return;
   }
 
@@ -120,12 +123,11 @@ export async function handleScheduled(env: Env): Promise<void> {
       // Daily Drawdown Check
       const isDrawdownBreached = await checkDailyDrawdown(env.TRADING_DB, funds.totalBalance || funds.availableMargin);
       console.log("Drawdown breached:", isDrawdownBreached);
-      if (isDrawdownBreached) {
+      if (isDrawdownBreached && state.status === 'RUNNING') {
         state.status = 'SYSTEM_HALT' as any;
         await saveBotState(env.TRADING_KV, state);
         await logTelemetry(env.TRADING_DB, 0, 0, 0, 0, 'NONE', state.status, 'SYSTEM HALT: Daily drawdown limit breached (-5%)');
         await notifyDiscord(env.DISCORD_WEBHOOK_URL, `🚨 **SYSTEM HALTED**\nDaily loss limit (-5%) breached! Trading suspended for today.`);
-        return;
       }
     } catch (e: any) {
       // Fail silently to avoid interrupting trade logic
@@ -136,11 +138,12 @@ export async function handleScheduled(env: Env): Promise<void> {
   const lastHeartbeat = await env.TRADING_KV.get('daemon_last_heartbeat');
   console.log("lastHeartbeat:", lastHeartbeat, "Age:", lastHeartbeat ? Date.now() - parseInt(lastHeartbeat) : 'none');
   if (lastHeartbeat && Date.now() - parseInt(lastHeartbeat) > 3 * 60 * 1000) {
-    state.status = 'ORPHANED' as any;
-    await saveBotState(env.TRADING_KV, state);
-    await logTelemetry(env.TRADING_DB, 0, 0, 0, 0, 'NONE', state.status, 'ORPHANED: Daemon heartbeat stale (>3m)');
-    await notifyDiscord(env.DISCORD_WEBHOOK_URL, `🚨 **DAEMON OFFLINE**\nHeartbeat stale. Halt entries.`);
-    return;
+    if (state.status === 'RUNNING') {
+      state.status = 'ORPHANED' as any;
+      await saveBotState(env.TRADING_KV, state);
+      await logTelemetry(env.TRADING_DB, 0, 0, 0, 0, 'NONE', state.status, 'ORPHANED: Daemon heartbeat stale (>3m)');
+      await notifyDiscord(env.DISCORD_WEBHOOK_URL, `🚨 **DAEMON OFFLINE**\nHeartbeat stale. Halt entries.`);
+    }
   }
 
   // PRE-MARKET: Update lot size from instrument master
@@ -156,7 +159,9 @@ export async function handleScheduled(env: Env): Promise<void> {
         ).bind(String(chain[0].lotSize)).run();
       }
     } catch (e: any) {
-      await logTelemetry(env.TRADING_DB, 0, 0, 0, 0, 'NONE', state.status, `WARMUP_ERROR: ${e.message}`);
+      if (state.status === 'RUNNING') {
+        await logTelemetry(env.TRADING_DB, 0, 0, 0, 0, 'NONE', state.status, `WARMUP_ERROR: ${e.message}`);
+      }
     }
     return;
   }
@@ -187,7 +192,9 @@ export async function handleScheduled(env: Env): Promise<void> {
     const candles = await fetchNiftyCandles(accessToken, today);
 
     if (candles.length < 35) {
-      await logTelemetry(env.TRADING_DB, 0, 0, 0, 0, 'NONE', state.status, `SKIP: Insufficient candles (${candles.length})`);
+      if (state.status === 'RUNNING') {
+        await logTelemetry(env.TRADING_DB, 0, 0, 0, 0, 'NONE', state.status, `SKIP: Insufficient candles (${candles.length})`);
+      }
       return;
     }
 
@@ -200,12 +207,32 @@ export async function handleScheduled(env: Env): Promise<void> {
     const macdResult = getLatestMACDValues(closes);
 
     if (!macdResult) {
-      await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, 0, 0, 'NONE', state.status, 'SKIP: MACD calculation failed');
+      if (state.status === 'RUNNING') {
+        await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, 0, 0, 'NONE', state.status, 'SKIP: MACD calculation failed');
+      }
       return;
     }
 
     currentMacd = macdResult.current;
     prevMacd = macdResult.previous;
+
+    // DETECT SIGNAL
+    const signal = detectZeroCrossover(currentMacd, prevMacd);
+
+    // Write telemetry for chart regardless of running state
+    if (!signal) {
+      state.lastMacdLine = currentMacd;
+      await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, 'NONE', state.status, null);
+    } else {
+      if (state.status !== 'RUNNING') {
+        await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, signal, state.status, `SIGNAL DETECTED BUT BOT IS ${state.status}: ${signal}`);
+      }
+    }
+
+    // GATE 1: Bot must be RUNNING
+    if (state.status !== 'RUNNING') {
+      return;
+    }
 
     // ==========================================
     // RISK MANAGEMENT: 6% HARD SL & TRAILING SL
@@ -302,14 +329,7 @@ export async function handleScheduled(env: Env): Promise<void> {
       return;
     }
 
-    // DETECT SIGNAL
-    const signal = detectZeroCrossover(currentMacd, prevMacd);
-
     if (!signal) {
-      // No crossover — update lastMacdLine and log
-      state.lastMacdLine = currentMacd;
-      // Only save state if MACD changed meaningfully (saves KV writes)
-      await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, 'NONE', state.status, null);
       return;
     }
 

@@ -423,12 +423,23 @@
       const barW = Math.max(1, candleSpacing * 0.55);
 
       // Map MACD to Spots by time to ensure perfect vertical alignment
+      const parseTimeSafe = (ts) => {
+        if (!ts) return 0;
+        let s = ts;
+        // If DB string is missing ISO timezone markers, force UTC parsing
+        if (typeof s === 'string' && !s.includes('Z') && !s.includes('+')) {
+          s = s.replace(' ', 'T') + 'Z';
+        }
+        return new Date(s).getTime();
+      };
+
       const mappedMacd = this.spots.map(spot => {
-        const spotTime = new Date(spot.timestamp).getTime();
+        const spotTime = parseTimeSafe(spot.timestamp);
         let best = null;
         let bestDist = Infinity;
+        
         for (const m of this.macd) {
-          const dist = Math.abs(new Date(m.timestamp).getTime() - spotTime);
+          const dist = Math.abs(parseTimeSafe(m.timestamp) - spotTime);
           if (dist < bestDist && dist < 5 * 60000) { // Within 5 mins max
             bestDist = dist;
             best = m;
