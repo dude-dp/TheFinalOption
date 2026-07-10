@@ -220,6 +220,9 @@
   }
 
   // ==================== TELEMETRY ====================
+  let logAutoScroll = true;
+  let logSearchTerm = '';
+
   async function fetchTelemetry() {
     const res  = await fetch('/api/telemetry?limit=100');
     const data = await res.json();
@@ -229,44 +232,77 @@
     renderLogs();
   }
 
+  function classifyLog(msg) {
+    if (!msg) return { level: 'INFO', label: 'INFO' };
+    if (msg.match(/ERROR|CRON_ERROR|WARMUP_ERROR/i))                     return { level: 'ERR',  label: 'ERR' };
+    if (msg.match(/SIGNAL|EXIT|MANUAL|SQUAREOFF|ENTRY|SQUARE-OFF/i))     return { level: 'TRD',  label: 'TRD' };
+    if (msg.match(/WARN|SKIP|Deadlock|ORPHAN|SYSTEM.*HALT|HALT/i))       return { level: 'WARN', label: 'WARN' };
+    if (msg.match(/AUTO_SQUAREOFF|DRAWDOWN|DAEMON|HEARTBEAT|WARMUP/i))   return { level: 'SYS',  label: 'SYS' };
+    return { level: 'INFO', label: 'INFO' };
+  }
+
   function renderLogs() {
     const consoleEl = document.getElementById('system-logs');
+    const badge = document.getElementById('log-count-badge');
     if (!consoleEl) return;
 
-    const filtered = allLogEntries.filter(entry => {
-      if (activeLogFilter === 'all')    return true;
-      if (activeLogFilter === 'trade')  return (entry.log_message || '').match(/SIGNAL|EXIT|MANUAL|SQUAREOFF/i);
-      if (activeLogFilter === 'error')  return (entry.log_message || '').includes('ERROR');
-      if (activeLogFilter === 'system') return !(entry.log_message || '').match(/SIGNAL|EXIT|ERROR|MANUAL|SQUAREOFF/i);
+    // Filter out null/empty log messages for cleaner view (keep only meaningful entries)
+    let meaningful = allLogEntries.filter(entry => {
+      const msg = entry.log_message;
+      // Keep entries with actual log messages, skip bare MACD ticks
+      return msg && msg.trim().length > 0;
+    });
+
+    // Apply category filter
+    const filtered = meaningful.filter(entry => {
+      if (activeLogFilter === 'all') return true;
+      const { level } = classifyLog(entry.log_message);
+      if (activeLogFilter === 'trade')  return level === 'TRD';
+      if (activeLogFilter === 'warn')   return level === 'WARN';
+      if (activeLogFilter === 'error')  return level === 'ERR';
+      if (activeLogFilter === 'system') return level === 'SYS';
       return true;
     });
 
-    if (filtered.length === 0) {
-      consoleEl.innerHTML = EMPTY_SVG;
+    // Apply search filter
+    const searched = logSearchTerm
+      ? filtered.filter(e => (e.log_message || '').toLowerCase().includes(logSearchTerm.toLowerCase()))
+      : filtered;
+
+    // Update badge count
+    if (badge) badge.textContent = searched.length;
+
+    // Empty state
+    if (searched.length === 0) {
+      consoleEl.innerHTML = `<div class="log-empty">
+        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7l5 5l-5 5"/><path d="M12 19l7 0"/></svg>
+        <p>${logSearchTerm ? 'No logs match your search.' : 'Waiting for execution data...'}</p>
+      </div>`;
       return;
     }
 
-    consoleEl.innerHTML = filtered.map(entry => {
+    consoleEl.innerHTML = searched.map(entry => {
       const ts  = formatIST(entry.timestamp);
-      const msg = entry.log_message || `MACD: ${parseFloat(entry.macd_line).toFixed(4)}`;
-      const spot = entry.nifty_spot ? parseFloat(entry.nifty_spot).toFixed(2) : '---';
+      const msg = entry.log_message || '';
+      const { level, label } = classifyLog(msg);
 
-      let level = 'INFO';
-      let color = 'var(--text-muted)';
-      if      (msg.includes('ERROR'))                                    { level = 'ERR';  color = 'var(--accent-sell)'; }
-      else if (msg.match(/WARN|SKIP|Deadlock/i))                        { level = 'WARN'; color = '#f59e0b'; }
-      else if (msg.match(/SIGNAL|EXIT|MANUAL|SQUAREOFF/i))              { level = 'TRD';  color = 'var(--accent-buy)'; }
-      else if (msg.includes('AUTO_SQUAREOFF'))                           { level = 'TRD';  color = 'var(--accent-blue)'; }
+      // Highlight search term in message
+      let displayMsg = escapeHtml(msg);
+      if (logSearchTerm) {
+        const regex = new RegExp('(' + escapeHtml(logSearchTerm).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+        displayMsg = displayMsg.replace(regex, '<span class="log-highlight">$1</span>');
+      }
 
-      return `<div style="display:flex;gap:12px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.03);color:${color};font-family:var(--font-mono);" data-level="${level}">
-        <span style="width:70px;flex-shrink:0;font-weight:500;opacity:0.8;">${ts}</span>
-        <span style="width:50px;flex-shrink:0;font-weight:700;">[${level}]</span>
-        <span style="width:95px;flex-shrink:0;color:var(--text-primary);">Spot: ${spot}</span>
-        <span style="flex-grow:1;word-break:break-word;">${escapeHtml(msg)}</span>
+      return `<div class="log-entry" data-level="${level}">
+        <span class="log-time">${ts}</span>
+        <span class="log-badge" data-level="${level}">${label}</span>
+        <span class="log-msg">${displayMsg}</span>
       </div>`;
     }).join('');
 
-    consoleEl.scrollTop = consoleEl.scrollHeight;
+    if (logAutoScroll) {
+      consoleEl.scrollTop = consoleEl.scrollHeight;
+    }
   }
 
   // ==================== ORDERS ====================
@@ -570,6 +606,44 @@
         renderLogs();
       });
     });
+
+    // Search input with debounce
+    const searchInput = document.getElementById('log-search');
+    if (searchInput) {
+      let searchDebounce = null;
+      searchInput.addEventListener('input', () => {
+        clearTimeout(searchDebounce);
+        searchDebounce = setTimeout(() => {
+          logSearchTerm = searchInput.value.trim();
+          renderLogs();
+        }, 200);
+      });
+    }
+
+    // Auto-scroll toggle
+    const autoScrollBtn = document.getElementById('log-autoscroll-btn');
+    if (autoScrollBtn) {
+      autoScrollBtn.addEventListener('click', () => {
+        logAutoScroll = !logAutoScroll;
+        autoScrollBtn.classList.toggle('active', logAutoScroll);
+      });
+    }
+
+    // Clear display
+    const clearBtn = document.getElementById('log-clear-btn');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        const consoleEl = document.getElementById('system-logs');
+        if (consoleEl) {
+          consoleEl.innerHTML = `<div class="log-empty">
+            <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7l5 5l-5 5"/><path d="M12 19l7 0"/></svg>
+            <p>Display cleared. New logs will appear on next poll.</p>
+          </div>`;
+        }
+        const badge = document.getElementById('log-count-badge');
+        if (badge) badge.textContent = '0';
+      });
+    }
   }
 
   // ==================== DYNAMIC ISLAND ====================

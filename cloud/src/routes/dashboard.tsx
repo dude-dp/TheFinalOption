@@ -111,33 +111,33 @@ dashboard.get('/', (c) => {
     <!-- BENTO GRID -->
     <main class="bento-grid">
 
+      <!-- Chart -->
+      <section class="bento-card col-span-9" data-tab="chart" data-tab-label="Chart" style="padding:12px;">
+        <div class="chart-header" style="margin-bottom:0;">
+          <h2 class="bento-card-title" style="margin-bottom:0;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 19l6 -6l4 4l6 -7"/><path d="M20 16v3h-3"/><path d="M4 5v14M4 19h16"/></svg>
+            Nifty 50 Index · 1 · NSE
+          </h2>
+          <button id="fullscreen-btn" class="icon-btn" title="Fullscreen chart">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 8v-2a2 2 0 0 1 2 -2h2"/><path d="M4 16v2a2 2 0 0 0 2 2h2"/><path d="M16 4h2a2 2 0 0 1 2 2v2"/><path d="M16 20h2a2 2 0 0 0 2 -2v-2"/></svg>
+          </button>
+        </div>
+        <div style="width: 100%; height: 520px; position: relative; border-radius: 12px; overflow: hidden;">
+          <canvas id="trading-chart"></canvas>
+        </div>
+      </section>
+
       <!-- Active Position Tracker -->
-      <section class="bento-card col-span-12" data-tab="controls" data-tab-label="Controls">
+      <section class="bento-card col-span-3" data-tab="controls" data-tab-label="Controls">
         <h2 class="bento-card-title">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/><path d="M12 12m-5 0a5 5 0 1 0 10 0a5 5 0 1 0 -10 0"/><path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"/><path d="M3 12h3m12 0h3M12 3v3m0 12v3"/></svg>
-          Active Position Tracker
+          Active Position
         </h2>
-        <div id="no-position" style="padding: 8px 0; display: flex; flex-direction: column; gap: 16px; height: 100%;">
-          <div class="metrics-grid">
-            <div class="metric-box" style="border-color: transparent; background: transparent; padding: 0;">
-              <div class="skeleton" style="width: 60%; height: 14px; margin-bottom: 8px;"></div>
-              <div class="skeleton skeleton-block" style="width: 90%; height: 28px;"></div>
-            </div>
-            <div class="metric-box" style="border-color: transparent; background: transparent; padding: 0;">
-              <div class="skeleton" style="width: 50%; height: 14px; margin-bottom: 8px;"></div>
-              <div class="skeleton skeleton-block" style="width: 80%; height: 28px;"></div>
-            </div>
-            <div class="metric-box" style="border-color: transparent; background: transparent; padding: 0;">
-              <div class="skeleton" style="width: 70%; height: 14px; margin-bottom: 8px;"></div>
-              <div class="skeleton skeleton-block" style="width: 85%; height: 28px;"></div>
-            </div>
-            <div class="metric-box" style="border-color: transparent; background: transparent; padding: 0;">
-              <div class="skeleton" style="width: 65%; height: 14px; margin-bottom: 8px;"></div>
-              <div class="skeleton skeleton-block" style="width: 95%; height: 28px;"></div>
-            </div>
-          </div>
+        <div id="no-position" style="padding: 8px 0; display: flex; flex-direction: column; gap: 16px; height: 100%; justify-content: center; align-items: center; text-align: center; color: var(--text-muted);">
+          <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.2;"><path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"/><path d="M9 12l2 2l4 -4"/></svg>
+          <p style="font-size: 0.9rem; margin: 0;">No active position.<br/>Waiting for signal.</p>
         </div>
-        <div id="active-position" class="metrics-grid" style="display: none;">
+        <div id="active-position" style="display: none; flex-direction: column; gap: 12px;">
           <div class="metric-box" id="pnl-card">
             <span class="metric-label">Unrealized PnL</span>
             <span id="pos-pnl" class="metric-value">₹--</span>
@@ -154,22 +154,6 @@ dashboard.get('/', (c) => {
             <span class="metric-label">Current LTP</span>
             <span id="pos-ltp" class="metric-value">₹--</span>
           </div>
-        </div>
-      </section>
-
-      <!-- Chart -->
-      <section class="bento-card col-span-12" data-tab="chart" data-tab-label="Chart">
-        <div class="chart-header">
-          <h2 class="bento-card-title">
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 19l6 -6l4 4l6 -7"/><path d="M20 16v3h-3"/><path d="M4 5v14M4 19h16"/></svg>
-            NIFTY Spot &amp; MACD Zero-Line
-          </h2>
-          <button id="fullscreen-btn" class="icon-btn" title="Fullscreen chart" style="margin-bottom: 20px;">
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 8v-2a2 2 0 0 1 2 -2h2"/><path d="M4 16v2a2 2 0 0 0 2 2h2"/><path d="M16 4h2a2 2 0 0 1 2 2v2"/><path d="M16 20h2a2 2 0 0 0 2 -2v-2"/></svg>
-          </button>
-        </div>
-        <div style="width: 100%; height: 350px; position: relative;">
-          <canvas id="trading-chart"></canvas>
         </div>
       </section>
 
@@ -197,15 +181,41 @@ dashboard.get('/', (c) => {
 
       <!-- Execution Logs -->
       <section class="bento-card col-span-6" data-tab="logs" data-tab-label="Logs">
-        <h2 class="bento-card-title">
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M5 7l5 5l-5 5"/><path d="M12 19l7 0"/></svg>
-          Execution Logs
-        </h2>
-        <div class="log-filters">
-          <button class="log-chip active" data-filter="all">All</button>
-          <button class="log-chip" data-filter="trade">Trades</button>
-          <button class="log-chip" data-filter="error">Errors</button>
-          <button class="log-chip" data-filter="system">System</button>
+        <div class="log-header">
+          <h2 class="bento-card-title" style="margin-bottom:0;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M5 7l5 5l-5 5"/><path d="M12 19l7 0"/></svg>
+            Execution Logs
+            <span id="log-count-badge" class="log-count-badge">0</span>
+          </h2>
+          <div class="log-header-actions">
+            <button id="log-autoscroll-btn" class="log-action-btn active" title="Auto-scroll">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M18 13l-6 6l-6 -6"/></svg>
+            </button>
+            <button id="log-clear-btn" class="log-action-btn" title="Clear display">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7l16 0"/><path d="M10 11l0 6"/><path d="M14 11l0 6"/><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12"/><path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="log-toolbar">
+          <div class="log-filters">
+            <button class="log-chip active" data-filter="all">All</button>
+            <button class="log-chip" data-filter="trade">
+              <span class="log-chip-dot" style="background:var(--accent-buy)"></span> Trades
+            </button>
+            <button class="log-chip" data-filter="warn">
+              <span class="log-chip-dot" style="background:#f59e0b"></span> Warnings
+            </button>
+            <button class="log-chip" data-filter="error">
+              <span class="log-chip-dot" style="background:var(--accent-sell)"></span> Errors
+            </button>
+            <button class="log-chip" data-filter="system">
+              <span class="log-chip-dot" style="background:var(--accent-blue)"></span> System
+            </button>
+          </div>
+          <div class="log-search-wrapper">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="log-search-icon"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35 -4.35"/></svg>
+            <input type="text" id="log-search" class="log-search-input" placeholder="Search logs..." autocomplete="off" spellcheck="false" />
+          </div>
         </div>
         <div id="system-logs" class="log-console"></div>
       </section>

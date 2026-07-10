@@ -391,14 +391,143 @@ body.market-down::before { background: radial-gradient(circle at center, rgba(23
 
 /* ==================== TABLES & LOGS ==================== */
 .log-console {
-  background: rgba(0, 0, 0, 0.3);
+  background: rgba(0, 0, 0, 0.35);
   border-radius: var(--radius-md);
-  padding: 16px;
+  padding: 8px;
   font-family: var(--font-mono);
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   color: var(--text-muted);
-  height: 250px;
+  height: 320px;
   overflow-y: auto;
+  border: 1px solid rgba(255,255,255,0.03);
+}
+
+/* Individual log entries */
+.log-entry {
+  display: grid;
+  grid-template-columns: 70px 44px 1fr;
+  gap: 8px;
+  align-items: start;
+  padding: 10px 12px;
+  margin-bottom: 2px;
+  border-radius: 8px;
+  border-left: 3px solid transparent;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  animation: logSlideIn 0.25s ease-out;
+}
+
+.log-entry:hover {
+  background: rgba(255,255,255,0.03);
+}
+
+/* Severity variants */
+.log-entry[data-level="TRD"] {
+  border-left-color: var(--accent-buy);
+  color: var(--accent-buy);
+}
+.log-entry[data-level="TRD"]:hover {
+  background: rgba(16, 185, 129, 0.04);
+}
+
+.log-entry[data-level="ERR"] {
+  border-left-color: var(--accent-sell);
+  color: var(--accent-sell);
+}
+.log-entry[data-level="ERR"]:hover {
+  background: rgba(239, 68, 68, 0.04);
+}
+
+.log-entry[data-level="WARN"] {
+  border-left-color: #f59e0b;
+  color: #f59e0b;
+}
+.log-entry[data-level="WARN"]:hover {
+  background: rgba(245, 158, 11, 0.04);
+}
+
+.log-entry[data-level="SYS"] {
+  border-left-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+.log-entry[data-level="SYS"]:hover {
+  background: rgba(59, 130, 246, 0.04);
+}
+
+.log-entry[data-level="INFO"] {
+  border-left-color: rgba(255,255,255,0.06);
+  color: var(--text-muted);
+}
+
+/* Log entry inner elements */
+.log-time {
+  font-weight: 500;
+  opacity: 0.7;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.log-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.log-badge[data-level="TRD"]  { background: rgba(16, 185, 129, 0.12); color: var(--accent-buy); }
+.log-badge[data-level="ERR"]  { background: rgba(239, 68, 68, 0.12); color: var(--accent-sell); }
+.log-badge[data-level="WARN"] { background: rgba(245, 158, 11, 0.12); color: #f59e0b; }
+.log-badge[data-level="SYS"]  { background: rgba(59, 130, 246, 0.12); color: var(--accent-blue); }
+.log-badge[data-level="INFO"] { background: rgba(255,255,255,0.04); color: var(--text-muted); }
+
+.log-msg {
+  word-break: break-word;
+  line-height: 1.5;
+}
+
+.log-msg .log-highlight {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  padding: 0 3px;
+  border-radius: 3px;
+}
+
+/* Empty state */
+.log-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 16px;
+  color: var(--text-muted);
+  text-align: center;
+  gap: 12px;
+}
+
+.log-empty svg {
+  opacity: 0.2;
+}
+
+.log-empty p {
+  margin: 0;
+  font-size: 0.88rem;
+  opacity: 0.6;
+}
+
+@keyframes logSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .table-wrapper {
@@ -424,12 +553,71 @@ td {
 }
 
 /* ==================== LOG FILTER CHIPS ==================== */
+.log-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.log-header-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.log-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(0,0,0,0.2);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.log-action-btn:hover {
+  color: var(--text-primary);
+  background: var(--surface-elevated);
+  border-color: rgba(255,255,255,0.15);
+}
+
+.log-action-btn.active {
+  color: var(--accent-blue);
+  border-color: rgba(59, 130, 246, 0.3);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.log-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.12);
+  color: var(--accent-blue);
+  font-size: 0.7rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  margin-left: 4px;
+}
+
+.log-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
 .log-filters {
   display: flex;
   gap: 8px;
   overflow-x: auto;
-  padding-bottom: 12px;
-  margin-bottom: 8px;
   scrollbar-width: none;
 }
 
@@ -451,6 +639,14 @@ td {
   min-height: 32px;
   display: flex;
   align-items: center;
+  gap: 6px;
+}
+
+.log-chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .log-chip.active,
@@ -458,6 +654,54 @@ td {
   background: var(--accent-blue);
   border-color: var(--accent-blue);
   color: #fff;
+}
+
+.log-chip.active .log-chip-dot,
+.log-chip:hover .log-chip-dot {
+  background: #fff !important;
+}
+
+/* Search Input */
+.log-search-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.log-search-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--text-muted);
+  pointer-events: none;
+  transition: color 0.2s ease;
+}
+
+.log-search-input {
+  width: 100%;
+  padding: 8px 12px 8px 32px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(0,0,0,0.25);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.log-search-input::placeholder {
+  color: rgba(161,161,170,0.5);
+}
+
+.log-search-input:focus {
+  border-color: rgba(59, 130, 246, 0.4);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.08);
+  background: rgba(0,0,0,0.35);
+}
+
+.log-search-input:focus + .log-search-icon,
+.log-search-wrapper:focus-within .log-search-icon {
+  color: var(--accent-blue);
 }
 
 /* ==================== DYNAMIC ISLAND ==================== */
