@@ -37,7 +37,9 @@ CREATE TABLE IF NOT EXISTS order_ledger (
     )) DEFAULT 'PENDING',
     rejection_reason TEXT,
     pnl REAL DEFAULT 0,
-    upstox_order_id TEXT
+    upstox_order_id TEXT,
+    market_depth TEXT,
+    timeline TEXT
 );
 
 -- End-of-day AI-generated performance summaries
@@ -68,7 +70,13 @@ INSERT OR IGNORE INTO bot_configuration (config_key, config_value) VALUES
     ('max_strike_levels', '2'),
     ('strike_interval', '50'),
     ('square_off_time', '15:15'),
-    ('paper_mode', 'false');
+    ('paper_mode', 'false'),
+    ('max_slippage_pct', '1'),
+    ('gex_avoidance_enabled', 'true'),
+    ('gex_strike_buffer', '25'),
+    ('adx_filter_enabled', 'true'),
+    ('adx_threshold', '20'),
+    ('momentum_decay_enabled', 'true');
 
 -- Performance indexes
 CREATE INDEX IF NOT EXISTS idx_telemetry_timestamp ON system_telemetry(timestamp);

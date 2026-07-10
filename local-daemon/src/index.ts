@@ -18,6 +18,40 @@ const CONFIG = {
   healthPort: parseInt(process.env.HEALTH_PORT || '3847', 10),
 };
 
+// --- Circuit Breaker ---
+class CircuitBreaker {
+  failures = 0;
+  maxFailures = 3;
+  tripped = false;
+
+  async recordFailure() {
+    this.failures++;
+    if (this.failures >= this.maxFailures && !this.tripped) {
+      logError('🚨 Circuit breaker tripped! 3 consecutive failures. Halting operations.');
+      this.tripped = true;
+      try {
+        await fetch(`${CONFIG.workerUrl}/api/control`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Poll-Secret': CONFIG.pollSecret,
+          },
+          body: JSON.stringify({ action: 'EMERGENCY_HALT' }),
+        });
+        logInfo('Successfully sent EMERGENCY_HALT to Cloud Worker.');
+      } catch (e: any) {
+        logError(`Failed to send EMERGENCY_HALT: ${e.message}`);
+      }
+    }
+  }
+
+  recordSuccess() {
+    this.failures = 0;
+    this.tripped = false;
+  }
+}
+const orderCircuitBreaker = new CircuitBreaker();
+
 // --- State ---
 let isRunning = true;
 let lastPollTime = 0;
@@ -83,9 +117,20 @@ async function pollWorker(): Promise<void> {
       const ordered = [...sells, ...buys];
 
       for (const order of ordered) {
+        if (orderCircuitBreaker.tripped) {
+          logWarn('Circuit breaker is tripped. Skipping execution.');
+          continue;
+        }
+
         logTrade(`📥 Received order: ${order.correlationId}`);
 
         const result = await executeOrder(order, accessToken, CONFIG.dryRun);
+
+        if (result.status === 'REJECTED' && result.rejectionReason?.match(/HTTP 5\d\d/)) {
+          await orderCircuitBreaker.recordFailure();
+        } else {
+          orderCircuitBreaker.recordSuccess();
+        }
 
         // Send confirmation back to Cloud Worker
         await confirmOrder(result);
@@ -124,7 +169,7 @@ async function sweepOrphanedOrders(): Promise<void> {
     });
 
     if (!res.ok) return;
-    
+
     const data: any = await res.json();
     if (!data.hasOrphans || !data.accessToken) return;
 
@@ -149,9 +194,9 @@ async function sweepOrphanedOrders(): Promise<void> {
 
       // If the order has finally reached a terminal state on the exchange...
       if (upstoxStatus === 'COMPLETE' || upstoxStatus === 'FILLED' || upstoxStatus === 'REJECTED' || upstoxStatus === 'CANCELLED') {
-        
+
         const finalStatus = upstoxStatus === 'COMPLETE' ? 'FILLED' : upstoxStatus as any;
-        
+
         const result = {
           correlationId: order.correlation_id,
           upstoxOrderId: order.upstox_order_id,
@@ -164,6 +209,20 @@ async function sweepOrphanedOrders(): Promise<void> {
         // Push the final confirmation back to Cloudflare
         await confirmOrder(result);
         logInfo(`✅ Phantom Order Resolved: ${order.upstox_order_id} -> ${finalStatus}`);
+      } else {
+        // Still not terminal, check TTL
+        const orderAgeMs = Date.now() - new Date(order.created_at + 'Z').getTime(); // assuming created_at is UTC
+        if (orderAgeMs > 5 * 60 * 1000) {
+          logError(`🚨 Phantom Order ${order.upstox_order_id} timed out. Escalating to DLQ.`);
+          await fetch(`${CONFIG.workerUrl}/api/escalate-order`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Poll-Secret': CONFIG.pollSecret,
+            },
+            body: JSON.stringify({ correlationId: order.correlation_id, upstoxOrderId: order.upstox_order_id }),
+          });
+        }
       }
     }
   } catch (error: any) {
@@ -210,6 +269,7 @@ function startHealthServer(): void {
         totalOrders: totalOrdersExecuted,
         consecutiveErrors,
         dryRun: CONFIG.dryRun,
+        circuitBreakerTripped: orderCircuitBreaker.tripped,
       }));
     } else {
       res.writeHead(404);
@@ -220,6 +280,30 @@ function startHealthServer(): void {
   server.listen(CONFIG.healthPort, () => {
     logInfo(`Health check: http://localhost:${CONFIG.healthPort}/health`);
   });
+}
+
+// --- Daemon Heartbeat ---
+async function sendHeartbeat(): Promise<void> {
+  try {
+    const memory = process.memoryUsage();
+    await fetch(`${CONFIG.workerUrl}/api/heartbeat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Poll-Secret': CONFIG.pollSecret,
+      },
+      body: JSON.stringify({
+        memoryUsage: memory.rss,
+        uptime: process.uptime(),
+        consecutiveErrors,
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch (error: any) {
+    if (error.name !== 'TimeoutError' && error.name !== 'AbortError') {
+      logWarn(`Heartbeat error: ${error.message}`);
+    }
+  }
 }
 
 // --- Main Loop ---
@@ -239,10 +323,15 @@ async function main(): Promise<void> {
   // Start health check server
   startHealthServer();
 
-  // NEW: Start the Phantom Order Sweeper (runs every 15 seconds)
+  // Background Sweeper (runs every 15 seconds)
   setInterval(() => {
     sweepOrphanedOrders().catch(e => logError(`Sweeper crash: ${e.message}`));
   }, 15000);
+
+  // Daemon Heartbeat (runs every 60 seconds)
+  setInterval(() => {
+    sendHeartbeat().catch(e => logError(`Heartbeat crash: ${e.message}`));
+  }, 60000);
 
   // Graceful shutdown
   process.on('SIGINT', () => {

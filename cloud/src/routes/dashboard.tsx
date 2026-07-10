@@ -20,6 +20,7 @@ dashboard.get('/', (c) => {
   <title>TheFinalOption — NIFTY Options Trading Console</title>
   <meta name="description" content="Automated NIFTY Index Options trading bot dashboard with real-time MACD analysis">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='%23E50914'%3E%3Cpath d='M0 0h24v24H0z' fill='none'/%3E%3Cpath d='M10 2c0-.88 1.056-1.331 1.692-.722 1.958 1.876 3.096 5.995 1.75 9.12l-.08.174.012.003c.625.133 1.203-.43 2.303-2.173l.14-.224a1 1 0 0 1 1.582-.153C18.733 9.46 20 12.402 20 14.295 20 18.56 16.409 22 12 22s-8-3.44-8-7.706c0-2.252 1.022-4.716 2.632-6.301l.605-.589c.241-.236.434-.43.618-.624C9.285 5.268 10 3.856 10 2'/%3E%3C/svg%3E">
+  <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -46,6 +47,12 @@ dashboard.get('/', (c) => {
       </div>
       
       <div class="header-actions">
+        <button id="settings-btn" class="icon-btn tooltip-trigger" style="color: var(--text-muted);" data-tooltip="Settings">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065z" /><path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0" /></svg>
+        </button>
+
+        <div class="header-divider"></div>
+
         <button id="manual-ce-btn" class="icon-btn tooltip-trigger" style="color: var(--accent-buy); border-color: rgba(16, 185, 129, 0.2);" data-tooltip="Force Buy CE (Call)">
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M3 17l6 -6l4 4l8 -8" /><path d="M14 7l7 0l0 7" /></svg>
         </button>
@@ -225,6 +232,31 @@ dashboard.get('/', (c) => {
       Logs
     </button>
   </nav>
+
+  <!-- Settings Modal -->
+  <div class="settings-overlay" id="settings-modal" style="display: none;">
+    <div class="settings-modal-content">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h2 style="margin: 0;">Settings</h2>
+        <button id="close-settings-btn" class="icon-btn"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></svg></button>
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label style="display: block; color: var(--text-muted); margin-bottom: 5px;">Max Risk %</label>
+        <input type="number" id="setting-max-risk" class="settings-input" style="width: 100%; background: rgba(0,0,0,0.3); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: var(--radius-sm);" min="1" max="100">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label style="display: block; color: var(--text-muted); margin-bottom: 5px;">Max Slippage %</label>
+        <input type="number" id="setting-max-slippage" class="settings-input" style="width: 100%; background: rgba(0,0,0,0.3); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: var(--radius-sm);" min="0.1" max="5" step="0.1">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label style="display: flex; align-items: center; gap: 10px; color: var(--text-muted); cursor: pointer;">
+          <input type="checkbox" id="setting-paper-mode">
+          Paper Trading Mode
+        </label>
+      </div>
+      <button id="save-settings-btn" class="btn" style="width: 100%; background: var(--accent-blue); color: white; border: none; padding: 10px; border-radius: var(--radius-sm); cursor: pointer; font-weight: bold;">Save Changes</button>
+    </div>
+  </div>
 
   <script src="/chart.js"></script>
   <script src="/dashboard.js"></script>

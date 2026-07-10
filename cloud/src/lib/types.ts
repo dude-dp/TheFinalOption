@@ -23,7 +23,7 @@ export interface Env {
 
 // --- Bot State ---
 
-export type BotStatus = 'RUNNING' | 'STOPPED' | 'EMERGENCY_HALT';
+export type BotStatus = 'RUNNING' | 'STOPPED' | 'EMERGENCY_HALT' | 'SYSTEM_HALT' | 'ORPHANED';
 
 export interface BotState {
   status: BotStatus;
@@ -44,6 +44,7 @@ export interface ActivePosition {
   lots: number;
   enteredAt: string;
   highestPrice?: number;
+  hasScaledOut?: boolean;
 }
 
 // --- KV Key Constants ---
@@ -77,6 +78,8 @@ export interface OrderPayload {
   orderPrice: number;
   status: OrderStatus;
   createdAt: string;
+  marketDepth?: string;
+  timeline?: string;
 }
 
 export interface PollResponse {
@@ -93,12 +96,14 @@ export interface ConfirmRequest {
   executionPrice: number | null;
   filledQuantity: number | null;
   rejectionReason: string | null;
+  marketDepth?: string;
+  timeline?: string;
 }
 
 // --- Queue Messages ---
 
 export interface OrderQueueMessage {
-  type: 'ORDER_STATUS_CHECK' | 'POSITION_CLOSE';
+  type: 'ORDER_STATUS_CHECK' | 'POSITION_CLOSE' | 'DISPATCH_SLICED_ORDER';
   correlationId: string;
   payload: Record<string, unknown>;
 }
@@ -123,6 +128,7 @@ export interface UpstoxOptionChainEntry {
   ltp: number;
   tradingSymbol: string;
   lotSize: number;
+  openInterest: number;
 }
 
 export interface UpstoxFundsResponse {
@@ -164,6 +170,12 @@ export interface BotConfig {
   strikeInterval: number;
   squareOffTime: string;
   paperMode: boolean;
+  maxSlippagePct: number;
+  gexAvoidanceEnabled: boolean;
+  gexStrikeBuffer: number;
+  adxFilterEnabled: boolean;
+  adxThreshold: number;
+  momentumDecayEnabled: boolean;
 }
 
 // --- Dashboard Types ---

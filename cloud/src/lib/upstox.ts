@@ -81,8 +81,15 @@ export async function fetchNiftyCandles(
  */
 export async function getOptionChain(
   token: string,
-  expiryDate: string
+  expiryDate: string,
+  kv?: KVNamespace
 ): Promise<UpstoxOptionChainEntry[]> {
+  const cacheKey = `option_chain_${expiryDate}`;
+  if (kv) {
+    const cached = await kv.get(cacheKey, 'json');
+    if (cached) return cached as UpstoxOptionChainEntry[];
+  }
+
   const encodedKey = encodeURIComponent(NIFTY_INDEX_KEY);
   const path = `/v2/option/chain?instrument_key=${encodedKey}&expiry_date=${expiryDate}`;
   const data = await upstoxGet(path, token);
@@ -102,6 +109,7 @@ export async function getOptionChain(
         ltp: item.call_options.market_data.ltp || 0,
         tradingSymbol: item.call_options.trading_symbol || '',
         lotSize: item.call_options.lot_size || 65,
+        openInterest: item.call_options.market_data.oi || 0,
       });
     }
     if (item.put_options?.market_data) {
@@ -113,8 +121,13 @@ export async function getOptionChain(
         ltp: item.put_options.market_data.ltp || 0,
         tradingSymbol: item.put_options.trading_symbol || '',
         lotSize: item.put_options.lot_size || 65,
+        openInterest: item.put_options.market_data.oi || 0,
       });
     }
+  }
+
+  if (kv && entries.length > 0) {
+    await kv.put(cacheKey, JSON.stringify(entries), { expirationTtl: 25200 });
   }
 
   return entries;

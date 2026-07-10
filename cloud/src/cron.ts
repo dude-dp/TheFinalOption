@@ -30,6 +30,7 @@ async function loadConfig(db: D1Database): Promise<BotConfig> {
     strikeInterval: parseInt(map['strike_interval'] || '50', 10),
     squareOffTime: map['square_off_time'] || '15:15',
     paperMode: map['paper_mode'] === 'true',
+    maxSlippagePct: parseFloat(map['max_slippage_pct'] || '1'),
   };
 }
 
@@ -72,6 +73,20 @@ async function logTelemetry(
   ).bind(spot, atm, macd, prevMacd, signal, status, message).run();
 }
 
+async function pruneTelemetry(db: D1Database): Promise<void> {
+  await db.prepare(
+    "DELETE FROM system_telemetry WHERE timestamp < datetime('now', '-7 days')"
+  ).run();
+}
+
+async function checkDailyDrawdown(db: D1Database, margin: number): Promise<boolean> {
+  const result = await db.prepare(
+    "SELECT SUM(pnl) as total_pnl FROM order_ledger WHERE date(created_at) = date('now')"
+  ).first();
+  const totalPnl = (result?.total_pnl as number) || 0;
+  return margin > 0 && totalPnl <= -(margin * 0.05);
+}
+
 // --- Main Cron Handler ---
 
 export async function handleScheduled(env: Env): Promise<void> {
@@ -90,7 +105,7 @@ export async function handleScheduled(env: Env): Promise<void> {
     return;
   }
 
-  // --- NEW: FETCH & CACHE AVAILABLE MARGIN ---
+  // --- NEW: FETCH & CACHE AVAILABLE MARGIN & CHECK DRAWDOWN ---
   if (isMarketOpen() || isPreMarketWarmup()) {
     try {
       const funds = await getFundsAndMargin(accessToken);
@@ -98,9 +113,29 @@ export async function handleScheduled(env: Env): Promise<void> {
         ...funds,
         timestamp: Date.now()
       }));
+
+      // Daily Drawdown Check
+      const isDrawdownBreached = await checkDailyDrawdown(env.TRADING_DB, funds.totalBalance || funds.availableMargin);
+      if (isDrawdownBreached) {
+        state.status = 'SYSTEM_HALT' as any;
+        await saveBotState(env.TRADING_KV, state);
+        await logTelemetry(env.TRADING_DB, 0, 0, 0, 0, 'NONE', state.status, 'SYSTEM HALT: Daily drawdown limit breached (-5%)');
+        await notifyDiscord(env.DISCORD_WEBHOOK_URL, `🚨 **SYSTEM HALTED**\nDaily loss limit (-5%) breached! Trading suspended for today.`);
+        return;
+      }
     } catch (e: any) {
       // Fail silently to avoid interrupting trade logic
     }
+  }
+
+  // Daemon Heartbeat Check
+  const lastHeartbeat = await env.TRADING_KV.get('daemon_last_heartbeat');
+  if (lastHeartbeat && Date.now() - parseInt(lastHeartbeat) > 3 * 60 * 1000) {
+    state.status = 'ORPHANED' as any;
+    await saveBotState(env.TRADING_KV, state);
+    await logTelemetry(env.TRADING_DB, 0, 0, 0, 0, 'NONE', state.status, 'ORPHANED: Daemon heartbeat stale (>3m)');
+    await notifyDiscord(env.DISCORD_WEBHOOK_URL, `🚨 **DAEMON OFFLINE**\nHeartbeat stale. Halt entries.`);
+    return;
   }
 
   // PRE-MARKET: Update lot size from instrument master
@@ -127,6 +162,7 @@ export async function handleScheduled(env: Env): Promise<void> {
     if (isEODSummaryTime()) {
       try {
         await generateEODSummary(env);
+        await pruneTelemetry(env.TRADING_DB);
       } catch (_) { /* non-critical */ }
     }
     return;
@@ -360,8 +396,8 @@ export async function handleScheduled(env: Env): Promise<void> {
     const quantity = lotsToQuantity(lots, config.niftyLotSize);
     const correlationId = generateCorrelationId();
 
-    // Use aggressive limit order with 1% buffer, snapped to nearest 0.05 tick size
-    const bufferedPrice = Math.round((premium * 1.01) * 20) / 20;
+    // Use aggressive limit order with configurable slippage buffer, snapped to nearest 0.05 tick size
+    const bufferedPrice = Math.round((premium * (1 + config.maxSlippagePct / 100)) * 20) / 20;
 
     // Build order payload
     const order: OrderPayload = {

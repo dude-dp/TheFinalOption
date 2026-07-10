@@ -4,6 +4,7 @@
 // ============================================
 
 import type { Env, OrderQueueMessage } from './lib/types';
+import { addPendingOrder } from './lib/orders';
 
 export async function handleQueue(
   batch: MessageBatch<OrderQueueMessage>,
@@ -24,6 +25,19 @@ export async function handleQueue(
 
         case 'POSITION_CLOSE':
           // Future: handle async position close confirmations
+          break;
+
+        case 'DISPATCH_SLICED_ORDER':
+          const order = payload.order as any;
+          await addPendingOrder(env.TRADING_KV, order);
+          await env.TRADING_DB.prepare(
+            `INSERT INTO order_ledger (order_id, correlation_id, instrument_token, trading_symbol, option_type, strike_price, transaction_type, quantity, lots, order_price, order_status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).bind(
+            order.orderId, order.correlationId, order.instrumentToken, order.tradingSymbol,
+            order.optionType, order.strikePrice, order.transactionType, order.quantity,
+            order.lots, order.orderPrice, 'PENDING'
+          ).run();
           break;
       }
 

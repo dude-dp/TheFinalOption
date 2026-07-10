@@ -15,6 +15,7 @@
   const ICON_ALERT = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 9v4"/><path d="M10.363 3.591l-8.106 13.534a1.914 1.914 0 0 0 1.636 2.871h16.214a1.914 1.914 0 0 0 1.636 -2.87l-8.106 -13.536a1.914 1.914 0 0 0 -3.274 0z"/><path d="M12 16h.01"/></svg>`;
   const ICON_WARN  = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 12v-4"/><path d="M12 16v.01"/><path d="M12 3c7.2 0 9 1.8 9 9s-1.8 9 -9 9s-9 -1.8 -9 -9s1.8 -9 9 -9z"/></svg>`;
   const ICON_CHECK = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M5 12l5 5l10 -10"/></svg>`;
+  const EMPTY_SVG = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;color:var(--text-muted);"><svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;margin-bottom:10px;"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 4m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z" /><path d="M4 13h3l3 3h4l3 -3h3" /></svg><p style="margin:0;font-size:0.9rem;">Nothing to see here yet.</p></div>`;
 
   let chart = null;
   let currentStatus = 'STOPPED';
@@ -23,6 +24,40 @@
   let activeLogFilter = 'all';
   let allLogEntries = [];
   let allOrders = []; // Store for chart flags
+
+  // ==================== AUDIO ENGINE ====================
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  function playTone(type) {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    
+    if (type === 'entry') {
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+      gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.3);
+    } else if (type === 'exit') {
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(440, audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(220, audioCtx.currentTime + 0.3);
+      gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.3);
+    } else if (type === 'error') {
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+      gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.4);
+    }
+  }
 
   // ==================== ODOMETER ENGINE ====================
   const numericState = new Map();
@@ -58,6 +93,7 @@
     initFullscreenChart();
     initLogFilterChips();
     initIsland();
+    initSettingsModal();
     bindControls();
     fetchAll();
     setInterval(fetchAll, POLL_INTERVAL);
@@ -154,6 +190,7 @@
         if (!lastActivePosition && data.activePosition) {
           showToast(`Entry: ${p.tradingSymbol} × ${p.lots} lots @ ₹${p.entryPrice.toFixed(2)}`);
           vibrate([50, 100, 50]);
+          playTone('entry');
         }
       } else {
         noPosEl.style.display = 'flex';
@@ -167,6 +204,7 @@
         if (lastActivePosition && !data.activePosition) {
           showToast('Position Closed — Check the Ledger for PnL.');
           vibrate([100, 50, 100]);
+          playTone('exit');
         }
       }
     }
@@ -203,6 +241,11 @@
       return true;
     });
 
+    if (filtered.length === 0) {
+      consoleEl.innerHTML = EMPTY_SVG;
+      return;
+    }
+
     consoleEl.innerHTML = filtered.map(entry => {
       const ts  = formatIST(entry.timestamp);
       const msg = entry.log_message || `MACD: ${parseFloat(entry.macd_line).toFixed(4)}`;
@@ -234,6 +277,11 @@
     if (!tbody || !data.data) return;
 
     allOrders = data.data; // Store for chart execution flags
+
+    if (allOrders.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7">${EMPTY_SVG}</td></tr>`;
+      return;
+    }
 
     tbody.innerHTML = data.data.map(o => {
       const statusClass = o.order_status === 'FILLED' ? 'text-green' : o.order_status === 'REJECTED' ? 'text-red' : '';
@@ -584,13 +632,17 @@
   }
 
   // ==================== TOAST ====================
-  function showToast(message) {
+  function showToast(message, isError = false) {
     const container = document.getElementById('toast-container');
     if (!container) return;
 
     const toast = document.createElement('div');
     toast.className = 'toast';
     toast.textContent = message;
+    if (isError) {
+      toast.style.borderLeftColor = 'var(--accent-sell)';
+      if (typeof playTone === 'function') playTone('error');
+    }
     container.appendChild(toast);
 
     setTimeout(() => toast.remove(), 4200);
@@ -620,5 +672,57 @@
       timeZone: 'Asia/Kolkata',
       hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
     });
+  }  // ==================== SETTINGS MODAL ====================
+  function initSettingsModal() {
+    const settingsBtn = document.getElementById('settings-btn');
+    const modal = document.getElementById('settings-modal');
+    const closeBtn = document.getElementById('close-settings-btn');
+    const saveBtn = document.getElementById('save-settings-btn');
+    
+    if (!settingsBtn || !modal || !closeBtn || !saveBtn) return;
+
+    settingsBtn.addEventListener('click', async () => {
+      // Fetch current config
+      try {
+        const res = await fetch('/api/config');
+        const { data } = await res.json();
+        if (data) {
+          document.getElementById('setting-max-risk').value = data['max_risk_pct'] || 100;
+          document.getElementById('setting-max-slippage').value = data['max_slippage_pct'] || 1;
+          document.getElementById('setting-paper-mode').checked = data['paper_mode'] === 'true';
+        }
+      } catch (e) {
+        console.error('Failed to load config:', e);
+      }
+      modal.style.display = 'flex';
+    });
+
+    closeBtn.addEventListener('click', () => {
+      modal.style.display = 'none';
+    });
+
+    saveBtn.addEventListener('click', async () => {
+      const payload = {
+        max_risk_pct: document.getElementById('setting-max-risk').value,
+        max_slippage_pct: document.getElementById('setting-max-slippage').value,
+        paper_mode: document.getElementById('setting-paper-mode').checked ? 'true' : 'false'
+      };
+
+      const originalText = saveBtn.textContent;
+      saveBtn.textContent = 'Saving...';
+      try {
+        await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        showToast('Settings saved successfully');
+        modal.style.display = 'none';
+      } catch (e) {
+        showToast('Failed to save settings', true);
+      }
+      saveBtn.textContent = originalText;
+    });
   }
+
 })();

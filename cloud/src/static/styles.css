@@ -884,3 +884,31 @@ td {
     display: flex !important;
   }
 }
+
+/* --- Settings Modal --- */
+.settings-overlay {
+  position: fixed;
+  top: 0; left: 0; width: 100vw; height: 100vh;
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(8px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.settings-modal-content {
+  background: rgba(15, 15, 20, 0.95);
+  border: 1px solid var(--border);
+  padding: 24px;
+  border-radius: var(--radius-lg);
+  width: 90%;
+  max-width: 400px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+  color: var(--text);
+}
+
+.settings-input:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}

@@ -1,0 +1,13 @@
+<USER_REQUEST>
+🏗️ Advanced Architecture & Edge Optimization
+
+
+
+2. Option Chain Edge Caching
+Fetching the Upstox Option Chain on every signal evaluation is redundant, as strike intervals and symbols do not change intraday. Fetch the chain once at 9:15 AM IST and cache the JSON array in Cloudflare KV with a 7-hour TTL. This drops signal-to-execution latency by ~150ms.
+
+3. Level 2 Market Depth (Order Book) Capture
+When the local daemon executes a trade, have it pull the Top 5 Bid/Ask Market Depth from Upstox exactly one second before placing the limit order. Log this spread snapshot to D1. This allows you to post-mortem exactly why a limit order suffered slippage or failed to fill during volatile spikes.
+
+5. Distributed Queue Fan-Out for Auto-Slicing
+<truncated 27390 bytes>
