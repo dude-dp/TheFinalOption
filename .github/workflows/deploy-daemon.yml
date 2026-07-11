@@ -1,0 +1,34 @@
+name: Deploy Local Daemon to AWS EC2
+
+on:
+  push:
+    branches:
+      - main # Change to 'master' if that is your default branch
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: SSH and Deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            echo "Deploying latest changes to the daemon..."
+            cd ~/thefinaloption
+            
+            # Stash any accidental local changes and pull the latest code
+            git stash
+            git pull origin main
+            
+            # Go into the daemon folder, install deps, and restart PM2
+            cd local-daemon
+            npm install
+            
+            # Restart the PM2 process gracefully
+            pm2 reload ecosystem.config.cjs --update-env
+            
+            echo "Deployment successful!"
