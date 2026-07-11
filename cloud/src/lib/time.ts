@@ -74,3 +74,9 @@ export function generateCorrelationId(): string {
   const t = `${String(ist.getUTCHours()).padStart(2, '0')}${String(ist.getUTCMinutes()).padStart(2, '0')}${String(ist.getUTCSeconds()).padStart(2, '0')}`;
   return `TFO-${d}-${t}-${Math.random().toString(36).substring(2, 8)}`;
 }
+
+export function getISTTimeFloat(): number {
+  const istTime = getCurrentIST();
+  // Convert to a float for easy comparison (e.g., 13:30 becomes 13.5)
+  return istTime.getUTCHours() + (istTime.getUTCMinutes() / 60);
+}

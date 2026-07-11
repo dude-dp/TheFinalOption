@@ -13,3 +13,5 @@ pnpm-debug.log*
 coverage/
 .nyc_output/
 *.log
+.logs/
+.trade_orders_history.json

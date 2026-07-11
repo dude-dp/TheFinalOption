@@ -553,4 +553,71 @@
   }
 
   window.TradingChart = TradingChart;
+
+  async function renderTimeOfDayChart() {
+    try {
+      const res = await fetch('/api/analytics/time-of-day');
+      const json = await res.json();
+      
+      const labels = [];
+      const pnlData = [];
+      const backgroundColors = [];
+
+      (json.data || []).forEach(row => {
+        // Format hour (e.g., "09" -> "09:00 AM")
+        const hour = parseInt(row.trading_hour);
+        const ampm = hour >= 12 ? 'PM' : 'AM';
+        const displayHour = hour > 12 ? hour - 12 : hour === 0 ? 12 : hour;
+        labels.push(`${displayHour}:00 ${ampm}`);
+        
+        pnlData.push(row.total_pnl);
+        
+        // Green for profitable hours, Red for losing hours
+        if (row.total_pnl >= 0) {
+          backgroundColors.push('rgba(0, 230, 118, 0.6)'); // Institutional Green
+        } else {
+          backgroundColors.push('rgba(255, 23, 68, 0.6)');  // Deep Red
+        }
+      });
+
+      const canvas = document.getElementById('timeOfDayChart');
+      if (!canvas) return;
+      
+      const ctx = canvas.getContext('2d');
+      // @ts-ignore
+      new Chart(ctx, {
+        type: 'polarArea',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: 'Cumulative PnL (₹)',
+            data: pnlData,
+            backgroundColor: backgroundColors,
+            borderWidth: 1,
+            borderColor: '#1e1e1e'
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            r: {
+              ticks: { display: false },
+              grid: { color: 'rgba(255, 255, 255, 0.1)' }
+            }
+          },
+          plugins: {
+            legend: { position: 'right', labels: { color: '#a0a0a0' } }
+          }
+        }
+      });
+    } catch (err) {
+      console.error('Failed to load Time-of-Day chart', err);
+    }
+  }
+
+  // Ensure Chart.js is loaded then run
+  document.addEventListener('DOMContentLoaded', () => {
+    renderTimeOfDayChart();
+  });
 })();

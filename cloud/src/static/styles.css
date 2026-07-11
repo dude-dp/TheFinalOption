@@ -1283,3 +1283,55 @@ td {
   outline: none;
   border-color: var(--accent-blue);
 }
+
+/* ==================== API FUEL GAUGE ==================== */
+.fuel-gauge-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  height: 38px;
+  font-family: var(--font-sans);
+}
+
+.gauge-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.gauge-track {
+  width: 60px;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 99px;
+  overflow: hidden;
+  position: relative;
+}
+
+.gauge-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent-buy);
+  border-radius: 99px;
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.5s ease;
+}
+
+.gauge-text {
+  font-size: 0.8rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  min-width: 48px;
+  text-align: right;
+}
+
+@media (max-width: 768px) {
+  .fuel-gauge-container {
+    display: none;
+  }
+}

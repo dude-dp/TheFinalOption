@@ -9,7 +9,7 @@ import { KV_KEYS } from './lib/types';
 import { getLatestMACDValues, detectZeroCrossover } from './lib/macd';
 import { calculateATM, selectStrike, shouldRollExpiry, getNearestWeeklyExpiry, getPreferredStrikes } from './lib/strike';
 import { calculateLots, lotsToQuantity } from './lib/lot-sizing';
-import { isMarketOpen, isSquareOffTime, isEODSummaryTime, isPreMarketWarmup, getTodayDateStr, generateCorrelationId } from './lib/time';
+import { isMarketOpen, isSquareOffTime, isEODSummaryTime, isPreMarketWarmup, getTodayDateStr, generateCorrelationId, getISTTimeFloat } from './lib/time';
 import { fetchNiftyCandles, getOptionChain, getFundsAndMargin, getLTP, notifyDiscord } from './lib/upstox';
 import { addPendingOrder } from './lib/orders';
 import { calculateADX } from './lib/adx';
@@ -333,6 +333,27 @@ export async function handleScheduled(env: Env): Promise<void> {
     }
 
     // --- SIGNAL DETECTED ---
+
+    // ==========================================
+    // TIME-OF-DAY FILTER (The "Theta Death Zone")
+    // ==========================================
+    const currentIST = getISTTimeFloat();
+    
+    // Example: Block new entries between 12:30 PM (12.5) and 2:00 PM (14.0)
+    const isThetaDeathZone = currentIST >= 12.5 && currentIST <= 14.0;
+
+    if (isThetaDeathZone) {
+      // Only block if we DON'T have an active position. 
+      // If we have an active position, we MUST allow the cron to run to manage the Stop Loss!
+      if (!state.activePosition && !state.activeHedgePosition) {
+        state.lastMacdLine = currentMacd; // Update memory
+        await logTelemetry(
+          env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, 'NONE', state.status, 
+          `SKIP: Time-of-Day Filter. Market is in the 12:30 - 2:00 PM flat zone.`
+        );
+        return; // Abort entry
+      }
+    }
 
     // ==========================================
     // STRADDLE MODE (Choppy Market Hedgehog)

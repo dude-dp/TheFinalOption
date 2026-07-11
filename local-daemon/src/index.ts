@@ -10,7 +10,8 @@ setDefaultResultOrder('ipv4first');
 
 import { createServer } from 'node:http';
 import { logInfo, logWarn, logError, logTrade } from './logger.js';
-import { executeOrder } from './executor.js';
+import { executeOrder, executeOrderStealth } from './executor.js';
+import { ApiTracker } from './tracker.js';
 
 // --- Configuration ---
 const CONFIG = {
@@ -80,6 +81,7 @@ function validateConfig(): boolean {
 async function pollWorker(): Promise<void> {
   try {
     const memory = process.memoryUsage();
+    const rateMetrics = ApiTracker.getMetrics();
     const res = await fetch(`${CONFIG.workerUrl}/api/poll`, {
       method: 'POST',
       headers: {
@@ -89,6 +91,7 @@ async function pollWorker(): Promise<void> {
         secret: CONFIG.pollSecret,
         memoryRss: memory.rss,
         memoryHeapUsed: memory.heapUsed,
+        rateMetrics,
       }),
       signal: AbortSignal.timeout(10000), // 10s timeout
     });
@@ -145,16 +148,39 @@ async function pollWorker(): Promise<void> {
 
         logTrade(`📥 Received order: ${order.correlationId}`);
 
-        const result = await executeOrder(order, accessToken, CONFIG.dryRun);
+        let resultPayload: any;
+        
+        if (CONFIG.dryRun) {
+          resultPayload = await executeOrder(order, accessToken, true);
+        } else {
+          const executionResult = await executeOrderStealth(order, accessToken);
 
-        if (result.status === 'REJECTED' && result.rejectionReason?.match(/HTTP 5\d\d/)) {
+          let finalStatus = executionResult.success ? 'FILLED' : (executionResult.filledLots > 0 ? 'PARTIALLY_FILLED' : 'REJECTED');
+          
+          if (executionResult.success) {
+            logInfo(`[SUCCESS] 🟢 Iceberg fully deployed! ${executionResult.filledLots}/${executionResult.requestedLots} lots filled.`);
+          } else {
+            logWarn(`[WARN] 🟡 Iceberg partially/fully failed. ${executionResult.filledLots}/${executionResult.requestedLots} lots filled.`);
+          }
+
+          resultPayload = {
+            correlationId: order.correlationId,
+            upstoxOrderId: executionResult.details[0]?.orderId || `ICEBERG-${Date.now()}`,
+            status: finalStatus,
+            executionPrice: order.orderPrice,
+            filledQuantity: executionResult.filledLots * (order.quantity / order.lots),
+            rejectionReason: executionResult.success ? null : 'Iceberg partially/fully failed'
+          };
+        }
+
+        if (resultPayload.status === 'REJECTED' && resultPayload.rejectionReason?.match(/HTTP 5\d\d/)) {
           await orderCircuitBreaker.recordFailure();
         } else {
           orderCircuitBreaker.recordSuccess();
         }
 
         // Send confirmation back to Cloud Worker
-        await confirmOrder(result);
+        await confirmOrder(resultPayload);
         totalOrdersExecuted++;
       }
     }
@@ -198,6 +224,7 @@ async function sweepOrphanedOrders(): Promise<void> {
       logWarn(`🔍 Sweeping Phantom Order: ${order.upstox_order_id}`);
 
       // Query Upstox directly for the true status of this order
+      ApiTracker.recordCall();
       const statusRes = await fetch(`https://api.upstox.com/v2/order/details?order_id=${order.upstox_order_id}`, {
         headers: {
           'Accept': 'application/json',

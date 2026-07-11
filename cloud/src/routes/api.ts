@@ -51,7 +51,12 @@ api.use('/api/config', dashboardAuth);
  * Receives daemon's RSS memory, checks watchdog, returns any PENDING orders.
  */
 api.post('/api/poll', async (c) => {
-  const body = await c.req.json<{ secret: string; memoryRss?: number; memoryHeapUsed?: number }>();
+  const body = await c.req.json<{ 
+    secret: string; 
+    memoryRss?: number; 
+    memoryHeapUsed?: number;
+    rateMetrics?: { reqPerSecond: number; reqPerMinute: number };
+  }>();
   
   // 1. Authenticate the payload
   const expectedSecret = c.env.POLL_SECRET;
@@ -65,6 +70,16 @@ api.post('/api/poll', async (c) => {
   const stateRaw = await kv.get(KV_KEYS.BOT_STATE);
   if (!stateRaw) return c.json({ error: 'Bot state not found' }, 404);
   const state: BotState = JSON.parse(stateRaw);
+
+  // Update live rate metrics from the daemon
+  if (body.rateMetrics) {
+    state.daemonMetrics = {
+      reqPerSecond: body.rateMetrics.reqPerSecond,
+      reqPerMinute: body.rateMetrics.reqPerMinute,
+      lastUpdated: Date.now()
+    };
+    await kv.put(KV_KEYS.BOT_STATE, JSON.stringify(state));
+  }
 
   let triggerWatchdogRestart = false;
   const MEMORY_LIMIT_BYTES = 500 * 1024 * 1024; // Exactly 500 MB
@@ -727,6 +742,27 @@ api.get('/oauth/callback', async (c) => {
     return c.redirect('/');
   } catch (e: any) {
     return c.text(`Auth failed: ${e.message}`, 500);
+  }
+});
+
+api.get('/api/analytics/time-of-day', dashboardAuth, async (c) => {
+  const query = `
+    SELECT 
+      strftime('%H', exit_time) as trading_hour,
+      SUM(realized_pnl) as total_pnl,
+      COUNT(*) as trade_count
+    FROM closed_trades 
+    WHERE exit_time IS NOT NULL
+    GROUP BY trading_hour
+    ORDER BY trading_hour ASC
+  `;
+  
+  try {
+    const result = await c.env.TRADING_DB.prepare(query).all();
+    return c.json({ data: result.results || [] });
+  } catch (error) {
+    // Fallback if table does not exist or errors out
+    return c.json({ data: [] });
   }
 });
 

@@ -32,6 +32,11 @@ export interface BotState {
   activeHedgePosition?: ActivePosition | null;
   lockTimestamp: number | null;
   lastMacdLine: number | null;
+  daemonMetrics?: {
+    reqPerSecond: number;
+    reqPerMinute: number;
+    lastUpdated: number;
+  };
 }
 
 export interface ActivePosition {

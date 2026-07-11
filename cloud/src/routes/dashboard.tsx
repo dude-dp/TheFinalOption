@@ -79,6 +79,15 @@ dashboard.get('/', (c) => {
           <span class="metric-label">₹</span>
           <span id="margin-value" class="metric-value" style="font-size: 1rem;">---</span>
         </div>
+
+        <div class="fuel-gauge-container">
+          <span class="gauge-label">API Fuel (1m)</span>
+          <div class="gauge-track">
+            <div id="api-fuel-fill" class="gauge-fill"></div>
+          </div>
+          <span id="api-fuel-text" class="gauge-text">0/200</span>
+        </div>
+
         <div id="status-badge" class="metric-box" style="padding: 6px 12px; flex-direction: row; align-items: center; border-radius: 99px;">
           <span id="status-dot" style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--text-muted); transition: background 0.3s, box-shadow 0.3s;"></span>
           <span id="status-text" style="font-weight: bold; font-size: 0.85rem; margin-left: 8px; letter-spacing: 0.5px;">STOPPED</span>
@@ -155,6 +164,17 @@ dashboard.get('/', (c) => {
             <span class="metric-label">Current LTP</span>
             <span id="pos-ltp" class="metric-value">₹--</span>
           </div>
+        </div>
+      </section>
+
+      <!-- Time-of-Day Analytics -->
+      <section class="bento-card col-span-6">
+        <h2 class="bento-card-title">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          Time-of-Day Performance
+        </h2>
+        <div style="position: relative; height:300px; width:100%; margin-top: 1rem;">
+          <canvas id="timeOfDayChart"></canvas>
         </div>
       </section>
 
@@ -278,6 +298,7 @@ dashboard.get('/', (c) => {
     </div>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="/chart.js"></script>
   <script src="/dashboard.js"></script>
 </body>

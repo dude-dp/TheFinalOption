@@ -4,12 +4,14 @@
 // ============================================
 
 import { logInfo, logWarn, logError, logTrade } from './logger.js';
+import { ApiTracker } from './tracker.js';
 
 const HFT_URL = 'https://api-hft.upstox.com';
 const API_URL = 'https://api.upstox.com';
 
 async function fetchWithBackoff(url: string, options: any, maxRetries = 2) {
   for (let i = 0; i <= maxRetries; i++) {
+    ApiTracker.recordCall();
     const res = await fetch(url, options);
     if (res.status === 429) {
       const retryAfter = res.headers.get('Retry-After');
@@ -20,6 +22,7 @@ async function fetchWithBackoff(url: string, options: any, maxRetries = 2) {
     }
     return res;
   }
+  ApiTracker.recordCall();
   return fetch(url, options);
 }
 
@@ -218,4 +221,91 @@ async function pollOrderStatus(
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+import { generateIcebergSlices } from './iceberg.js';
+
+// Standard NIFTY configuration. 
+// Freeze limit is 1800 qty (72 lots). We keep max slices stealthy at 15 lots (375 qty).
+const ICEBERG_CONF = {
+  minLotsPerSlice: 4,     // e.g., 100 qty
+  maxLotsPerSlice: 15,    // e.g., 375 qty
+  baseDelayMs: 250,       // Wait 250ms between slices
+  jitterMs: 300           // Add up to 300ms of random delay (Total delay: 250ms - 550ms)
+};
+
+export async function executeOrderStealth(order: any, upstoxToken: string) {
+  const lotSize = order.quantity / order.lots; // Automatically derive lot size
+  const slices = generateIcebergSlices(order.lots, ICEBERG_CONF);
+  
+  logInfo(`[ICEBERG] Fracturing ${order.lots} lots into ${slices.length} stealth slices: ${slices.join(', ')}`);
+
+  const fillResults: any[] = [];
+  
+  for (let i = 0; i < slices.length; i++) {
+    const sliceLots = slices[i];
+    const sliceQty = sliceLots * lotSize;
+    
+    // 1. Build the unique Upstox payload for this slice
+    const payload = {
+      quantity: sliceQty,
+      product: 'I', // Intraday
+      validity: 'DAY',
+      price: order.orderPrice, // LIMIT order price from parent
+      tag: order.correlationId.substring(0, 20), // Tie back to parent order
+      instrument_token: order.instrumentToken,
+      order_type: 'LIMIT',
+      transaction_type: order.transactionType, // BUY or SELL
+      disclosed_quantity: 0,
+      trigger_price: 0,
+      is_amo: false,
+      slice: true
+    };
+
+    // 2. Log API hit to prevent ban
+    ApiTracker.recordCall(); 
+
+    try {
+      logInfo(`[ICEBERG] 🧊 Firing slice ${i+1}/${slices.length} -> ${sliceQty} qty (${sliceLots} lots)`);
+      
+      const res = await fetch('https://api.upstox.com/v2/order/place', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${upstoxToken}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data: any = await res.json();
+      
+      if (res.ok && data.status === 'success') {
+        fillResults.push({ sliceQty, orderId: data.data.order_id, status: 'SUBMITTED' });
+      } else {
+        logError(`[ERROR] Slice ${i+1} failed: ${JSON.stringify(data.errors || data)}`);
+        fillResults.push({ sliceQty, status: 'FAILED', error: data });
+      }
+    } catch (err: any) {
+      logError(`[NETWORK ERROR] Slice ${i+1}: ${err.message}`);
+      fillResults.push({ sliceQty, status: 'NETWORK_ERROR' });
+    }
+
+    // 3. Jitter Delay (Don't sleep after the very last slice)
+    if (i < slices.length - 1) {
+      const dynamicJitter = Math.floor(Math.random() * ICEBERG_CONF.jitterMs);
+      const totalWait = ICEBERG_CONF.baseDelayMs + dynamicJitter;
+      await sleep(totalWait);
+    }
+  }
+
+  // Calculate success rate to send back to Cloudflare
+  const successfulLots = fillResults.filter(r => r.status === 'SUBMITTED').reduce((acc, curr) => acc + (curr.sliceQty / lotSize), 0);
+  
+  return {
+    success: successfulLots === order.lots,
+    requestedLots: order.lots,
+    filledLots: successfulLots,
+    details: fillResults
+  };
 }
