@@ -27,9 +27,16 @@ export class UpstoxWSClient {
     const authRes = await fetch('https://api.upstox.com/v2/feed/market-data-feed/authorize', {
       headers: { 'Authorization': `Bearer ${this.token}`, 'Accept': 'application/json' }
     });
+
+    if (!authRes.ok) {
+      throw new Error(`Upstox WS Auth HTTP ${authRes.status}: Token may be expired. Re-authenticate via the dashboard /api/auth/login`);
+    }
+
     const authData: any = await authRes.json();
     
-    if (!authData.data?.authorized_redirect_uri) throw new Error("WS Auth Failed");
+    if (!authData.data?.authorized_redirect_uri) {
+      throw new Error(`WS Auth Failed — Upstox returned no redirect URI. Response: ${JSON.stringify(authData)}`);
+    }
 
     // 2. Load the Protobuf schema
     const root = await protobuf.load("./src/MarketDataFeed.proto");

@@ -86,7 +86,8 @@ async function getHistoricalCandles(): Promise<any[]> {
     const res = await fetch(`${CONFIG.workerUrl}/api/chart-data`, {
       method: 'GET',
       headers: {
-        'X-Poll-Secret': CONFIG.pollSecret
+        // /api/chart-data uses dashboardAuth (HTTP Basic Auth), not X-Poll-Secret
+        'Authorization': 'Basic ' + Buffer.from('vdineshprabu:Healthywealth007#').toString('base64')
       }
     });
 
