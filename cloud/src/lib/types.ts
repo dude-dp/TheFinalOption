@@ -133,6 +133,7 @@ export interface UpstoxOptionChainEntry {
   tradingSymbol: string;
   lotSize: number;
   openInterest: number;
+  theta: number;
 }
 
 export interface UpstoxFundsResponse {

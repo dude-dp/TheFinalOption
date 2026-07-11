@@ -110,6 +110,7 @@ export async function getOptionChain(
         tradingSymbol: item.call_options.trading_symbol || '',
         lotSize: item.call_options.lot_size || 65,
         openInterest: item.call_options.market_data.oi || 0,
+        theta: item.call_options.option_greeks?.theta || 0,
       });
     }
     if (item.put_options?.market_data) {
@@ -122,6 +123,7 @@ export async function getOptionChain(
         tradingSymbol: item.put_options.trading_symbol || '',
         lotSize: item.put_options.lot_size || 65,
         openInterest: item.put_options.market_data.oi || 0,
+        theta: item.put_options.option_greeks?.theta || 0,
       });
     }
   }

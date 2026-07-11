@@ -48,52 +48,88 @@ api.use('/api/config', dashboardAuth);
 /**
  * GET /api/poll
  * Local daemon polls this every 1.5s.
- * Returns any PENDING orders and the current access token.
+ * Receives daemon's RSS memory, checks watchdog, returns any PENDING orders.
  */
-api.get('/api/poll', requirePollSecret, async (c) => {
+api.post('/api/poll', async (c) => {
+  const body = await c.req.json<{ secret: string; memoryRss?: number; memoryHeapUsed?: number }>();
+  
+  // 1. Authenticate the payload
+  const expectedSecret = c.env.POLL_SECRET;
+  if (!body.secret || body.secret !== expectedSecret) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
   const kv = c.env.TRADING_KV;
 
-  // Get bot state
+  // 2. Fetch the active state of the bot
   const stateRaw = await kv.get(KV_KEYS.BOT_STATE);
-  const state: BotState = stateRaw ? JSON.parse(stateRaw) : { status: 'STOPPED' };
+  if (!stateRaw) return c.json({ error: 'Bot state not found' }, 404);
+  const state: BotState = JSON.parse(stateRaw);
 
-  // Get pending orders array from KV
-  const rawPending = await kv.get(KV_KEYS.PENDING_ORDERS);
-  const pendingList: OrderPayload[] = rawPending ? JSON.parse(rawPending) : [];
+  let triggerWatchdogRestart = false;
+  const MEMORY_LIMIT_BYTES = 500 * 1024 * 1024; // Exactly 500 MB
 
-  const orders: OrderPayload[] = [];
-  const remainingList: OrderPayload[] = [];
-  let changed = false;
-
-  for (const order of pendingList) {
-    if (order.status === 'PENDING') {
-      orders.push(order);
-      // Mark as DISPATCHED to prevent duplicate pickup
-      order.status = 'DISPATCHED';
-      changed = true;
-      // Update D1
+  // 3. Evaluate Memory Limits & Position Safeties
+  if (body.memoryRss && body.memoryRss > MEMORY_LIMIT_BYTES) {
+    // CRITICAL SAFETY CHECK: Verify no directional or straddle positions are open
+    const hasNoActivePositions = !state.activePosition && !state.activeHedgePosition;
+    
+    if (hasNoActivePositions) {
+      triggerWatchdogRestart = true;
+      
+      // Log an audit trail entry into the D1 Telemetry Table for system tracking
+      const currentMemoryMB = (body.memoryRss / 1024 / 1024).toFixed(1);
       await c.env.TRADING_DB.prepare(
-        `UPDATE order_ledger SET order_status = 'DISPATCHED', updated_at = datetime('now') WHERE correlation_id = ?`
-      ).bind(order.correlationId).run();
+        `INSERT INTO system_telemetry (nifty_spot, atm_strike, macd_line, prev_macd_line, signal_generated, bot_status, log_message) 
+         VALUES (0, 0, 0, 0, 'NONE', ?, ?)`
+      ).bind(
+        state.status || 'STOPPED',
+        `WATCHDOG: Triggering daemon restart. RSS: ${currentMemoryMB}MB exceeds 500MB threshold. Position state clear.`
+      ).run();
     }
-    remainingList.push(order);
   }
 
-  if (changed) {
-    await kv.put(KV_KEYS.PENDING_ORDERS, JSON.stringify(remainingList));
+  // 4. Process pending orders if we are NOT restarting
+  const orders: OrderPayload[] = [];
+  let accessToken = null;
+  
+  if (!triggerWatchdogRestart) {
+    // Get pending orders array from KV
+    const rawPending = await kv.get(KV_KEYS.PENDING_ORDERS);
+    const pendingList: OrderPayload[] = rawPending ? JSON.parse(rawPending) : [];
+    const remainingList: OrderPayload[] = [];
+    let changed = false;
+
+    for (const order of pendingList) {
+      if (order.status === 'PENDING') {
+        orders.push(order);
+        // Mark as DISPATCHED to prevent duplicate pickup
+        order.status = 'DISPATCHED';
+        changed = true;
+        // Update D1
+        await c.env.TRADING_DB.prepare(
+          `UPDATE order_ledger SET order_status = 'DISPATCHED', updated_at = datetime('now') WHERE correlation_id = ?`
+        ).bind(order.correlationId).run();
+      }
+      remainingList.push(order);
+    }
+
+    if (changed) {
+      await kv.put(KV_KEYS.PENDING_ORDERS, JSON.stringify(remainingList));
+    }
+
+    // Get access token for daemon to use
+    accessToken = await kv.get(KV_KEYS.UPSTOX_ACCESS_TOKEN);
   }
 
-  // Get access token for daemon to use
-  const accessToken = await kv.get(KV_KEYS.UPSTOX_ACCESS_TOKEN);
-
-  const response: PollResponse = {
+  return c.json({
+    success: true,
+    shouldRestart: triggerWatchdogRestart,
     hasOrders: orders.length > 0,
     orders,
     accessToken,
     botStatus: state.status || 'STOPPED',
-  };
-
-  return c.json(response);
+  });
 });
 
 /**

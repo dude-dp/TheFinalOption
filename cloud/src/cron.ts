@@ -15,6 +15,7 @@ import { addPendingOrder } from './lib/orders';
 import { calculateADX } from './lib/adx';
 import { calculateATR } from './lib/atr';
 import { calculateVWAP } from './lib/vwap';
+import { calculatePCR } from './lib/pcr';
 
 // --- Config Loader ---
 
@@ -478,6 +479,33 @@ export async function handleScheduled(env: Env): Promise<void> {
     // 2. Fetch Option Chain
     const chain = await getOptionChain(accessToken, expiry);
 
+    // ==========================================
+    // INSTITUTIONAL FLOW FILTER (Put-Call Ratio)
+    // ==========================================
+    const currentPCR = calculatePCR(chain);
+
+    if (signal === 'BUY_CE' && currentPCR < 0.7) {
+      state.lockTimestamp = null;
+      state.lastMacdLine = currentMacd; // Update memory so it doesn't spam the DB on the next tick
+      await saveBotState(env.TRADING_KV, state);
+      await logTelemetry(
+        env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, 'NONE', state.status, 
+        `SKIP: Institutional Flow Bearish. PCR is ${currentPCR.toFixed(2)} (< 0.7). Blocking CE Entry.`
+      );
+      return; // Abort entry
+    }
+
+    if (signal === 'BUY_PE' && currentPCR > 1.3) {
+      state.lockTimestamp = null;
+      state.lastMacdLine = currentMacd; 
+      await saveBotState(env.TRADING_KV, state);
+      await logTelemetry(
+        env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, 'NONE', state.status, 
+        `SKIP: Institutional Flow Bullish. PCR is ${currentPCR.toFixed(2)} (> 1.3). Blocking PE Entry.`
+      );
+      return; // Abort entry
+    }
+
     // 3. Map preferred strikes to actual option instruments in the chain
     const candidateOptions = preferredStrikes.map(strike =>
       chain.find(e => e.strikePrice === strike && e.optionType === optionType)
@@ -524,6 +552,42 @@ export async function handleScheduled(env: Env): Promise<void> {
       await saveBotState(env.TRADING_KV, state);
       await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, signal, state.status, `SKIP: Insufficient margin for ATM & all 4 OTM levels (avail=₹${funds.availableMargin.toFixed(2)})`);
       return;
+    }
+
+    // ==========================================
+    // THETA MELT FILTER (0DTE Risk Management)
+    // ==========================================
+    const todayStr = getTodayDateStr(); // e.g. '2026-07-12'
+    const isExpiryDay = (targetOption as any).expiryDate === todayStr;
+    
+    // Check if the selected strike is Out-Of-The-Money (OTM)
+    const isOTM = signal === 'BUY_CE' 
+      ? (targetOption as any).strikePrice > spotPrice 
+      : (targetOption as any).strikePrice < spotPrice;
+
+    if (isExpiryDay && isOTM) {
+      // Set the maximum acceptable daily premium decay (e.g., losing 15 rupees per day is too high)
+      const MAX_THETA_DECAY = 15.0; 
+      
+      // Theta is natively negative. We use absolute value for easier comparison.
+      const optionTheta = Math.abs((targetOption as any).theta);
+
+      if (optionTheta > MAX_THETA_DECAY) {
+        state.lastMacdLine = currentMacd; // Update MACD memory so we don't spam the DB
+        state.lockTimestamp = null; // Release the evaluation lock
+        await saveBotState(env.TRADING_KV, state);
+        await logTelemetry(
+          env.TRADING_DB, 
+          spotPrice, 
+          atmStrike, 
+          currentMacd, 
+          prevMacd, 
+          'NONE', 
+          state.status, 
+          `SKIP: Theta Melt Risk. 0DTE OTM Option has extreme time decay (-${optionTheta.toFixed(2)} pts).`
+        );
+        return; // Abort the trade
+      }
     }
 
     const quantity = lotsToQuantity(lots, config.niftyLotSize);

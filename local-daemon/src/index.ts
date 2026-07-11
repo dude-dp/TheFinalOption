@@ -79,12 +79,17 @@ function validateConfig(): boolean {
 // --- Poll Worker ---
 async function pollWorker(): Promise<void> {
   try {
+    const memory = process.memoryUsage();
     const res = await fetch(`${CONFIG.workerUrl}/api/poll`, {
-      method: 'GET',
+      method: 'POST',
       headers: {
-        'X-Poll-Secret': CONFIG.pollSecret,
-        'Accept': 'application/json',
+        'Content-Type': 'application/json',
       },
+      body: JSON.stringify({
+        secret: CONFIG.pollSecret,
+        memoryRss: memory.rss,
+        memoryHeapUsed: memory.heapUsed,
+      }),
       signal: AbortSignal.timeout(10000), // 10s timeout
     });
 
@@ -95,6 +100,19 @@ async function pollWorker(): Promise<void> {
     const data: any = await res.json();
     consecutiveErrors = 0; // Reset on success
     lastPollTime = Date.now();
+
+    // Handle Watchdog Restart Command
+    if (data.shouldRestart) {
+      logWarn(`🔴 Memory threshold breached. Cloudflare requested a safe restart.`);
+      logWarn(`Current RSS Memory: ${(memory.rss / 1024 / 1024).toFixed(2)} MB. Exiting gracefully...`);
+      
+      setTimeout(() => {
+        process.exit(0);
+      }, 1000);
+
+      isRunning = false;
+      return;
+    }
 
     // Check bot status
     if (data.botStatus === 'STOPPED') {
