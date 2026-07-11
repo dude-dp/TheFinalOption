@@ -45,6 +45,8 @@ export interface ActivePosition {
   enteredAt: string;
   highestPrice?: number;
   hasScaledOut?: boolean;
+  scaleOutDone?: boolean;
+  entryAtr?: number;
 }
 
 // --- KV Key Constants ---

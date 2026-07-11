@@ -180,8 +180,10 @@ api.post('/api/confirm', requirePollSecret, async (c) => {
       const state: BotState = JSON.parse(stateRaw);
 
       if (order?.transaction_type === 'SELL') {
-        // It was a successful square-off. Now it's safe to clear the position.
-        state.activePosition = null;
+        // It was a successful square-off. Now it's safe to clear the position unless it was a scale-out.
+        if (!correlationId.startsWith('SCAL-')) {
+          state.activePosition = null;
+        }
       } else if (order?.transaction_type === 'BUY' && state.activePosition?.correlationId === correlationId) {
         // It was an entry. Update entry price.
         state.activePosition.entryPrice = executionPrice;

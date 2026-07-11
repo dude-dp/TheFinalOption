@@ -12,6 +12,9 @@ import { calculateLots, lotsToQuantity } from './lib/lot-sizing';
 import { isMarketOpen, isSquareOffTime, isEODSummaryTime, isPreMarketWarmup, getTodayDateStr, generateCorrelationId } from './lib/time';
 import { fetchNiftyCandles, getOptionChain, getFundsAndMargin, getLTP, notifyDiscord } from './lib/upstox';
 import { addPendingOrder } from './lib/orders';
+import { calculateADX } from './lib/adx';
+import { calculateATR } from './lib/atr';
+import { calculateVWAP } from './lib/vwap';
 
 // --- Config Loader ---
 
@@ -202,6 +205,10 @@ export async function handleScheduled(env: Env): Promise<void> {
     spotPrice = candles[candles.length - 1].close;
     atmStrike = calculateATM(spotPrice, config.strikeInterval);
 
+    const currentAdx = calculateADX(candles);
+    const currentAtr = calculateATR(candles);
+    const currentVwap = calculateVWAP(candles);
+
     // Compute MACD
     const closes = candles.map(c => c.close);
     const macdResult = getLatestMACDValues(closes);
@@ -239,81 +246,93 @@ export async function handleScheduled(env: Env): Promise<void> {
     // ==========================================
     if (state.activePosition && !state.lockTimestamp) {
       try {
-        // 1. Fetch current LTP of the active option contract
         const ltpData = await getLTP(accessToken, [state.activePosition.instrumentToken]);
         const currentLTP = ltpData[state.activePosition.instrumentToken];
 
         if (currentLTP && state.activePosition.entryPrice) {
           const entry = state.activePosition.entryPrice;
+          state.activePosition.highestPrice = Math.max(state.activePosition.highestPrice || entry, currentLTP);
+          
+          // ==========================================
+          // DYNAMIC ATR RISK ENGINE
+          // ==========================================
+          if (!state.activePosition.entryAtr) {
+            state.activePosition.entryAtr = currentAtr;
+          }
+          const atr = state.activePosition.entryAtr; 
+          
+          // We trade Options, but ATR is calculated on NIFTY Spot. 
+          // ATM/OTM options have a Delta of roughly ~0.4.
+          // We multiply Spot ATR by Delta to get the equivalent Premium point movement.
+          const optionDelta = 0.4; 
+          const atrPremiumPoints = atr * optionDelta;
+          
+          const maxProfitPct = ((state.activePosition.highestPrice - entry) / entry) * 100;
 
-          // 2. Track the highest price seen so far
-          state.activePosition.highestPrice = Math.max(
-            state.activePosition.highestPrice || entry,
-            currentLTP
-          );
-
-          const peak = state.activePosition.highestPrice;
-
-          // Calculate percentages based on premium 
-          // (1:1 correlation with % return on used capital)
-          const currentProfitPct = ((currentLTP - entry) / entry) * 100;
-          const maxProfitPct = ((peak - entry) / entry) * 100;
-
-          // 3. Evaluate Conditions
-          // Hard SL: Price drops 6% below our initial entry
-          const isHardSLHit = currentProfitPct <= -6.0;
-
-          // Trailing SL logic
-          let isTrailingSLHit = false;
-          let activeTSLPrice = 0;
-
-          // If we have hit the 6% profit milestone
-          if (maxProfitPct >= 6.0) {
-            // Lock in 2% at 6% profit. (Distance is always peak - 4%)
-            // Example: 6% peak -> 2% SL. 7% peak -> 3% SL.
-            const trailingSLPct = maxProfitPct - 4.0;
-            activeTSLPrice = entry * (1 + (trailingSLPct / 100));
-
-            // If current price falls back to or below our trailing line
-            if (currentLTP <= activeTSLPrice) {
-              isTrailingSLHit = true;
-            }
+          // Scale-Out Execution (Sell 50% at 33% profit OR a dynamic 2.5 ATRs)
+          if ((maxProfitPct >= 33.0 || (state.activePosition.highestPrice - entry) >= (2.5 * atrPremiumPoints)) && !state.activePosition.scaleOutDone && state.activePosition.lots > 1) {
+            const lotsToSell = Math.floor(state.activePosition.lots / 2);
+            await dispatchSquareOff(env, state, accessToken, config, lotsToSell);
+            
+            state.activePosition.lots -= lotsToSell;
+            state.activePosition.quantity -= (lotsToSell * config.niftyLotSize);
+            state.activePosition.scaleOutDone = true;
+            await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, 'NONE', state.status, `SCALE-OUT: Secured 50% profit.`);
           }
 
-          if (isHardSLHit || isTrailingSLHit) {
-            const exitReason = isHardSLHit ? 'HARD_SL_HIT_6_PERCENT' : 'TRAILING_SL_HIT';
+          // Momentum Decay Score
+          let isMomentumDecaying = false;
+          const hist = macdResult.histogram;
+          if (hist.length >= 3) {
+            const [h3, h2, h1] = [hist[hist.length-3], hist[hist.length-2], hist[hist.length-1]];
+            if (h3 > 0 && h2 > 0 && h1 > 0 && h3 > h2 && h2 > h1) isMomentumDecaying = true;
+            if (h3 < 0 && h2 < 0 && h1 < 0 && h3 < h2 && h2 < h1) isMomentumDecaying = true;
+          }
 
-            // Log the exact math that triggered the exit to the console/D1
+          // Feature 1: ATR-Based Stop Loss 
+          // Hard SL is permanently fixed at 1.5 ATR below entry
+          const hardSLPrice = entry - (1.5 * atrPremiumPoints);
+          
+          // TSL breathes dynamically: It stays exactly 1.5 ATR below the highest water mark
+          let activeTSLPrice = state.activePosition.highestPrice - (1.5 * atrPremiumPoints);
+          
+          // Feature 11: Tighten TSL drastically if momentum is decaying and we are in profit
+          if (isMomentumDecaying && (currentLTP - entry) > (0.5 * atrPremiumPoints)) {
+            // Lock a tight 0.5 ATR trail
+            activeTSLPrice = Math.max(activeTSLPrice, currentLTP - (0.5 * atrPremiumPoints)); 
+          }
+
+          // Trigger conditions
+          const isHardSLHit = currentLTP <= hardSLPrice && state.activePosition.highestPrice === entry;
+          const isTrailingSLHit = currentLTP <= activeTSLPrice && !isHardSLHit;
+
+          if (isHardSLHit || isTrailingSLHit) {
+            const exitReason = isHardSLHit ? 'HARD_SL_HIT_DYNAMIC_ATR' : 'TRAILING_SL_HIT_DYNAMIC_ATR';
+
             await logTelemetry(
               env.TRADING_DB,
-              spotPrice, // Note: spotPrice must be available in this scope
+              spotPrice,
               state.activePosition.strikePrice,
               currentMacd,
               prevMacd,
               'NONE',
               state.status,
-              `EXIT: ${exitReason}. LTP: ₹${currentLTP}, Peak: ₹${peak}, Entry: ₹${entry}, TSL Line: ₹${activeTSLPrice.toFixed(2)}`
+              `EXIT: ${exitReason}. LTP: ₹${currentLTP}, Peak: ₹${state.activePosition.highestPrice.toFixed(2)}, Entry: ₹${entry}, TSL Line: ₹${activeTSLPrice.toFixed(2)}, ATR Base: ₹${atrPremiumPoints.toFixed(2)}`
             );
 
-            await notifyDiscord(
-              env.DISCORD_WEBHOOK_URL,
-              `🛡️ **STOP LOSS TRIGGERED: ${exitReason}**\nContract: \`${state.activePosition.tradingSymbol}\`\nLTP: ₹${currentLTP} (Peak was: ₹${peak})`
-            );
+            await notifyDiscord(env.DISCORD_WEBHOOK_URL, `🛡️ **STOP LOSS TRIGGERED: ${exitReason}**\nContract: \`${state.activePosition.tradingSymbol}\`\nLTP: ₹${currentLTP}`);
 
-            // Dispatch square off order
             await dispatchSquareOff(env, state, accessToken, config);
-
-            // Save state and exit the cron for this minute to prevent MACD from double-triggering
+            state.lockTimestamp = Date.now();
             await saveBotState(env.TRADING_KV, state);
-            return;
+            return; 
           } else {
-            // If no SL is hit, we still save the state to persist the updated highestPrice
+            // If no SL is hit, we still save the state to persist the updated highestPrice and scaleOutDone
             await saveBotState(env.TRADING_KV, state);
           }
         }
       } catch (error: any) {
         console.error("Failed to fetch LTP for Risk Management check:", error);
-        // Fail silently here, allowing the MACD logic below to continue as a safety net
       }
     }
     // ==========================================
@@ -334,6 +353,38 @@ export async function handleScheduled(env: Env): Promise<void> {
     }
 
     // --- SIGNAL DETECTED ---
+
+    // Feature 7: Choppy Market Filter (ADX Integration)
+    if (config.adxFilterEnabled && currentAdx < config.adxThreshold) {
+      state.lastMacdLine = currentMacd;
+      await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, 'NONE', state.status, `SKIP: Market is Choppy (ADX: ${currentAdx.toFixed(1)} < ${config.adxThreshold})`);
+      return;
+    }
+
+    // ==========================================
+    // MEAN REVERSION FILTER (VWAP EXTENSION)
+    // ==========================================
+    if (signal === 'BUY_CE' && currentVwap > 0) {
+      const extensionPct = ((spotPrice - currentVwap) / currentVwap) * 100;
+      
+      // If NIFTY is > 1% above VWAP, it is over-extended. Block the CE trade.
+      if (extensionPct > 1.0) {
+        state.lastMacdLine = currentMacd;
+        await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, 'NONE', state.status, `SKIP: Mean Reversion Risk. NIFTY is ${extensionPct.toFixed(2)}% above VWAP.`);
+        return; // Abort entry
+      }
+    }
+
+    if (signal === 'BUY_PE' && currentVwap > 0) {
+      const dropPct = ((currentVwap - spotPrice) / currentVwap) * 100;
+      
+      // If NIFTY is > 1% below VWAP, it is over-extended downward. Block the PE trade.
+      if (dropPct > 1.0) {
+        state.lastMacdLine = currentMacd;
+        await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, 'NONE', state.status, `SKIP: Mean Reversion Risk. NIFTY is ${dropPct.toFixed(2)}% below VWAP.`);
+        return; // Abort entry
+      }
+    }
 
     // Check position lock and handle deadlock recovery
     if (state.lockTimestamp) {
@@ -458,9 +509,11 @@ export async function handleScheduled(env: Env): Promise<void> {
       tradingSymbol: targetOption.tradingSymbol,
       strikePrice: strike,
       entryPrice: premium,
+      highestPrice: premium,
       quantity,
       lots,
       enteredAt: new Date().toISOString(),
+      entryAtr: currentAtr,
     };
     state.lastMacdLine = currentMacd;
     state.lockTimestamp = null;
@@ -489,11 +542,14 @@ export async function handleScheduled(env: Env): Promise<void> {
 
 // --- Square Off Helper ---
 
-async function dispatchSquareOff(env: Env, state: BotState, token: string, config: BotConfig): Promise<void> {
+async function dispatchSquareOff(env: Env, state: BotState, token: string, config: BotConfig, lotsToSell?: number): Promise<void> {
   if (!state.activePosition) return;
 
   const pos = state.activePosition;
-  const correlationId = generateCorrelationId();
+  const correlationId = lotsToSell !== undefined ? `SCAL-${generateCorrelationId()}` : generateCorrelationId();
+
+  const lots = lotsToSell !== undefined ? lotsToSell : pos.lots;
+  const quantity = lotsToSell !== undefined ? (lotsToSell * config.niftyLotSize) : pos.quantity;
 
   const sellOrder: OrderPayload = {
     orderId: crypto.randomUUID(),
@@ -503,8 +559,8 @@ async function dispatchSquareOff(env: Env, state: BotState, token: string, confi
     optionType: pos.optionType,
     strikePrice: pos.strikePrice,
     transactionType: 'SELL',
-    quantity: pos.quantity,
-    lots: pos.lots,
+    quantity,
+    lots,
     orderPrice: 0, // Market order
     status: 'PENDING',
     createdAt: new Date().toISOString(),
@@ -515,11 +571,11 @@ async function dispatchSquareOff(env: Env, state: BotState, token: string, confi
   await env.TRADING_DB.prepare(
     `INSERT INTO order_ledger (order_id, correlation_id, instrument_token, trading_symbol, option_type, strike_price, transaction_type, quantity, lots, order_price, order_status)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(sellOrder.orderId, correlationId, pos.instrumentToken, pos.tradingSymbol, pos.optionType, pos.strikePrice, 'SELL', pos.quantity, pos.lots, 0, 'PENDING').run();
+  ).bind(sellOrder.orderId, correlationId, pos.instrumentToken, pos.tradingSymbol, pos.optionType, pos.strikePrice, 'SELL', quantity, lots, 0, 'PENDING').run();
 
   await notifyDiscord(
     env.DISCORD_WEBHOOK_URL,
-    `⚡ **SQUARE-OFF DISPATCHED**\nClosing \`${pos.tradingSymbol}\` (${pos.lots} lots) at Market Price.`
+    `⚡ **SQUARE-OFF DISPATCHED**\nClosing \`${pos.tradingSymbol}\` (${lots} lots) at Market Price.`
   );
 
   // Active position will be cleared by /api/confirm once the order is FILLED
