@@ -173,8 +173,8 @@ async function bootstrapEngine() {
   // Typecasting access to private property to seed data cleanly in this script
   (wsClient as any).aggregator.seedHistoricalData(historicalData);
 
-  // 3. Define the Cloudflare transmission callback
-  wsClient.connect(async (signalPayload) => {
+  // 3. Define the signal callback
+  const onSignal = async (signalPayload: any) => {
     logInfo(`[SIGNAL] 1-Min Candle Closed. MACD: ${signalPayload.currentMacd.toFixed(2)} | Signal: ${signalPayload.signal}`);
     
     try {
@@ -233,7 +233,29 @@ async function bootstrapEngine() {
     } catch (err: any) {
       logError(`[ERROR] Failed to push signal to Cloudflare: ${err.message}`);
     }
-  });
+  };
+
+  // 4. Connect WebSocket with retry loop — auth failures do NOT crash the process
+  const connectWithRetry = async () => {
+    while (true) {
+      try {
+        logInfo('🔌 Connecting to Upstox WebSocket...');
+        await wsClient.connect(onSignal);
+        break; // connected successfully — ws.on('close') handles reconnects internally
+      } catch (err: any) {
+        const isAuthError = err.message.includes('401') || err.message.includes('410') || err.message.includes('Auth');
+        if (isAuthError) {
+          logWarn(`⚠️  Upstox token rejected (${err.message.split(':')[0].trim()}). Please re-authenticate at your dashboard. Retrying in 60s...`);
+          await new Promise(resolve => setTimeout(resolve, 60000));
+        } else {
+          logError(`WS connect error: ${err.message}. Retrying in 15s...`);
+          await new Promise(resolve => setTimeout(resolve, 15000));
+        }
+      }
+    }
+  };
+
+  connectWithRetry().catch(e => logError(`Fatal WS loop: ${e.message}`));
 
   // Graceful shutdown
   process.on('SIGINT', () => {
