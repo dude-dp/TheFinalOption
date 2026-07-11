@@ -24,7 +24,7 @@ export class UpstoxWSClient {
 
   public async connect(onSignal: (signalData: any) => void) {
     // 1. Get the authorized WS URL from Upstox
-    const authRes = await fetch('https://api.upstox.com/v2/feed/market-data-feed/authorize', {
+    const authRes = await fetch('https://api.upstox.com/v3/feed/market-data-feed/authorize', {
       headers: { 'Authorization': `Bearer ${this.token}`, 'Accept': 'application/json' }
     });
 
