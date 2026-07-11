@@ -22,16 +22,12 @@ dashboard.get('/', (c) => {
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='%23E50914'%3E%3Cpath d='M0 0h24v24H0z' fill='none'/%3E%3Cpath d='M10 2c0-.88 1.056-1.331 1.692-.722 1.958 1.876 3.096 5.995 1.75 9.12l-.08.174.012.003c.625.133 1.203-.43 2.303-2.173l.14-.224a1 1 0 0 1 1.582-.153C18.733 9.46 20 12.402 20 14.295 20 18.56 16.409 22 12 22s-8-3.44-8-7.706c0-2.252 1.022-4.716 2.632-6.301l.605-.589c.241-.236.434-.43.618-.624C9.285 5.268 10 3.856 10 2'/%3E%3C/svg%3E">
   <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="/styles.css">
+  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
   <!-- Toast Container (globally positioned) -->
   <div id="toast-container"></div>
 
-  <!-- Fullscreen Chart Overlay -->
-  <div id="chart-overlay">
-    <button id="close-fullscreen" style="display:flex;align-items:center;gap:6px;"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></svg> Exit Fullscreen</button>
-    <canvas id="trading-chart-fs"></canvas>
-  </div>
 
   <div class="dashboard-container">
     <!-- Header -->
@@ -132,9 +128,7 @@ dashboard.get('/', (c) => {
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 8v-2a2 2 0 0 1 2 -2h2"/><path d="M4 16v2a2 2 0 0 0 2 2h2"/><path d="M16 4h2a2 2 0 0 1 2 2v2"/><path d="M16 20h2a2 2 0 0 0 2 -2v-2"/></svg>
           </button>
         </div>
-        <div style="width: 100%; height: 520px; position: relative; border-radius: 12px; overflow: hidden;">
-          <canvas id="trading-chart"></canvas>
-        </div>
+        <div id="tv-chart-container" style="position: relative; width: 100%; height: 520px; border-radius: 12px; overflow: hidden;"></div>
       </section>
 
       <!-- Active Position Tracker -->

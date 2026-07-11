@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package com.upstox.marketdatafeeder.rpc.proto;
+
+// Note: Replace this with the full official Upstox MarketDataFeed.proto 
+// from the Upstox Developer Portal to ensure all tags map correctly.
+
+message FeedResponse {
+  map<string, Feed> feeds = 1;
+}
+
+message Feed {
+  FullFeed fullFeed = 2; // Replace with correct tag from Upstox schema
+}
+
+message FullFeed {
+  FF ff = 1;
+}
+
+message FF {
+  MarketFF marketFF = 1;
+}
+
+message MarketFF {
+  LTPC ltpc = 1;
+}
+
+message LTPC {
+  double ltp = 1;
+}

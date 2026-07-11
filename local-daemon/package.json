@@ -11,11 +11,15 @@
     "pm2:logs": "npx pm2 logs thefinaloption-daemon"
   },
   "dependencies": {
-    "dotenv": "^16.4.0"
+    "dotenv": "^16.4.0",
+    "protobufjs": "^8.7.0",
+    "upstox-js-sdk": "^2.29.0",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.19.0",
-    "typescript": "^5.7.0",
-    "@types/node": "^22.0.0"
+    "typescript": "^5.7.0"
   }
 }

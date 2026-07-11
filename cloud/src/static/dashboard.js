@@ -17,8 +17,85 @@
   const ICON_CHECK = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M5 12l5 5l10 -10"/></svg>`;
   const EMPTY_SVG = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;color:var(--text-muted);"><svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;margin-bottom:10px;"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 4m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z" /><path d="M4 13h3l3 3h4l3 -3h3" /></svg><p style="margin:0;font-size:0.9rem;">Nothing to see here yet.</p></div>`;
 
-  let chart = null;
+  let tvChart = null;
+  let candleSeries = null;
   let currentStatus = 'STOPPED';
+
+  function initTradingViewChart() {
+    const container = document.getElementById('tv-chart-container');
+    if (!container) return;
+
+    // 1. Initialize the Chart with a custom deep-dark aesthetic
+    tvChart = LightweightCharts.createChart(container, {
+      layout: {
+        background: { type: 'solid', color: '#301934' }, // Deep aesthetic background
+        textColor: '#D9D9D9',
+      },
+      grid: {
+        vertLines: { color: 'rgba(255, 255, 255, 0.05)' },
+        horzLines: { color: 'rgba(255, 255, 255, 0.05)' },
+      },
+      crosshair: {
+        mode: LightweightCharts.CrosshairMode.Normal,
+        vertLine: {
+          width: 1,
+          color: 'rgba(224, 227, 235, 0.4)',
+          style: LightweightCharts.LineStyle.Dashed,
+        },
+        horzLine: {
+          width: 1,
+          color: 'rgba(224, 227, 235, 0.4)',
+          style: LightweightCharts.LineStyle.Dashed,
+        },
+      },
+      rightPriceScale: {
+        borderColor: 'rgba(255, 255, 255, 0.1)',
+      },
+      timeScale: {
+        borderColor: 'rgba(255, 255, 255, 0.1)',
+        timeVisible: true,
+        secondsVisible: false,
+      },
+    });
+
+    // 2. Create the Candlestick Series
+    candleSeries = tvChart.addCandlestickSeries({
+      upColor: '#00e676',       // Institutional Green
+      downColor: '#ff1744',     // Deep Red
+      borderVisible: false,
+      wickUpColor: '#00e676',
+      wickDownColor: '#ff1744',
+    });
+
+    // 3. Make the chart responsive to window resizing
+    new ResizeObserver(entries => {
+      if (entries.length === 0 || entries[0].target !== container) { return; }
+      const newRect = entries[0].contentRect;
+      tvChart.applyOptions({ height: newRect.height, width: newRect.width });
+    }).observe(container);
+  }
+
+  function loadHistoricalCandles(historicalData) {
+    if (candleSeries && historicalData) {
+      // Data format expected: { time, open, high, low, close }
+      // The old /api/chart-data might not return it exactly like this.
+      candleSeries.setData(historicalData);
+    }
+  }
+
+  function updateLiveChart(latestTick) {
+    if (!candleSeries || !latestTick) return;
+    
+    const tvTick = {
+      time: Math.floor(new Date(latestTick.timestamp).getTime() / 1000), // UNIX seconds
+      open: latestTick.open,
+      high: latestTick.high,
+      low: latestTick.low,
+      close: latestTick.ltp // The current live price
+    };
+
+    candleSeries.update(tvTick);
+  }
   let lastActivePosition = null;
   let lastActiveHedgePosition = null;
   let heartbeatTimer = null;
@@ -133,7 +210,7 @@
 
   // ==================== INIT ====================
   document.addEventListener('DOMContentLoaded', () => {
-    chart = new window.TradingChart('trading-chart');
+    initTradingViewChart();
     initMobileNav();
     initSlideToConfirm();
     initFullscreenChart();
@@ -315,10 +392,47 @@
   }
 
   // ==================== CHART DATA ====================
+  function renderTVMarkers() {
+    if (!candleSeries || !allOrders) return;
+    
+    const markers = [];
+    allOrders.forEach(order => {
+      if (order.order_status === 'FILLED' || order.order_status === 'COMPLETED') {
+        const timeField = order.timestamp || order.created_at || order.createdAt;
+        if (!timeField) return;
+        
+        markers.push({
+          time: Math.floor(new Date(timeField).getTime() / 1000),
+          position: order.transaction_type === 'BUY' ? 'belowBar' : 'aboveBar',
+          color: order.transaction_type === 'BUY' ? '#2196F3' : '#ff1744',
+          shape: order.transaction_type === 'BUY' ? 'arrowUp' : 'arrowDown',
+          text: `${order.transaction_type} ${order.option_type || ''} @ ${order.order_price || ''}`
+        });
+      }
+    });
+
+    // Markers must be sorted by time for TradingView
+    markers.sort((a, b) => a.time - b.time);
+    candleSeries.setMarkers(markers);
+  }
+
   async function fetchChartData() {
     const res = await fetch('/api/chart-data');
     const data = await res.json();
-    if (chart && data.spots) chart.updateData(data.spots, data.macd, allOrders);
+    
+    if (data.spots && data.spots.length > 0) {
+      const historicalData = data.spots.map(spot => ({
+        time: Math.floor(new Date(spot.timestamp).getTime() / 1000),
+        open: spot.open,
+        high: spot.high,
+        low: spot.low,
+        close: spot.close
+      }));
+      // Sort strictly ascending
+      historicalData.sort((a, b) => a.time - b.time);
+      loadHistoricalCandles(historicalData);
+      renderTVMarkers();
+    }
   }
 
   // ==================== TELEMETRY ====================
@@ -416,6 +530,7 @@
     if (!tbody || !data.data) return;
 
     allOrders = data.data; // Store for chart execution flags
+    renderTVMarkers();
 
     if (allOrders.length === 0) {
       tbody.innerHTML = `<tr><td colspan="7">${EMPTY_SVG}</td></tr>`;
@@ -668,34 +783,33 @@
 
   // ==================== FULLSCREEN CHART ====================
   function initFullscreenChart() {
-    const overlay = document.getElementById('chart-overlay');
-    const closeBtn = document.getElementById('close-fullscreen');
     const fullBtn = document.getElementById('fullscreen-btn');
-    const fsCanvas = document.getElementById('trading-chart-fs');
-    let fsChart = null;
-
+    
     if (fullBtn) {
       fullBtn.addEventListener('click', () => {
-        overlay.classList.add('open');
+        const container = document.getElementById('tv-chart-container');
+        if (!container) return;
+        
+        if (container.requestFullscreen) {
+          container.requestFullscreen();
+        } else if (container.webkitRequestFullscreen) { /* Safari */
+          container.webkitRequestFullscreen();
+        } else if (container.msRequestFullscreen) { /* IE11 */
+          container.msRequestFullscreen();
+        }
 
         // Try to lock landscape on mobile
         try {
           screen.orientation && screen.orientation.lock('landscape').catch(() => { });
         } catch (_) { }
-
-        // Lazily create a second chart instance for the overlay
-        if (!fsChart) fsChart = new window.TradingChart('trading-chart-fs');
-        // Sync data from main chart if possible
-        if (chart && chart._lastData) fsChart.updateData(chart._lastData.spots, chart._lastData.macd, allOrders);
       });
     }
 
-    if (closeBtn) {
-      closeBtn.addEventListener('click', () => {
-        overlay.classList.remove('open');
+    document.addEventListener('fullscreenchange', () => {
+      if (!document.fullscreenElement) {
         try { screen.orientation && screen.orientation.unlock(); } catch (_) { }
-      });
-    }
+      }
+    });
   }
 
   // ==================== LOG FILTER CHIPS ====================
