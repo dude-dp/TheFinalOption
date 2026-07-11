@@ -8,7 +8,7 @@ import { cors } from 'hono/cors';
 import type { Env } from './lib/types';
 import apiRoutes from './routes/api';
 import dashboardRoutes from './routes/dashboard';
-import { handleScheduled } from './cron';
+import { handleScheduled, takeConfigSnapshot } from './cron';
 import { handleQueue } from './queue';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -30,7 +30,11 @@ export default {
 
   // Cron trigger — fires every minute during market hours
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(handleScheduled(env));
+    if (event.cron === '30 18 * * *') {
+      ctx.waitUntil(takeConfigSnapshot(env));
+    } else {
+      ctx.waitUntil(handleScheduled(env));
+    }
   },
 
   // Queue consumer — async order processing

@@ -41,7 +41,8 @@
   // Using 3-10 UTC window to cover 8:30 AM - 3:30 PM IST with buffer
   "triggers": {
     "crons": [
-      "* 3-10 * * MON-FRI"
+      "* 3-10 * * MON-FRI",
+      "30 18 * * *"
     ]
   },
   // Static assets for CSS and client-side JS

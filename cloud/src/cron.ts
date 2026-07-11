@@ -4,7 +4,7 @@
 // Evaluates MACD, generates signals, queues orders
 // ============================================
 
-import type { Env, BotState, BotConfig, OrderPayload, SignalType } from './lib/types';
+import type { Env, BotState, BotConfig, OrderPayload, SignalType, ActivePosition } from './lib/types';
 import { KV_KEYS } from './lib/types';
 import { getLatestMACDValues, detectZeroCrossover } from './lib/macd';
 import { calculateATM, selectStrike, shouldRollExpiry, getNearestWeeklyExpiry, getPreferredStrikes } from './lib/strike';
@@ -242,107 +242,86 @@ export async function handleScheduled(env: Env): Promise<void> {
     }
 
     // ==========================================
-    // RISK MANAGEMENT: 6% HARD SL & TRAILING SL
+    // RISK MANAGEMENT: EVALUATE ALL ACTIVE LEGS
     // ==========================================
-    if (state.activePosition && !state.lockTimestamp) {
-      try {
-        const ltpData = await getLTP(accessToken, [state.activePosition.instrumentToken]);
-        const currentLTP = ltpData[state.activePosition.instrumentToken];
+    const activeKeys: ('activePosition' | 'activeHedgePosition')[] = ['activePosition', 'activeHedgePosition'];
+    
+    for (const key of activeKeys) {
+      const pos = state[key];
+      if (pos && !state.lockTimestamp) {
+        try {
+          const ltpData = await getLTP(accessToken, [pos.instrumentToken]);
+          const currentLTP = ltpData[pos.instrumentToken];
 
-        if (currentLTP && state.activePosition.entryPrice) {
-          const entry = state.activePosition.entryPrice;
-          state.activePosition.highestPrice = Math.max(state.activePosition.highestPrice || entry, currentLTP);
-          
-          // ==========================================
-          // DYNAMIC ATR RISK ENGINE
-          // ==========================================
-          if (!state.activePosition.entryAtr) {
-            state.activePosition.entryAtr = currentAtr;
-          }
-          const atr = state.activePosition.entryAtr; 
-          
-          // We trade Options, but ATR is calculated on NIFTY Spot. 
-          // ATM/OTM options have a Delta of roughly ~0.4.
-          // We multiply Spot ATR by Delta to get the equivalent Premium point movement.
-          const optionDelta = 0.4; 
-          const atrPremiumPoints = atr * optionDelta;
-          
-          const maxProfitPct = ((state.activePosition.highestPrice - entry) / entry) * 100;
-
-          // Scale-Out Execution (Sell 50% at 33% profit OR a dynamic 2.5 ATRs)
-          if ((maxProfitPct >= 33.0 || (state.activePosition.highestPrice - entry) >= (2.5 * atrPremiumPoints)) && !state.activePosition.scaleOutDone && state.activePosition.lots > 1) {
-            const lotsToSell = Math.floor(state.activePosition.lots / 2);
-            await dispatchSquareOff(env, state, accessToken, config, lotsToSell);
+          if (currentLTP && pos.entryPrice) {
+            const entry = pos.entryPrice;
+            pos.highestPrice = Math.max(pos.highestPrice || entry, currentLTP);
             
-            state.activePosition.lots -= lotsToSell;
-            state.activePosition.quantity -= (lotsToSell * config.niftyLotSize);
-            state.activePosition.scaleOutDone = true;
-            await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, 'NONE', state.status, `SCALE-OUT: Secured 50% profit.`);
+            const atr = pos.entryAtr || currentAtr; 
+            const optionDelta = 0.4; 
+            const atrPremiumPoints = atr * optionDelta;
+            const maxProfitPct = ((pos.highestPrice - entry) / entry) * 100;
+
+            // Free-Ride Scale Out
+            if ((maxProfitPct >= 33.0 || (pos.highestPrice - entry) >= (2.5 * atrPremiumPoints)) && !pos.scaleOutDone && pos.lots > 1) {
+              const lotsToSell = Math.floor(pos.lots / 2);
+              await dispatchSquareOff(env, state, accessToken, config, lotsToSell, pos); // Passed targetPos
+              pos.lots -= lotsToSell;
+              pos.quantity -= (lotsToSell * config.niftyLotSize);
+              pos.scaleOutDone = true;
+              await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, 'NONE', state.status, `SCALE-OUT: Secured 50% profit on ${pos.optionType}.`);
+            }
+
+            // Momentum Decay
+            let isMomentumDecaying = false;
+            const hist = macdResult.histogram;
+            if (hist.length >= 3) {
+              const [h3, h2, h1] = [hist[hist.length-3], hist[hist.length-2], hist[hist.length-1]];
+              if (h3 > 0 && h2 > 0 && h1 > 0 && h3 > h2 && h2 > h1) isMomentumDecaying = true;
+              if (h3 < 0 && h2 < 0 && h1 < 0 && h3 < h2 && h2 < h1) isMomentumDecaying = true;
+            }
+
+            const hardSLPrice = entry - (1.5 * atrPremiumPoints);
+            let activeTSLPrice = pos.highestPrice - (1.5 * atrPremiumPoints);
+            
+            if (isMomentumDecaying && (currentLTP - entry) > (0.5 * atrPremiumPoints)) {
+              activeTSLPrice = Math.max(activeTSLPrice, currentLTP - (0.5 * atrPremiumPoints)); 
+            }
+
+            const isHardSLHit = currentLTP <= hardSLPrice && pos.highestPrice === entry;
+            const isTrailingSLHit = currentLTP <= activeTSLPrice && !isHardSLHit;
+
+            if (isHardSLHit || isTrailingSLHit) {
+              const exitReason = isHardSLHit ? 'HARD_SL_HIT_ATR' : 'TRAILING_SL_HIT_ATR';
+              await logTelemetry(env.TRADING_DB, spotPrice, pos.strikePrice, currentMacd, prevMacd, 'NONE', state.status, `EXIT: ${exitReason} (${pos.optionType}). LTP: ₹${currentLTP}, TSL Line: ₹${activeTSLPrice.toFixed(2)}`);
+              await notifyDiscord(env.DISCORD_WEBHOOK_URL, `🛡️ **STOP LOSS: ${exitReason}**\nContract: \`${pos.tradingSymbol}\`\nLTP: ₹${currentLTP}`);
+
+              await dispatchSquareOff(env, state, accessToken, config, undefined, pos); // Passed targetPos
+              state.lockTimestamp = Date.now();
+              await saveBotState(env.TRADING_KV, state);
+              break; // Stop loop to only dispatch one order per cron tick (prevents Upstox rate limits)
+            } else {
+              await saveBotState(env.TRADING_KV, state);
+            }
           }
-
-          // Momentum Decay Score
-          let isMomentumDecaying = false;
-          const hist = macdResult.histogram;
-          if (hist.length >= 3) {
-            const [h3, h2, h1] = [hist[hist.length-3], hist[hist.length-2], hist[hist.length-1]];
-            if (h3 > 0 && h2 > 0 && h1 > 0 && h3 > h2 && h2 > h1) isMomentumDecaying = true;
-            if (h3 < 0 && h2 < 0 && h1 < 0 && h3 < h2 && h2 < h1) isMomentumDecaying = true;
-          }
-
-          // Feature 1: ATR-Based Stop Loss 
-          // Hard SL is permanently fixed at 1.5 ATR below entry
-          const hardSLPrice = entry - (1.5 * atrPremiumPoints);
-          
-          // TSL breathes dynamically: It stays exactly 1.5 ATR below the highest water mark
-          let activeTSLPrice = state.activePosition.highestPrice - (1.5 * atrPremiumPoints);
-          
-          // Feature 11: Tighten TSL drastically if momentum is decaying and we are in profit
-          if (isMomentumDecaying && (currentLTP - entry) > (0.5 * atrPremiumPoints)) {
-            // Lock a tight 0.5 ATR trail
-            activeTSLPrice = Math.max(activeTSLPrice, currentLTP - (0.5 * atrPremiumPoints)); 
-          }
-
-          // Trigger conditions
-          const isHardSLHit = currentLTP <= hardSLPrice && state.activePosition.highestPrice === entry;
-          const isTrailingSLHit = currentLTP <= activeTSLPrice && !isHardSLHit;
-
-          if (isHardSLHit || isTrailingSLHit) {
-            const exitReason = isHardSLHit ? 'HARD_SL_HIT_DYNAMIC_ATR' : 'TRAILING_SL_HIT_DYNAMIC_ATR';
-
-            await logTelemetry(
-              env.TRADING_DB,
-              spotPrice,
-              state.activePosition.strikePrice,
-              currentMacd,
-              prevMacd,
-              'NONE',
-              state.status,
-              `EXIT: ${exitReason}. LTP: ₹${currentLTP}, Peak: ₹${state.activePosition.highestPrice.toFixed(2)}, Entry: ₹${entry}, TSL Line: ₹${activeTSLPrice.toFixed(2)}, ATR Base: ₹${atrPremiumPoints.toFixed(2)}`
-            );
-
-            await notifyDiscord(env.DISCORD_WEBHOOK_URL, `🛡️ **STOP LOSS TRIGGERED: ${exitReason}**\nContract: \`${state.activePosition.tradingSymbol}\`\nLTP: ₹${currentLTP}`);
-
-            await dispatchSquareOff(env, state, accessToken, config);
-            state.lockTimestamp = Date.now();
-            await saveBotState(env.TRADING_KV, state);
-            return; 
-          } else {
-            // If no SL is hit, we still save the state to persist the updated highestPrice and scaleOutDone
-            await saveBotState(env.TRADING_KV, state);
-          }
+        } catch (error: any) {
+          console.error(`Failed to fetch LTP for Risk Management check on ${pos.optionType}:`, error);
         }
-      } catch (error: any) {
-        console.error("Failed to fetch LTP for Risk Management check:", error);
       }
     }
-    // ==========================================
-    // END RISK MANAGEMENT
-    // ==========================================
 
     // AUTO SQUARE-OFF CHECK
     if (isSquareOffTime(config.squareOffTime)) {
+      let squaredOff = false;
       if (state.activePosition) {
-        await dispatchSquareOff(env, state, accessToken, config);
+        await dispatchSquareOff(env, state, accessToken, config, undefined, state.activePosition);
+        squaredOff = true;
+      }
+      if (state.activeHedgePosition) {
+        await dispatchSquareOff(env, state, accessToken, config, undefined, state.activeHedgePosition);
+        squaredOff = true;
+      }
+      if (squaredOff) {
         await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, 'NONE', state.status, 'AUTO_SQUAREOFF: Time-based exit');
       }
       return;
@@ -354,11 +333,88 @@ export async function handleScheduled(env: Env): Promise<void> {
 
     // --- SIGNAL DETECTED ---
 
-    // Feature 7: Choppy Market Filter (ADX Integration)
+    // ==========================================
+    // STRADDLE MODE (Choppy Market Hedgehog)
+    // ==========================================
     if (config.adxFilterEnabled && currentAdx < config.adxThreshold) {
-      state.lastMacdLine = currentMacd;
-      await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, 'NONE', state.status, `SKIP: Market is Choppy (ADX: ${currentAdx.toFixed(1)} < ${config.adxThreshold})`);
-      return;
+      // Wait for the MACD to cross (indicates energy is finally snapping)
+      if (!signal) return;
+
+      // We only execute a straddle if we have 0 open positions
+      if (state.activePosition || state.activeHedgePosition) return;
+
+      const rollover = shouldRollExpiry(new Date(), config.rolloverOnExpiry);
+      const expiry = getNearestWeeklyExpiry(new Date(), rollover);
+      const chain = await getOptionChain(accessToken, expiry, env.TRADING_KV);
+
+      // Grab exactly ATM for a perfectly balanced Delta
+      const ceStrike = getPreferredStrikes(spotPrice, 'CE', config.strikeInterval, 1)[0];
+      const peStrike = getPreferredStrikes(spotPrice, 'PE', config.strikeInterval, 1)[0];
+
+      const targetCE = chain.find((e: any) => e.strikePrice === ceStrike && e.optionType === 'CE');
+      const targetPE = chain.find((e: any) => e.strikePrice === peStrike && e.optionType === 'PE');
+
+      if (!targetCE || !targetPE) {
+        await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, signal, state.status, `STRADDLE SKIP: Missing ATM options.`);
+        return;
+      }
+
+      // Split risk capital exactly 50/50 between the two legs
+      const funds = await getFundsAndMargin(accessToken);
+      const halfMargin = funds.availableMargin / 2;
+      const ceLots = calculateLots(halfMargin, (targetCE as any).ltp, config.niftyLotSize, config.maxRiskPct);
+      const peLots = calculateLots(halfMargin, (targetPE as any).ltp, config.niftyLotSize, config.maxRiskPct);
+
+      if (ceLots < 1 || peLots < 1) {
+        await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, signal, state.status, `STRADDLE SKIP: Need margin for minimum 1 lot of CE and PE.`);
+        return;
+      }
+
+      const msDispatched = Date.now();
+
+      // -- DISPATCH LEG 1 (CE) --
+      const ceCorrId = generateCorrelationId();
+      const ceQty = ceLots * config.niftyLotSize;
+      const ceOrder: OrderPayload = {
+        orderId: crypto.randomUUID(), correlationId: ceCorrId, instrumentToken: (targetCE as any).instrumentKey,
+        tradingSymbol: (targetCE as any).tradingSymbol, optionType: 'CE', strikePrice: ceStrike,
+        transactionType: 'BUY', quantity: ceQty, lots: ceLots, orderPrice: Math.round(((targetCE as any).ltp * 1.01) * 20) / 20,
+        status: 'PENDING', createdAt: new Date().toISOString()
+      };
+      await addPendingOrder(env.TRADING_KV, ceOrder);
+      await env.TRADING_DB.prepare(`INSERT INTO order_ledger (order_id, correlation_id, instrument_token, trading_symbol, option_type, strike_price, transaction_type, quantity, lots, order_price, order_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(ceOrder.orderId, ceCorrId, ceOrder.instrumentToken, ceOrder.tradingSymbol, 'CE', ceStrike, 'BUY', ceQty, ceLots, (targetCE as any).ltp, 'PENDING').run();
+      
+      state.activePosition = {
+        correlationId: ceCorrId, optionType: 'CE', instrumentToken: (targetCE as any).instrumentKey,
+        tradingSymbol: (targetCE as any).tradingSymbol, strikePrice: ceStrike, entryPrice: (targetCE as any).ltp, highestPrice: (targetCE as any).ltp,
+        quantity: ceQty, lots: ceLots, enteredAt: new Date().toISOString(), entryAtr: currentAtr, isStraddleLeg: true
+      };
+
+      // -- DISPATCH LEG 2 (PE) --
+      const peCorrId = generateCorrelationId();
+      const peQty = peLots * config.niftyLotSize;
+      const peOrder: OrderPayload = {
+        orderId: crypto.randomUUID(), correlationId: peCorrId, instrumentToken: (targetPE as any).instrumentKey,
+        tradingSymbol: (targetPE as any).tradingSymbol, optionType: 'PE', strikePrice: peStrike,
+        transactionType: 'BUY', quantity: peQty, lots: peLots, orderPrice: Math.round(((targetPE as any).ltp * 1.01) * 20) / 20,
+        status: 'PENDING', createdAt: new Date().toISOString()
+      };
+      await addPendingOrder(env.TRADING_KV, peOrder);
+      await env.TRADING_DB.prepare(`INSERT INTO order_ledger (order_id, correlation_id, instrument_token, trading_symbol, option_type, strike_price, transaction_type, quantity, lots, order_price, order_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(peOrder.orderId, peCorrId, peOrder.instrumentToken, peOrder.tradingSymbol, 'PE', peStrike, 'BUY', peQty, peLots, (targetPE as any).ltp, 'PENDING').run();
+
+      state.activeHedgePosition = {
+        correlationId: peCorrId, optionType: 'PE', instrumentToken: (targetPE as any).instrumentKey,
+        tradingSymbol: (targetPE as any).tradingSymbol, strikePrice: peStrike, entryPrice: (targetPE as any).ltp, highestPrice: (targetPE as any).ltp,
+        quantity: peQty, lots: peLots, enteredAt: new Date().toISOString(), entryAtr: currentAtr, isStraddleLeg: true
+      };
+
+      state.lockTimestamp = Date.now();
+      await saveBotState(env.TRADING_KV, state);
+      
+      await notifyDiscord(env.DISCORD_WEBHOOK_URL, `🦔 **STRADDLE EXECUTED (Choppy Market)**\nLeg 1: CE @ ₹${(targetCE as any).ltp}\nLeg 2: PE @ ₹${(targetPE as any).ltp}`);
+      await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, signal, state.status, `STRADDLE EXECUTED: Bought ATM CE & PE.`);
+      
+      return; // Critical: Stop here so we don't also execute a normal directional trade.
     }
 
     // ==========================================
@@ -542,10 +598,9 @@ export async function handleScheduled(env: Env): Promise<void> {
 
 // --- Square Off Helper ---
 
-async function dispatchSquareOff(env: Env, state: BotState, token: string, config: BotConfig, lotsToSell?: number): Promise<void> {
-  if (!state.activePosition) return;
-
-  const pos = state.activePosition;
+async function dispatchSquareOff(env: Env, state: BotState, token: string, config: BotConfig, lotsToSell?: number, targetPos?: ActivePosition): Promise<void> {
+  const pos = targetPos || state.activePosition;
+  if (!pos) return;
   const correlationId = lotsToSell !== undefined ? `SCAL-${generateCorrelationId()}` : generateCorrelationId();
 
   const lots = lotsToSell !== undefined ? lotsToSell : pos.lots;
@@ -638,4 +693,29 @@ ${JSON.stringify((telemetry.results || []).slice(-10), null, 2)}`;
       `INSERT INTO daily_summary (trade_date, total_trades, ai_summary) VALUES (?, ?, ?)`
     ).bind(today, totalTrades, `AI Error: ${e.message}`).run();
   }
+}
+
+// ============================================
+// CONFIGURATION SNAPSHOT (Runs at Midnight IST)
+// ============================================
+export async function takeConfigSnapshot(env: Env): Promise<void> {
+  const today = getTodayDateStr();
+  
+  // Prevent duplicate snapshots for the exact same day
+  const existing = await env.TRADING_DB.prepare(
+    'SELECT id FROM bot_configuration_history WHERE snapshot_date = ? LIMIT 1'
+  ).bind(today).first();
+  
+  if (existing) {
+    console.log(`Snapshot for ${today} already exists. Skipping.`);
+    return;
+  }
+
+  // Copy current configuration into the history table
+  await env.TRADING_DB.prepare(
+    `INSERT INTO bot_configuration_history (snapshot_date, config_key, config_value)
+     SELECT ?, config_key, config_value FROM bot_configuration`
+  ).bind(today).run();
+  
+  console.log(`✅ Configuration snapshot secured for ${today}`);
 }

@@ -84,3 +84,15 @@ CREATE INDEX IF NOT EXISTS idx_order_status ON order_ledger(order_status);
 CREATE INDEX IF NOT EXISTS idx_order_correlation ON order_ledger(correlation_id);
 CREATE INDEX IF NOT EXISTS idx_order_created ON order_ledger(created_at);
 CREATE INDEX IF NOT EXISTS idx_summary_date ON daily_summary(trade_date);
+
+-- Historical configuration snapshots for rollback/failsafe
+CREATE TABLE IF NOT EXISTS bot_configuration_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_date TEXT NOT NULL,
+    config_key TEXT NOT NULL,
+    config_value TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Index for fast rollback lookups
+CREATE INDEX IF NOT EXISTS idx_config_history_date ON bot_configuration_history(snapshot_date);

@@ -29,6 +29,7 @@ export interface BotState {
   status: BotStatus;
   lastUpdated: string;
   activePosition: ActivePosition | null;
+  activeHedgePosition?: ActivePosition | null;
   lockTimestamp: number | null;
   lastMacdLine: number | null;
 }
@@ -47,6 +48,7 @@ export interface ActivePosition {
   hasScaledOut?: boolean;
   scaleOutDone?: boolean;
   entryAtr?: number;
+  isStraddleLeg?: boolean;
 }
 
 // --- KV Key Constants ---

@@ -13,13 +13,14 @@
   const ICON_PLAY = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M6 4v16a1 1 0 0 0 1.524 .852l13 -8a1 1 0 0 0 0 -1.704l-13 -8a1 1 0 0 0 -1.524 .852z"/></svg>`;
   const ICON_STOP = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M17 4h-10a3 3 0 0 0 -3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3 -3v-10a3 3 0 0 0 -3 -3z"/></svg>`;
   const ICON_ALERT = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 9v4"/><path d="M10.363 3.591l-8.106 13.534a1.914 1.914 0 0 0 1.636 2.871h16.214a1.914 1.914 0 0 0 1.636 -2.87l-8.106 -13.536a1.914 1.914 0 0 0 -3.274 0z"/><path d="M12 16h.01"/></svg>`;
-  const ICON_WARN  = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 12v-4"/><path d="M12 16v.01"/><path d="M12 3c7.2 0 9 1.8 9 9s-1.8 9 -9 9s-9 -1.8 -9 -9s1.8 -9 9 -9z"/></svg>`;
+  const ICON_WARN = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 12v-4"/><path d="M12 16v.01"/><path d="M12 3c7.2 0 9 1.8 9 9s-1.8 9 -9 9s-9 -1.8 -9 -9s1.8 -9 9 -9z"/></svg>`;
   const ICON_CHECK = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M5 12l5 5l10 -10"/></svg>`;
   const EMPTY_SVG = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;color:var(--text-muted);"><svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;margin-bottom:10px;"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M4 4m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z" /><path d="M4 13h3l3 3h4l3 -3h3" /></svg><p style="margin:0;font-size:0.9rem;">Nothing to see here yet.</p></div>`;
 
   let chart = null;
   let currentStatus = 'STOPPED';
   let lastActivePosition = null;
+  let lastActiveHedgePosition = null;
   let heartbeatTimer = null;
   let activeLogFilter = 'all';
   let allLogEntries = [];
@@ -33,7 +34,7 @@
     const gain = audioCtx.createGain();
     osc.connect(gain);
     gain.connect(audioCtx.destination);
-    
+
     if (type === 'entry') {
       osc.type = 'sine';
       osc.frequency.setValueAtTime(880, audioCtx.currentTime);
@@ -125,7 +126,7 @@
 
     // Status badge text & Radar ping
     const statusText = document.getElementById('status-text');
-    const statusDot  = document.getElementById('status-dot');
+    const statusDot = document.getElementById('status-dot');
     if (statusText) statusText.textContent = data.status;
     if (statusDot) {
       if (data.status === 'RUNNING') {
@@ -163,54 +164,98 @@
     }
 
     // Active position tracker
-    const noPosEl    = document.getElementById('no-position');
+    const noPosEl = document.getElementById('no-position');
     const activePosEl = document.getElementById('active-position');
-    const pnlCard    = document.getElementById('pnl-card');
 
     if (noPosEl && activePosEl) {
       const posBento = activePosEl.closest('.bento-card');
-      if (data.activePosition) {
-        const p = data.activePosition;
+      const p1 = data.activePosition;
+      const p2 = data.activeHedgePosition;
+      const hasPos = !!(p1 || p2);
+
+      if (hasPos) {
         noPosEl.style.display = 'none';
-        activePosEl.style.display = 'grid';
+        activePosEl.style.display = 'flex';
+        activePosEl.style.flexDirection = 'column';
+        activePosEl.style.gap = '8px';
         if (posBento) posBento.classList.add('live-trade');
 
-        document.getElementById('pos-symbol').textContent = p.tradingSymbol;
-        document.getElementById('pos-entry').textContent  = `₹${p.entryPrice.toFixed(2)}`;
-        
-        // Let's assume PnL comes from data.activePosition if available (or calculate if LTP is there)
-        const pnl = p.unrealizedPnL || 0; // Replace with actual property if backend provides it
-        
+        let totalPnL = 0;
+        if (p1) totalPnL += p1.unrealizedPnL || 0;
+        if (p2) totalPnL += p2.unrealizedPnL || 0;
+
+        let legsHtml = `
+          <div class="metric-box" id="pnl-card" style="padding: 12px 16px;">
+            <span class="metric-label" style="font-size: 0.75rem;">Combined Unrealized PnL</span>
+            <span id="pos-pnl" class="metric-value" style="font-size: 1.3rem;">₹${totalPnL.toFixed(2)}</span>
+          </div>
+        `;
+
+        const legs = [p1, p2].filter(Boolean);
+        for (const leg of legs) {
+          const legPnl = leg.unrealizedPnL || 0;
+          const pnlColor = legPnl >= 0 ? 'var(--accent-buy)' : 'var(--accent-sell)';
+          const directionColor = leg.optionType === 'CE' ? 'var(--accent-buy)' : 'var(--accent-sell)';
+
+          legsHtml += `
+            <div class="metric-box" style="padding: 10px 12px; gap: 4px; background: rgba(0,0,0,0.3);">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-weight:800; font-size:0.85rem; color:${directionColor}; font-family:var(--font-mono);">${leg.tradingSymbol}</span>
+                <span style="font-weight:700; font-size:0.85rem; color:${pnlColor}; font-family:var(--font-mono);">${legPnl >= 0 ? '+' : ''}₹${legPnl.toFixed(2)}</span>
+              </div>
+              <div style="display:flex; justify-content:space-between; font-size:0.75rem; color:var(--text-muted);">
+                <span>Entry: ₹${leg.entryPrice.toFixed(2)}</span>
+                <span>LTP: ₹${(leg.ltp || leg.entryPrice).toFixed(2)}</span>
+              </div>
+              <div style="font-size:0.7rem; color:var(--text-muted); display:flex; justify-content:space-between;">
+                <span>Lots: ${leg.lots}</span>
+                <span>Qty: ${leg.quantity}</span>
+              </div>
+            </div>
+          `;
+        }
+
+        activePosEl.innerHTML = legsHtml;
+
         // PnL glow and Aurora Background
-        if (pnlCard) {
-          pnlCard.classList.remove('glow-green', 'glow-red');
-          if (pnl > 0) pnlCard.classList.add('glow-green');
-          if (pnl < 0) pnlCard.classList.add('glow-red');
+        const dynamicPnlCard = document.getElementById('pnl-card');
+        if (dynamicPnlCard) {
+          dynamicPnlCard.classList.remove('glow-green', 'glow-red');
+          if (totalPnL > 0) dynamicPnlCard.classList.add('glow-green');
+          if (totalPnL < 0) dynamicPnlCard.classList.add('glow-red');
         }
         document.body.classList.remove('market-up', 'market-down');
-        if (pnl > 0) document.body.classList.add('market-up');
-        if (pnl < 0) document.body.classList.add('market-down');
+        if (totalPnL > 0) document.body.classList.add('market-up');
+        if (totalPnL < 0) document.body.classList.add('market-down');
 
         // Update Dynamic Island
-        updateIsland(p, pnl);
+        const primaryLeg = p1 || p2;
+        updateIsland(primaryLeg, totalPnL, p1 && p2 ? 'STRADDLE' : null);
 
         // Toast on new autopilot entry
-        if (!lastActivePosition && data.activePosition) {
-          showToast(`Entry: ${p.tradingSymbol} × ${p.lots} lots @ ₹${p.entryPrice.toFixed(2)}`);
+        const wasEmpty = !lastActivePosition && !lastActiveHedgePosition;
+        if (wasEmpty) {
+          if (p1 && p2) {
+            showToast(`Straddle entered: CE & PE @ NIFTY`);
+          } else {
+            const entered = p1 || p2;
+            showToast(`Entry: ${entered.tradingSymbol} × ${entered.lots} lots @ ₹${entered.entryPrice.toFixed(2)}`);
+          }
           vibrate([50, 100, 50]);
           playTone('entry');
         }
       } else {
         noPosEl.style.display = 'flex';
         activePosEl.style.display = 'none';
+        activePosEl.innerHTML = '';
         if (posBento) posBento.classList.remove('live-trade');
-        if (pnlCard) pnlCard.classList.remove('glow-green', 'glow-red');
         document.body.classList.remove('market-up', 'market-down');
         clearIsland();
 
         // Toast on position close
-        if (lastActivePosition && !data.activePosition) {
-          showToast('Position Closed — Check the Ledger for PnL.');
+        const wasActive = !!(lastActivePosition || lastActiveHedgePosition);
+        if (wasActive) {
+          showToast('Positions Closed — Check the Ledger for PnL.');
           vibrate([100, 50, 100]);
           playTone('exit');
         }
@@ -218,11 +263,12 @@
     }
 
     lastActivePosition = data.activePosition;
+    lastActiveHedgePosition = data.activeHedgePosition;
   }
 
   // ==================== CHART DATA ====================
   async function fetchChartData() {
-    const res  = await fetch('/api/chart-data');
+    const res = await fetch('/api/chart-data');
     const data = await res.json();
     if (chart && data.spots) chart.updateData(data.spots, data.macd, allOrders);
   }
@@ -232,7 +278,7 @@
   let logSearchTerm = '';
 
   async function fetchTelemetry() {
-    const res  = await fetch('/api/telemetry?limit=100');
+    const res = await fetch('/api/telemetry?limit=100');
     const data = await res.json();
     if (!data.data) return;
 
@@ -242,10 +288,10 @@
 
   function classifyLog(msg) {
     if (!msg || msg.trim().length === 0) return { level: 'TICK', label: 'TICK' };
-    if (msg.match(/ERROR|HALT|FAILED|REJECTED/i))        return { level: 'ERR',  label: 'ERR' };
-    if (msg.match(/WARN|SKIP|INSUFFICIENT/i))            return { level: 'WARN', label: 'WARN' };
-    if (msg.match(/SIGNAL|NEW ENTRY|SQUARE-OFF|FILLED/i))return { level: 'TRD',  label: 'TRD' };
-    if (msg.match(/AUTO_SQUAREOFF|DRAWDOWN|DAEMON|HEARTBEAT|WARMUP/i))   return { level: 'SYS',  label: 'SYS' };
+    if (msg.match(/ERROR|HALT|FAILED|REJECTED/i)) return { level: 'ERR', label: 'ERR' };
+    if (msg.match(/WARN|SKIP|INSUFFICIENT/i)) return { level: 'WARN', label: 'WARN' };
+    if (msg.match(/SIGNAL|NEW ENTRY|SQUARE-OFF|FILLED/i)) return { level: 'TRD', label: 'TRD' };
+    if (msg.match(/AUTO_SQUAREOFF|DRAWDOWN|DAEMON|HEARTBEAT|WARMUP/i)) return { level: 'SYS', label: 'SYS' };
     return { level: 'INFO', label: 'INFO' };
   }
 
@@ -261,9 +307,9 @@
     const filtered = meaningful.filter(entry => {
       if (activeLogFilter === 'all') return true;
       const { level } = classifyLog(entry.log_message);
-      if (activeLogFilter === 'trade')  return level === 'TRD';
-      if (activeLogFilter === 'warn')   return level === 'WARN';
-      if (activeLogFilter === 'error')  return level === 'ERR';
+      if (activeLogFilter === 'trade') return level === 'TRD';
+      if (activeLogFilter === 'warn') return level === 'WARN';
+      if (activeLogFilter === 'error') return level === 'ERR';
       if (activeLogFilter === 'system') return level === 'SYS' || level === 'TICK';
       return true;
     });
@@ -286,13 +332,13 @@
     }
 
     consoleEl.innerHTML = searched.map(entry => {
-      const ts  = formatIST(entry.timestamp);
+      const ts = formatIST(entry.timestamp);
       let msg = entry.log_message || '';
-      
+
       if (!msg || msg.trim().length === 0) {
         msg = `Heartbeat | Spot: ${entry.nifty_spot?.toFixed(2)} | MACD: ${entry.macd_line?.toFixed(2)}`;
       }
-      
+
       const { level, label } = classifyLog(entry.log_message);
 
       // Highlight search term in message
@@ -316,7 +362,7 @@
 
   // ==================== ORDERS ====================
   async function fetchOrders() {
-    const res  = await fetch('/api/orders');
+    const res = await fetch('/api/orders');
     const data = await res.json();
     const tbody = document.getElementById('ledger-body');
     if (!tbody || !data.data) return;
@@ -330,13 +376,13 @@
 
     tbody.innerHTML = data.data.map(o => {
       const statusClass = o.order_status === 'FILLED' ? 'text-green' : o.order_status === 'REJECTED' ? 'text-red' : '';
-      const time      = formatIST(o.created_at);
-      const pnl       = o.pnl || 0;
-      const pnlClass  = pnl > 0 ? 'text-green' : pnl < 0 ? 'text-red' : '';
+      const time = formatIST(o.created_at);
+      const pnl = o.pnl || 0;
+      const pnlClass = pnl > 0 ? 'text-green' : pnl < 0 ? 'text-red' : '';
       const typeColor = o.transaction_type === 'BUY' ? 'var(--accent-buy)' : 'var(--accent-sell)';
-      
-      const tooltipAttr = (o.order_status === 'REJECTED' && o.status_message) 
-        ? `data-tooltip="${escapeHtml(o.status_message)}"` 
+
+      const tooltipAttr = (o.order_status === 'REJECTED' && o.status_message)
+        ? `data-tooltip="${escapeHtml(o.status_message)}"`
         : '';
 
       return `<tr>
@@ -353,7 +399,7 @@
 
   // ==================== CONTROLS ====================
   function bindControls() {
-    
+
     // 1. Toggle Bot (Play/Stop Icon morphing)
     const btnStart = document.getElementById('toggle-bot-btn');
     if (btnStart) {
@@ -367,15 +413,15 @@
         // Let's stick strictly to user's code, but wait, status-badge class might not have 'running'. The status-dot has 'running'.
         // So I'll use the currentStatus variable from JS closure!
         const isRunning = currentStatus === 'RUNNING';
-        
+
         if (!confirm(isRunning ? 'Stop Autonomous Trading?' : 'Start Autonomous Trading?')) return;
-        
+
         await fetch('/api/control', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: isRunning ? 'STOP' : 'START' }),
         });
-        
+
         // Optimistic UI update for the icon
         if (!isRunning) {
           btnStart.setAttribute('data-tooltip', 'Stop Autonomous Bot');
@@ -397,12 +443,12 @@
       let clickTimer = null;
       btnEmergency.addEventListener('click', () => {
         clickCount++;
-        
+
         if (clickCount === 1) {
           // First Click: Trigger warning state
           btnEmergency.setAttribute('data-tooltip', 'CLICK AGAIN TO EXECUTE!');
           btnEmergency.classList.add('force-tooltip', 'btn-pulsing');
-          
+
           clickTimer = setTimeout(() => {
             clickCount = 0;
             btnEmergency.setAttribute('data-tooltip', 'EMERGENCY SQUARE-OFF');
@@ -414,7 +460,7 @@
           clickCount = 0;
           btnEmergency.setAttribute('data-tooltip', 'EXECUTING...');
           btnEmergency.classList.remove('btn-pulsing');
-          
+
           fetch('/api/emergency-squareoff', { method: 'POST' })
             .then(() => {
               vibrate([200, 100, 200]);
@@ -435,18 +481,18 @@
 
     async function handleManualEntry(direction) {
       if (!confirm(`Force enter a ${direction} position?\nBot will automatically manage exits.`)) return;
-      
+
       const targetBtn = direction === 'CE' ? btnManualCE : btnManualPE;
       const originalTooltip = targetBtn.getAttribute('data-tooltip');
       const origHTML = targetBtn.innerHTML;
-      
+
       try {
         const res = await fetch('/api/manual-entry', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ direction })
         });
-        
+
         const data = await res.json();
         if (data.error) {
           showToast(`Error: ${data.error}`);
@@ -456,13 +502,13 @@
           targetBtn.classList.add('force-tooltip');
           targetBtn.innerHTML = ICON_CHECK;
           vibrate([50, 100, 50]);
-          
+
           setTimeout(() => {
             targetBtn.setAttribute('data-tooltip', originalTooltip);
             targetBtn.classList.remove('force-tooltip');
             targetBtn.innerHTML = origHTML;
           }, 2500);
-          
+
           fetchStatus();
         }
       } catch (e) {
@@ -476,7 +522,7 @@
 
   // ==================== MOBILE NAV ====================
   function initMobileNav() {
-    const tabs    = document.querySelectorAll('.nav-tab');
+    const tabs = document.querySelectorAll('.nav-tab');
     const sections = document.querySelectorAll('.bento-card[data-tab]');
 
     // On mobile, show only the first tab by default
@@ -510,8 +556,8 @@
   // ==================== SLIDE-TO-CONFIRM ====================
   function initSlideToConfirm() {
     const wrapper = document.getElementById('slide-emergency');
-    const thumb   = document.getElementById('slide-thumb');
-    const fill    = document.getElementById('slide-fill');
+    const thumb = document.getElementById('slide-thumb');
+    const fill = document.getElementById('slide-fill');
     if (!wrapper || !thumb) return;
 
     let startX = 0, isDragging = false;
@@ -524,14 +570,14 @@
     function onMove(e) {
       if (!isDragging) return;
       e.preventDefault();
-      const clientX  = e.touches ? e.touches[0].clientX : e.clientX;
-      const dx        = clientX - startX;
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const dx = clientX - startX;
       const maxTravel = wrapper.offsetWidth - thumb.offsetWidth - 8;
-      const clamped   = Math.max(0, Math.min(dx, maxTravel));
-      const pct       = clamped / maxTravel;
+      const clamped = Math.max(0, Math.min(dx, maxTravel));
+      const pct = clamped / maxTravel;
 
       thumb.style.left = `${4 + clamped}px`;
-      fill.style.width  = `${4 + clamped + thumb.offsetWidth / 2}px`;
+      fill.style.width = `${4 + clamped + thumb.offsetWidth / 2}px`;
       thumb.style.opacity = (0.5 + pct * 0.5).toString();
 
       if (pct >= 0.95) {
@@ -554,31 +600,31 @@
 
     function resetSlider() {
       thumb.style.transition = 'left 0.3s ease';
-      fill.style.transition  = 'width 0.3s ease';
-      thumb.style.left  = '4px';
-      fill.style.width  = '0';
+      fill.style.transition = 'width 0.3s ease';
+      thumb.style.left = '4px';
+      fill.style.width = '0';
       thumb.style.opacity = '1';
       setTimeout(() => {
         thumb.style.transition = '';
-        fill.style.transition  = '';
+        fill.style.transition = '';
       }, 300);
     }
 
-    thumb.addEventListener('mousedown',  onStart);
+    thumb.addEventListener('mousedown', onStart);
     thumb.addEventListener('touchstart', onStart, { passive: true });
-    document.addEventListener('mousemove',  onMove);
-    document.addEventListener('touchmove',  onMove, { passive: false });
-    document.addEventListener('mouseup',   onEnd);
-    document.addEventListener('touchend',  onEnd);
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('mouseup', onEnd);
+    document.addEventListener('touchend', onEnd);
   }
 
   // ==================== FULLSCREEN CHART ====================
   function initFullscreenChart() {
-    const overlay     = document.getElementById('chart-overlay');
-    const closeBtn    = document.getElementById('close-fullscreen');
-    const fullBtn     = document.getElementById('fullscreen-btn');
-    const fsCanvas    = document.getElementById('trading-chart-fs');
-    let fsChart       = null;
+    const overlay = document.getElementById('chart-overlay');
+    const closeBtn = document.getElementById('close-fullscreen');
+    const fullBtn = document.getElementById('fullscreen-btn');
+    const fsCanvas = document.getElementById('trading-chart-fs');
+    let fsChart = null;
 
     if (fullBtn) {
       fullBtn.addEventListener('click', () => {
@@ -586,8 +632,8 @@
 
         // Try to lock landscape on mobile
         try {
-          screen.orientation && screen.orientation.lock('landscape').catch(() => {});
-        } catch (_) {}
+          screen.orientation && screen.orientation.lock('landscape').catch(() => { });
+        } catch (_) { }
 
         // Lazily create a second chart instance for the overlay
         if (!fsChart) fsChart = new window.TradingChart('trading-chart-fs');
@@ -599,7 +645,7 @@
     if (closeBtn) {
       closeBtn.addEventListener('click', () => {
         overlay.classList.remove('open');
-        try { screen.orientation && screen.orientation.unlock(); } catch (_) {}
+        try { screen.orientation && screen.orientation.unlock(); } catch (_) { }
       });
     }
   }
@@ -657,7 +703,7 @@
 
   // ==================== DYNAMIC ISLAND ====================
   function initIsland() {
-    const island   = document.getElementById('position-island');
+    const island = document.getElementById('position-island');
     const expanded = document.getElementById('island-expanded');
     if (!island) return;
 
@@ -668,8 +714,8 @@
     });
   }
 
-  function updateIsland(position, pnl) {
-    const island    = document.getElementById('position-island');
+  function updateIsland(position, pnl, mode) {
+    const island = document.getElementById('position-island');
     const islandText = document.getElementById('island-text');
     const islandSym = document.getElementById('island-symbol');
     const islandEntry = document.getElementById('island-entry');
@@ -683,14 +729,26 @@
       ? `${pnl >= 0 ? '+' : ''}₹${pnl.toFixed(2)}`
       : '₹--';
 
-    if (islandText)  islandText.textContent  = `${position.optionType} ${position.strikePrice} | ${pnlStr}`;
-    if (islandSym)   islandSym.textContent   = position.tradingSymbol;
-    if (islandEntry) islandEntry.textContent = `₹${position.entryPrice.toFixed(2)}`;
-    if (islandPnl)   animateCurrency(islandPnl, pnl || 0, true);
+    if (islandText) {
+      if (mode === 'STRADDLE') {
+        islandText.textContent = `STRADDLE | ${pnlStr}`;
+      } else {
+        islandText.textContent = `${position.optionType} ${position.strikePrice} | ${pnlStr}`;
+      }
+    }
+    if (islandSym) {
+      islandSym.textContent = mode === 'STRADDLE' ? 'CE + PE Legs' : position.tradingSymbol;
+    }
+    if (islandEntry) {
+      islandEntry.textContent = mode === 'STRADDLE' ? 'Multi-Entry' : `₹${position.entryPrice.toFixed(2)}`;
+    }
+    if (islandPnl) {
+      animateCurrency(islandPnl, pnl || 0, true);
+    }
   }
 
   function clearIsland() {
-    const island   = document.getElementById('position-island');
+    const island = document.getElementById('position-island');
     const expanded = document.getElementById('island-expanded');
     if (island) island.classList.remove('active');
     if (expanded) expanded.classList.remove('open');
@@ -735,7 +793,7 @@
   function vibrate(pattern) {
     try {
       if (navigator.vibrate) navigator.vibrate(pattern);
-    } catch (_) {}
+    } catch (_) { }
   }
 
   // ==================== UTILS ====================
@@ -761,7 +819,9 @@
     const modal = document.getElementById('settings-modal');
     const closeBtn = document.getElementById('close-settings-btn');
     const saveBtn = document.getElementById('save-settings-btn');
-    
+    const rollbackBtn = document.getElementById('rollback-btn');
+    const rollbackSelect = document.getElementById('setting-rollback-select');
+
     if (!settingsBtn || !modal || !closeBtn || !saveBtn) return;
 
     settingsBtn.addEventListener('click', async () => {
@@ -777,6 +837,26 @@
       } catch (e) {
         console.error('Failed to load config:', e);
       }
+
+      // Fetch snapshots
+      if (rollbackSelect) {
+        rollbackSelect.innerHTML = '<option value="">Loading snapshots...</option>';
+        try {
+          const res = await fetch('/api/config/snapshots');
+          const { data } = await res.json();
+          if (data && data.length > 0) {
+            rollbackSelect.innerHTML = data.map(s => 
+              `<option value="${s.snapshot_date}">${s.snapshot_date}</option>`
+            ).join('');
+          } else {
+            rollbackSelect.innerHTML = '<option value="">No snapshots found</option>';
+          }
+        } catch (e) {
+          console.error('Failed to load snapshots:', e);
+          rollbackSelect.innerHTML = '<option value="">Error loading snapshots</option>';
+        }
+      }
+
       modal.style.display = 'flex';
     });
 
@@ -806,6 +886,42 @@
       }
       saveBtn.textContent = originalText;
     });
+
+    if (rollbackBtn && rollbackSelect) {
+      rollbackBtn.addEventListener('click', async () => {
+        const date = rollbackSelect.value;
+        if (!date) {
+          showToast('Please select a valid snapshot date', true);
+          return;
+        }
+
+        if (!confirm(`Are you sure you want to rollback bot configuration to ${date}? This will overwrite active parameters.`)) return;
+
+        const originalText = rollbackBtn.textContent;
+        rollbackBtn.textContent = 'Restoring...';
+        rollbackBtn.disabled = true;
+
+        try {
+          const res = await fetch('/api/config/rollback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ date })
+          });
+          const result = await res.json();
+          if (result.success) {
+            showToast(`Config rolled back to ${date}`);
+            modal.style.display = 'none';
+          } else {
+            showToast(result.error || 'Failed to rollback config', true);
+          }
+        } catch (e) {
+          showToast('Failed to rollback config', true);
+        } finally {
+          rollbackBtn.textContent = originalText;
+          rollbackBtn.disabled = false;
+        }
+      });
+    }
   }
 
 })();

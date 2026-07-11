@@ -165,9 +165,8 @@ api.post('/api/confirm', requirePollSecret, async (c) => {
     const stateRaw = await c.env.TRADING_KV.get(KV_KEYS.BOT_STATE);
     if (stateRaw) {
       const state: BotState = JSON.parse(stateRaw);
-      if (state.activePosition?.correlationId === correlationId) {
-        state.activePosition = null;
-      }
+      if (state.activePosition?.correlationId === correlationId) state.activePosition = null;
+      if (state.activeHedgePosition?.correlationId === correlationId) state.activeHedgePosition = null;
       state.lockTimestamp = null;
       await c.env.TRADING_KV.put(KV_KEYS.BOT_STATE, JSON.stringify(state));
     }
@@ -180,13 +179,17 @@ api.post('/api/confirm', requirePollSecret, async (c) => {
       const state: BotState = JSON.parse(stateRaw);
 
       if (order?.transaction_type === 'SELL') {
-        // It was a successful square-off. Now it's safe to clear the position unless it was a scale-out.
         if (!correlationId.startsWith('SCAL-')) {
-          state.activePosition = null;
+          if (state.activePosition?.correlationId === correlationId) state.activePosition = null;
+          if (state.activeHedgePosition?.correlationId === correlationId) state.activeHedgePosition = null;
         }
-      } else if (order?.transaction_type === 'BUY' && state.activePosition?.correlationId === correlationId) {
-        // It was an entry. Update entry price.
-        state.activePosition.entryPrice = executionPrice;
+      } else if (order?.transaction_type === 'BUY') {
+        if (state.activePosition?.correlationId === correlationId) {
+          state.activePosition.entryPrice = executionPrice;
+        }
+        if (state.activeHedgePosition?.correlationId === correlationId && state.activeHedgePosition) {
+          state.activeHedgePosition.entryPrice = executionPrice;
+        }
       }
 
       state.lockTimestamp = null;
@@ -265,6 +268,37 @@ api.get('/api/status', async (c) => {
 
   const lastHeartbeat = await c.env.TRADING_KV.get('daemon_last_heartbeat');
   const daemonAlive = lastHeartbeat ? (now - parseInt(lastHeartbeat)) < 3 * 60 * 1000 : false;
+
+  // Enrich activePosition and activeHedgePosition with dynamic LTP & PnL
+  if (hasToken) {
+    const keysToFetch: string[] = [];
+    if (state.activePosition) keysToFetch.push(state.activePosition.instrumentToken);
+    if (state.activeHedgePosition) keysToFetch.push(state.activeHedgePosition.instrumentToken);
+
+    if (keysToFetch.length > 0) {
+      try {
+        const ltpMap = await getLTP(accessToken, keysToFetch);
+        if (state.activePosition) {
+          const key = state.activePosition.instrumentToken;
+          const ltp = ltpMap[key] || 0;
+          if (ltp > 0) {
+            (state.activePosition as any).ltp = ltp;
+            (state.activePosition as any).unrealizedPnL = (ltp - state.activePosition.entryPrice) * state.activePosition.quantity;
+          }
+        }
+        if (state.activeHedgePosition) {
+          const key = state.activeHedgePosition.instrumentToken;
+          const ltp = ltpMap[key] || 0;
+          if (ltp > 0) {
+            (state.activeHedgePosition as any).ltp = ltp;
+            (state.activeHedgePosition as any).unrealizedPnL = (ltp - state.activeHedgePosition.entryPrice) * state.activeHedgePosition.quantity;
+          }
+        }
+      } catch (e) {
+        // Fail silently
+      }
+    }
+  }
 
   return c.json({ ...state, hasAccessToken: hasToken, margin, daemonAlive });
 });
@@ -433,35 +467,38 @@ api.post('/api/emergency-squareoff', async (c) => {
   const state: BotState = JSON.parse(stateRaw);
   state.status = 'EMERGENCY_HALT';
 
-  if (state.activePosition) {
-    const correlationId = `EMRG-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-    const sellOrder: OrderPayload = {
-      orderId: crypto.randomUUID(),
-      correlationId,
-      instrumentToken: state.activePosition.instrumentToken,
-      tradingSymbol: state.activePosition.tradingSymbol,
-      optionType: state.activePosition.optionType,
-      strikePrice: state.activePosition.strikePrice,
-      transactionType: 'SELL',
-      quantity: state.activePosition.quantity,
-      lots: state.activePosition.lots,
-      orderPrice: 0,
-      status: 'PENDING',
-      createdAt: new Date().toISOString(),
-    };
+  const positionsToClear = [state.activePosition, state.activeHedgePosition].filter(Boolean);
 
-    await addPendingOrder(c.env.TRADING_KV, sellOrder);
+  for (const pos of positionsToClear) {
+    if (pos) {
+      const correlationId = `EMRG-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+      const sellOrder: OrderPayload = {
+        orderId: crypto.randomUUID(),
+        correlationId,
+        instrumentToken: pos.instrumentToken,
+        tradingSymbol: pos.tradingSymbol,
+        optionType: pos.optionType,
+        strikePrice: pos.strikePrice,
+        transactionType: 'SELL',
+        quantity: pos.quantity,
+        lots: pos.lots,
+        orderPrice: 0,
+        status: 'PENDING',
+        createdAt: new Date().toISOString(),
+      };
 
-    await c.env.TRADING_DB.prepare(
-      `INSERT INTO order_ledger (order_id, correlation_id, instrument_token, trading_symbol, option_type, strike_price, transaction_type, quantity, lots, order_price, order_status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(sellOrder.orderId, correlationId, sellOrder.instrumentToken, sellOrder.tradingSymbol, sellOrder.optionType, sellOrder.strikePrice, 'SELL', sellOrder.quantity, sellOrder.lots, 0, 'PENDING').run();
-
-    state.activePosition = null;
+      await addPendingOrder(c.env.TRADING_KV, sellOrder);
+      await c.env.TRADING_DB.prepare(
+        `INSERT INTO order_ledger (order_id, correlation_id, instrument_token, trading_symbol, option_type, strike_price, transaction_type, quantity, lots, order_price, order_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(sellOrder.orderId, correlationId, sellOrder.instrumentToken, sellOrder.tradingSymbol, sellOrder.optionType, sellOrder.strikePrice, 'SELL', sellOrder.quantity, sellOrder.lots, 0, 'PENDING').run();
+    }
   }
 
+  state.activePosition = null;
+  state.activeHedgePosition = null;
   await c.env.TRADING_KV.put(KV_KEYS.BOT_STATE, JSON.stringify(state));
-  return c.json({ success: true, message: 'Emergency halt activated' });
+  return c.json({ success: true, message: 'Emergency halt activated for all legs' });
 });
 
 /** GET /api/telemetry — Last N telemetry entries */
@@ -578,6 +615,51 @@ api.post('/api/config', async (c) => {
   }
   return c.json({ success: true });
 });
+
+/**
+ * GET /api/config/snapshots
+ * List the last 30 available configuration snapshots
+ */
+api.get('/api/config/snapshots', dashboardAuth, async (c) => {
+  const rows = await c.env.TRADING_DB.prepare(
+    `SELECT DISTINCT snapshot_date, MAX(created_at) as created_at 
+     FROM bot_configuration_history 
+     GROUP BY snapshot_date 
+     ORDER BY snapshot_date DESC LIMIT 30`
+  ).all();
+  return c.json({ data: rows.results || [] });
+});
+
+/**
+ * POST /api/config/rollback
+ * Instantly reverts active configuration to a historical date
+ */
+api.post('/api/config/rollback', dashboardAuth, async (c) => {
+  const { date } = await c.req.json<{ date: string }>();
+  
+  // 1. Verify the snapshot exists
+  const check = await c.env.TRADING_DB.prepare(
+    `SELECT count(*) as count FROM bot_configuration_history WHERE snapshot_date = ?`
+  ).bind(date).first();
+  
+  if (!check || (check as any).count === 0) {
+    return c.json({ error: `No configuration snapshot found for ${date}` }, 404);
+  }
+  
+  // 2. Wipe the current active configuration
+  await c.env.TRADING_DB.prepare(`DELETE FROM bot_configuration`).run();
+  
+  // 3. Restore the historical configuration
+  await c.env.TRADING_DB.prepare(
+    `INSERT INTO bot_configuration (config_key, config_value, updated_at)
+     SELECT config_key, config_value, datetime('now') 
+     FROM bot_configuration_history 
+     WHERE snapshot_date = ?`
+  ).bind(date).run();
+  
+  return c.json({ success: true, message: `System configuration successfully rolled back to ${date}` });
+});
+
 
 // =====================
 // OAUTH ENDPOINTS

@@ -265,6 +265,15 @@ dashboard.get('/', (c) => {
           Paper Trading Mode
         </label>
       </div>
+      <div style="margin-bottom: 20px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 15px;">
+        <label style="display: block; color: var(--text-muted); margin-bottom: 5px;">Restore Configuration Failsafe</label>
+        <div style="display: flex; gap: 8px;">
+          <select id="setting-rollback-select" class="settings-input" style="flex: 1; background: rgba(0,0,0,0.3); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: var(--radius-sm); outline: none;">
+            <option value="">Loading snapshots...</option>
+          </select>
+          <button id="rollback-btn" class="btn" style="background: var(--accent-sell); color: white; border: none; padding: 0 16px; border-radius: var(--radius-sm); cursor: pointer; font-weight: bold; font-size: 0.85rem;">Rollback</button>
+        </div>
+      </div>
       <button id="save-settings-btn" class="btn" style="width: 100%; background: var(--accent-blue); color: white; border: none; padding: 10px; border-radius: var(--radius-sm); cursor: pointer; font-weight: bold;">Save Changes</button>
     </div>
   </div>
