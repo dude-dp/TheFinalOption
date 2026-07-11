@@ -83,7 +83,17 @@ function validateConfig(): boolean {
 async function getHistoricalCandles(): Promise<any[]> {
   logInfo('Fetching initial historical data from Cloudflare...');
   try {
-    const res = await fetch(`${CONFIG.workerUrl}/api/chart-data`);
+    const res = await fetch(`${CONFIG.workerUrl}/api/chart-data`, {
+      method: 'GET',
+      headers: {
+        'X-Poll-Secret': CONFIG.pollSecret
+      }
+    });
+
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    }
+
     const data: any = await res.json();
     if (data && data.spots) {
       return data.spots.map((spot: any) => ({
@@ -124,6 +134,11 @@ async function bootstrapEngine() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ secret: CONFIG.pollSecret })
       });
+      
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      }
+      
       const data: any = await res.json();
       if (data && data.accessToken) {
         activeToken = data.accessToken;

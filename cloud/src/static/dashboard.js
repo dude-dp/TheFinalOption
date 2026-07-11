@@ -26,7 +26,7 @@
     if (!container) return;
 
     // 1. Initialize the Chart with a custom deep-dark aesthetic
-    tvChart = LightweightCharts.createChart(container, {
+    tvChart = window.LightweightCharts.createChart(container, {
       layout: {
         background: { type: 'solid', color: '#301934' }, // Deep aesthetic background
         textColor: '#D9D9D9',
@@ -36,16 +36,16 @@
         horzLines: { color: 'rgba(255, 255, 255, 0.05)' },
       },
       crosshair: {
-        mode: LightweightCharts.CrosshairMode.Normal,
+        mode: window.LightweightCharts.CrosshairMode.Normal,
         vertLine: {
           width: 1,
           color: 'rgba(224, 227, 235, 0.4)',
-          style: LightweightCharts.LineStyle.Dashed,
+          style: window.LightweightCharts.LineStyle.Dashed,
         },
         horzLine: {
           width: 1,
           color: 'rgba(224, 227, 235, 0.4)',
-          style: LightweightCharts.LineStyle.Dashed,
+          style: window.LightweightCharts.LineStyle.Dashed,
         },
       },
       rightPriceScale: {
@@ -59,6 +59,7 @@
     });
 
     // 2. Create the Candlestick Series
+    console.log('TV Chart Object:', tvChart);
     candleSeries = tvChart.addCandlestickSeries({
       upColor: '#00e676',       // Institutional Green
       downColor: '#ff1744',     // Deep Red
