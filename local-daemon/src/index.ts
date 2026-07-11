@@ -169,7 +169,7 @@ async function bootstrapEngine() {
   const historicalData = await getHistoricalCandles();
 
   // 2. Start the WebSocket
-  const wsClient = new UpstoxWSClient(activeToken);
+  let wsClient = new UpstoxWSClient(activeToken);
   // Typecasting access to private property to seed data cleanly in this script
   (wsClient as any).aggregator.seedHistoricalData(historicalData);
 
@@ -247,6 +247,27 @@ async function bootstrapEngine() {
         if (isAuthError) {
           logWarn(`⚠️  Upstox token rejected (${err.message.split(':')[0].trim()}). Please re-authenticate at your dashboard. Retrying in 60s...`);
           await new Promise(resolve => setTimeout(resolve, 60000));
+          
+          try {
+            logInfo('🔄 Attempting to fetch fresh token from Cloudflare...');
+            const res = await fetch(`${CONFIG.workerUrl}/api/poll`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ secret: CONFIG.pollSecret })
+            });
+            if (res.ok) {
+              const data: any = await res.json();
+              if (data && data.accessToken) {
+                activeToken = data.accessToken;
+                // Re-instantiate the client with the fresh token
+                wsClient = new UpstoxWSClient(activeToken);
+                (wsClient as any).aggregator.seedHistoricalData(historicalData);
+                logInfo('✅ Fresh token loaded. Retrying connection...');
+              }
+            }
+          } catch (e: any) {
+            logError(`Failed to fetch fresh token: ${e.message}`);
+          }
         } else {
           logError(`WS connect error: ${err.message}. Retrying in 15s...`);
           await new Promise(resolve => setTimeout(resolve, 15000));
@@ -280,6 +301,7 @@ async function sweepOrphanedOrders(activeToken: string): Promise<void> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ secret: CONFIG.pollSecret })
     });
+    if (!res.ok) return;
     const data: any = await res.json();
     if (!data.hasOrphans) return;
 
