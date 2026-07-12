@@ -3,6 +3,7 @@ import WebSocket from 'ws';
 import protobuf from 'protobufjs';
 import { CandleAggregator } from './aggregator';
 import { TickArchiver } from './archiver';
+import { ProfitTracker } from './tracker';
 
 // Import local MACD if available or mock it for compilation
 // Assuming macd is moved to a local lib/macd.ts
@@ -19,9 +20,21 @@ export class UpstoxWSClient {
   private archiver = new TickArchiver();
   private token: string;
   private instrumentKey = 'NSE_INDEX|Nifty 50'; // Spot Index
+  private workerUrl = process.env.CLOUD_WORKER_URL || '';
+  private pollSecret = process.env.POLL_SECRET || '';
 
   constructor(token: string) {
     this.token = token;
+  }
+
+  public subscribe(instrumentKey: string) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const subPayload = {
+      guid: `sub_${instrumentKey}`,
+      method: "sub",
+      data: { mode: "full", instrumentKeys: [instrumentKey] }
+    };
+    this.ws.send(Buffer.from(JSON.stringify(subPayload)));
   }
 
   public async connect(onSignal: (signalData: any) => void) {
@@ -86,6 +99,23 @@ export class UpstoxWSClient {
             // If a candle just closed, run the math and fire the signal
             if (closedCandles) {
               this.evaluateAndPushSignal(closedCandles, onSignal);
+            }
+          }
+        } else if (decoded.feeds && ProfitTracker.ACTIVE_POSITION_TOKEN && decoded.feeds[ProfitTracker.ACTIVE_POSITION_TOKEN]) {
+          const feed = decoded.feeds[ProfitTracker.ACTIVE_POSITION_TOKEN];
+          if (feed.fullFeed?.ff?.marketFF?.ltpc?.ltp) {
+            const ltp = feed.fullFeed.ff.marketFF.ltpc.ltp;
+            ProfitTracker.updateUnrealizedPnL(ltp);
+            
+            // Evaluate Circuit Breaker dynamically on every option tick
+            const cbReason = ProfitTracker.evaluateCircuitBreaker();
+            if (cbReason) {
+              import('./executor.js').then(({ executeMarketExitAll, haltTradingSession }) => {
+                 console.log(`\n🛡️ [CIRCUIT BREAKER] TRIGGERED: ${cbReason}`);
+                 executeMarketExitAll(this.workerUrl, this.pollSecret);
+                 haltTradingSession(this.workerUrl, this.pollSecret, cbReason);
+                 ProfitTracker.clearActivePosition(); // Prevent multi-triggers
+              });
             }
           }
         }

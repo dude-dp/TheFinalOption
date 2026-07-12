@@ -88,8 +88,8 @@ export async function executeOrder(
         quantity: order.quantity,
         product: 'I', // Intraday
         validity: 'DAY',
-        order_type: 'LIMIT',
-        price: order.orderPrice,
+        order_type: order.orderPrice === 0 ? 'MARKET' : 'LIMIT',
+        price: order.orderPrice === 0 ? 0 : order.orderPrice,
         trigger_price: 0,
         disclosed_quantity: 0,
         is_amo: false,
@@ -254,7 +254,7 @@ export async function executeOrderStealth(order: any, upstoxToken: string) {
       price: order.orderPrice, // LIMIT order price from parent
       tag: order.correlationId.substring(0, 20), // Tie back to parent order
       instrument_token: order.instrumentToken,
-      order_type: 'LIMIT',
+      order_type: order.orderPrice === 0 ? 'MARKET' : 'LIMIT',
       transaction_type: order.transactionType, // BUY or SELL
       disclosed_quantity: 0,
       trigger_price: 0,
@@ -308,4 +308,45 @@ export async function executeOrderStealth(order: any, upstoxToken: string) {
     filledLots: successfulLots,
     details: fillResults
   };
+}
+
+// --- Circuit Breaker Actions ---
+
+export async function executeMarketExitAll(workerUrl: string, secret: string) {
+  try {
+    logInfo('🚨 Triggering emergency market square-off via Cloudflare...');
+    const res = await fetch(`${workerUrl}/api/emergency-squareoff`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Basic ' + Buffer.from('vdineshprabu:Healthywealth007#').toString('base64')
+      },
+      body: JSON.stringify({ secret }) // Depending on auth
+    });
+    
+    if (res.ok) {
+      logInfo('✅ Emergency square-off dispatched to queue.');
+    } else {
+      const err = await res.text();
+      logError(`❌ Emergency square-off failed: ${err}`);
+    }
+  } catch (err: any) {
+    logError(`❌ Emergency square-off network error: ${err.message}`);
+  }
+}
+
+export async function haltTradingSession(workerUrl: string, secret: string, reason: string) {
+  try {
+    logInfo(`🚨 Halting Trading Session: ${reason}`);
+    await fetch(`${workerUrl}/api/control`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Poll-Secret': secret
+      },
+      body: JSON.stringify({ action: 'EMERGENCY_HALT', reason })
+    });
+  } catch (err: any) {
+    logError(`❌ Failed to halt trading session: ${err.message}`);
+  }
 }

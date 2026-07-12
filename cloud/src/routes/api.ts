@@ -7,7 +7,7 @@ import { Hono } from 'hono';
 import { basicAuth } from 'hono/basic-auth';
 import type { Env, BotState, ConfirmRequest, OrderPayload, PollResponse } from '../lib/types';
 import { KV_KEYS } from '../lib/types';
-import { getAuthorizationUrl, exchangeCodeForToken, fetchNiftyCandles, getOptionChain, getLTP, getFundsAndMargin, fetchHistoricalCandlesRange } from '../lib/upstox';
+import { getAuthorizationUrl, exchangeCodeForToken, fetchNiftyCandles, getOptionChain, getLTP, getFundsAndMargin, fetchHistoricalCandlesRange, notifyDiscord } from '../lib/upstox';
 import { getPreferredStrikes, shouldRollExpiry, getNearestWeeklyExpiry } from '../lib/strike';
 import { calculateLots, lotsToQuantity } from '../lib/lot-sizing';
 import { getTodayDateStr, generateCorrelationId } from '../lib/time';
@@ -384,12 +384,26 @@ api.get('/api/status', async (c) => {
     }
   }
 
-  return c.json({ ...state, hasAccessToken: hasToken, margin, daemonAlive });
+  // Calculate today's realized PnL
+  const today = getTodayDateStr();
+  let todayRealizedPnL = 0;
+  try {
+    const pnlRow = await c.env.TRADING_DB.prepare(
+      `SELECT SUM(pnl) as daily_pnl FROM order_ledger WHERE date(updated_at) = ? AND pnl IS NOT NULL AND pnl != 0`
+    ).bind(today).first();
+    if (pnlRow && pnlRow.daily_pnl) {
+      todayRealizedPnL = parseFloat(pnlRow.daily_pnl as any) || 0;
+    }
+  } catch (e) {
+    console.error("Failed to fetch daily PnL:", e);
+  }
+
+  return c.json({ ...state, hasAccessToken: hasToken, margin, daemonAlive, todayRealizedPnL });
 });
 
 /** POST /api/control — Toggle bot status */
 api.post('/api/control', async (c) => {
-  const { action, mode } = await c.req.json<{ action: string, mode?: 'LIVE' | 'PAPER' }>();
+  const { action, mode, reason } = await c.req.json<{ action: string, mode?: 'LIVE' | 'PAPER', reason?: string }>();
   const stateRaw = await c.env.TRADING_KV.get(KV_KEYS.BOT_STATE);
   const state: BotState = stateRaw ? JSON.parse(stateRaw) : {
     status: 'STOPPED', lastUpdated: '', activePosition: null, lockTimestamp: null, lastMacdLine: null
@@ -397,7 +411,12 @@ api.post('/api/control', async (c) => {
 
   if (action === 'START') state.status = 'RUNNING';
   else if (action === 'STOP') state.status = 'STOPPED';
-  else if (action === 'EMERGENCY_HALT') state.status = 'EMERGENCY_HALT';
+  else if (action === 'EMERGENCY_HALT') {
+    state.status = 'EMERGENCY_HALT';
+    if (reason && c.env.DISCORD_WEBHOOK_URL) {
+      await notifyDiscord(c.env.DISCORD_WEBHOOK_URL, `✅ **CIRCUIT BREAKER TRIPPED**\n${reason}`);
+    }
+  }
   else if (action === 'SET_MODE' && mode) state.tradingMode = mode;
   else return c.json({ error: 'Invalid action' }, 400);
 

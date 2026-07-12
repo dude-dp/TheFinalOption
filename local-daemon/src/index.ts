@@ -11,7 +11,7 @@ setDefaultResultOrder('ipv4first');
 import { createServer } from 'node:http';
 import { logInfo, logWarn, logError, logTrade } from './logger.js';
 import { executeOrder, executeOrderStealth } from './executor.js';
-import { ApiTracker } from './tracker.js';
+import { ApiTracker, ProfitTracker } from './tracker.js';
 import { UpstoxWSClient } from './ws-client.js';
 
 // --- Configuration ---
@@ -42,7 +42,7 @@ class CircuitBreaker {
             'Content-Type': 'application/json',
             'X-Poll-Secret': CONFIG.pollSecret,
           },
-          body: JSON.stringify({ action: 'EMERGENCY_HALT' }),
+          body: JSON.stringify({ action: 'EMERGENCY_HALT', reason: '3 consecutive Upstox API failures. Check network or Upstox portal.' }),
         });
         logInfo('Successfully sent EMERGENCY_HALT to Cloud Worker.');
       } catch (e: any) {
@@ -165,11 +165,22 @@ async function bootstrapEngine() {
     sendHeartbeat().catch(e => logError(`Heartbeat crash: ${e.message}`));
   }, 60000);
 
+  // 2. Start the WebSocket
+  let wsClient = new UpstoxWSClient(activeToken);
+
+  // ProfitTracker Sync (runs every 10 seconds)
+  setInterval(() => {
+    syncProfitTracker(wsClient).catch(e => logError(`ProfitTracker sync crash: ${e.message}`));
+  }, 10000);
+  
+  // Initial sync before starting WS
+  await syncProfitTracker(wsClient);
+
   // 1. Fetch initial historical data via HTTP (Seed the aggregator)
   const historicalData = await getHistoricalCandles();
 
   // 2. Start the WebSocket
-  let wsClient = new UpstoxWSClient(activeToken);
+  // wsClient was initialized above
   // Typecasting access to private property to seed data cleanly in this script
   (wsClient as any).aggregator.seedHistoricalData(historicalData);
 
@@ -414,6 +425,45 @@ async function sendHeartbeat(): Promise<void> {
       }),
     });
   } catch (e) {
+  }
+}
+
+// --- ProfitTracker Sync ---
+async function syncProfitTracker(wsClient?: UpstoxWSClient): Promise<void> {
+  try {
+    const res = await fetch(`${CONFIG.workerUrl}/api/status`, {
+      method: 'GET',
+      headers: {
+        'Authorization': 'Basic ' + Buffer.from('vdineshprabu:Healthywealth007#').toString('base64')
+      }
+    });
+    if (res.ok) {
+      const data: any = await res.json();
+      
+      // Init Capital & Realized PnL
+      if (data.margin && data.margin.totalBalance) {
+        ProfitTracker.initialize(data.margin.totalBalance, data.todayRealizedPnL || 0);
+      } else {
+        // Fallback to update realized PNL even if margin is delayed
+        ProfitTracker.DAILY_REALIZED_PNL = data.todayRealizedPnL || 0;
+      }
+      
+      // Sync Active Position
+      if (data.activePosition) {
+        if (ProfitTracker.ACTIVE_POSITION_TOKEN !== data.activePosition.instrumentToken) {
+           ProfitTracker.setActivePosition(
+             data.activePosition.instrumentToken, 
+             data.activePosition.quantity, 
+             data.activePosition.entryPrice
+           );
+           if (wsClient) wsClient.subscribe(data.activePosition.instrumentToken);
+        }
+      } else {
+        ProfitTracker.clearActivePosition();
+      }
+    }
+  } catch (e: any) {
+    logError(`❌ ProfitTracker Sync failed: ${e.message}`);
   }
 }
 
