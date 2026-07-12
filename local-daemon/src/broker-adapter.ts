@@ -25,16 +25,28 @@ export interface UpstoxPosition {
 class BrokerAdapter {
   private apiToken: string = '';
   private syncInterval: NodeJS.Timeout | null = null;
-  
+
   // Semaphore to prevent overlapping network requests if the API lags
-  private isSyncing: boolean = false; 
+  private isSyncing: boolean = false;
+
+  // Auth failure backoff — pause the thread on repeated 401s
+  private consecutiveAuthFailures: number = 0;
+  private readonly AUTH_FAILURE_PAUSE_THRESHOLD = 2; // pause after 2 consecutive 401s
+  private syncPaused: boolean = false;
 
   /**
-   * Initializes the adapter with the active Upstox access token 
+   * Initializes the adapter with the active Upstox access token
    * and boots up the self-healing background thread.
+   * Calling this with a fresh token also resumes a paused sync thread.
    */
   public initialize(token: string): void {
     this.apiToken = token;
+    // Reset auth failure state so the thread resumes with the fresh token
+    this.consecutiveAuthFailures = 0;
+    if (this.syncPaused) {
+      this.syncPaused = false;
+      logInfo('[BROKER] 🔄 Fresh token received. Resuming reconciliation thread.');
+    }
     this.startReconciliationThread();
     logInfo('[BROKER] Adapter initialized. Connection to exchange secured.');
   }
@@ -42,12 +54,13 @@ class BrokerAdapter {
   /**
    * 🔄 The Self-Healing Heartbeat
    * Runs exactly every 3 seconds on a separate event loop phase.
+   * Pauses automatically on repeated 401s to prevent log spam.
    */
   private startReconciliationThread(): void {
     if (this.syncInterval) clearInterval(this.syncInterval);
 
     this.syncInterval = setInterval(() => {
-      this.reconcileState();
+      if (!this.syncPaused) this.reconcileState();
     }, 3000);
 
     logInfo('[BROKER] 🛡️ Background State Reconciliation Thread started (3s heartbeat).');
@@ -84,9 +97,23 @@ class BrokerAdapter {
       // 2. Logging deep reconciliation events (Only log if things change to prevent spam)
       // logInfo(`[BROKER-SYNC] State Reconciled. Realized: ₹${totalRealized}, Unrealized: ₹${totalUnrealized}`);
 
+      // Reset failure counter on success
+      this.consecutiveAuthFailures = 0;
+
     } catch (error) {
-      // We don't crash the daemon on a network error. We just wait for the next 3s heartbeat.
-      logWarn(`[BROKER-SYNC] API connection stutter. Skipping this heartbeat cycle. Error: ${error}`);
+      this.consecutiveAuthFailures++;
+      const isAuthError = String(error).includes('401') || String(error).includes('403');
+
+      if (isAuthError && this.consecutiveAuthFailures >= this.AUTH_FAILURE_PAUSE_THRESHOLD) {
+        if (!this.syncPaused) {
+          this.syncPaused = true;
+          logWarn(`[BROKER-SYNC] ⏸️  Token appears expired (${this.consecutiveAuthFailures} consecutive 401s). Pausing reconciliation thread. Will auto-resume when a fresh token is loaded.`);
+        }
+        // Silently skip — no more spam until initialize() is called with a fresh token
+      } else {
+        // Transient network error — log once and continue
+        logWarn(`[BROKER-SYNC] API connection stutter. Skipping this heartbeat cycle. Error: ${error}`);
+      }
     } finally {
       this.isSyncing = false;
     }
