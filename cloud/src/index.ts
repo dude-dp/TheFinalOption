@@ -8,6 +8,7 @@ import { cors } from 'hono/cors';
 import type { Env } from './lib/types';
 import apiRoutes from './routes/api';
 import dashboardRoutes from './routes/dashboard';
+import { BacktestPage } from './routes/backtest';
 import { handleScheduled, takeConfigSnapshot } from './cron';
 import { handleQueue } from './queue';
 
@@ -19,6 +20,9 @@ app.use('*', cors());
 // --- Mount Routes ---
 // Dashboard at root
 app.route('/', dashboardRoutes);
+
+// NEW: Backtest UI Page
+app.get('/backtest', (c) => c.html(BacktestPage()));
 
 // API routes
 app.route('/', apiRoutes);

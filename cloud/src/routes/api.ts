@@ -13,6 +13,8 @@ import { calculateLots, lotsToQuantity } from '../lib/lot-sizing';
 import { getTodayDateStr, generateCorrelationId } from '../lib/time';
 import { addPendingOrder, removePendingOrder } from '../lib/orders';
 import { executePaperTrade } from '../lib/paper';
+import { calculateMACD } from '../lib/macd';
+import { calculateATRArray } from '../lib/atr';
 
 const api = new Hono<{ Bindings: Env }>();
 
@@ -1129,6 +1131,132 @@ api.get('/api/analytics/monte-carlo-stats', dashboardAuth, async (c) => {
     winStdDev: Math.sqrt(winVariance),
     lossStdDev: Math.sqrt(lossVariance),
     totalTrades: trades.length
+  });
+});
+
+/** POST /api/admin/run-backtest */
+api.post('/api/admin/run-backtest', dashboardAuth, async (c) => {
+  const { days = 30 } = await c.req.json<{ days?: number }>();
+
+  // 1. Fetch historical NIFTY Spot candles
+  const rows = await c.env.TRADING_DB.prepare(
+    `SELECT * FROM nifty_candles 
+     WHERE timestamp >= datetime('now', ?) 
+     ORDER BY timestamp ASC`
+  ).bind(`-${days} days`).all();
+
+  const candles = rows.results as any[];
+  if (!candles || candles.length < 100) {
+    return c.json({ error: 'Insufficient historical data. Please run the Backfill utility first.' }, 400);
+  }
+
+  // 2. Calculate Indicators over the entire dataset
+  const closes = candles.map(c => c.close);
+  const macdResult = calculateMACD(closes);
+  const atrResult = calculateATRArray(candles, 14);
+  const hist = macdResult.histogram;
+
+  // 3. Simulation Variables
+  let activeTrade: any = null;
+  const closedTrades: any[] = [];
+  let cumulativePnL = 0;
+  let peakPnL = 0;
+  let maxDrawdown = 0;
+
+  // Trading Constants
+  const NIFTY_LOT_SIZE = 75; // Adjust to your current lot size
+  const LOTS_TO_TRADE = 2; // Fixed sizing for the backtest
+  const ASSUMED_DELTA = 0.5; // ATM Option approximation
+
+  // 4. The Execution Loop
+  // Start from index 33 to ensure MACD and ATR arrays have fully warmed up
+  for (let i = 33; i < candles.length; i++) {
+    const candle = candles[i];
+    const prevMacd = hist[i - 1];
+    const currMacd = hist[i];
+    const atr = atrResult[i] || 20;
+
+    // A. EXIT LOGIC
+    if (activeTrade) {
+      activeTrade.highestSpot = Math.max(activeTrade.highestSpot, candle.high);
+      activeTrade.lowestSpot = Math.min(activeTrade.lowestSpot, candle.low);
+
+      // Trailing Stop Loss logic based on Spot ATR
+      let tslSpotPrice = 0;
+      let isStoppedOut = false;
+
+      if (activeTrade.type === 'CE') {
+        tslSpotPrice = activeTrade.highestSpot - (1.5 * atr);
+        if (candle.low <= tslSpotPrice) isStoppedOut = true;
+      } else {
+        tslSpotPrice = activeTrade.lowestSpot + (1.5 * atr);
+        if (candle.high >= tslSpotPrice) isStoppedOut = true;
+      }
+
+      // Exit on Stop Loss OR Opposite MACD Crossover (Trend Reversal)
+      const reversalExit = (activeTrade.type === 'CE' && prevMacd > 0 && currMacd < 0) || 
+                           (activeTrade.type === 'PE' && prevMacd < 0 && currMacd > 0);
+
+      // Force square-off at 3:15 PM IST (Intraday constraint)
+      const dateObj = new Date(candle.timestamp);
+      const isEOD = dateObj.getUTCHours() + (5.5) >= 15.25;
+
+      if (isStoppedOut || reversalExit || isEOD) {
+        // Calculate point difference captured
+        const exitPrice = candle.close;
+        const spotPointsCaptured = activeTrade.type === 'CE' 
+          ? (exitPrice - activeTrade.entryPrice) 
+          : (activeTrade.entryPrice - exitPrice);
+
+        // Translate Spot points to Option Premium PnL
+        const premiumPoints = spotPointsCaptured * ASSUMED_DELTA;
+        const pnl = premiumPoints * (NIFTY_LOT_SIZE * LOTS_TO_TRADE);
+
+        cumulativePnL += pnl;
+        
+        // Track Drawdown
+        if (cumulativePnL > peakPnL) peakPnL = cumulativePnL;
+        const currentDrawdown = peakPnL - cumulativePnL;
+        if (currentDrawdown > maxDrawdown) maxDrawdown = currentDrawdown;
+
+        closedTrades.push({
+          type: activeTrade.type,
+          entryTime: activeTrade.entryTime,
+          exitTime: candle.timestamp,
+          entrySpot: activeTrade.entryPrice.toFixed(2),
+          exitSpot: exitPrice.toFixed(2),
+          reason: isEOD ? 'EOD Squareoff' : (reversalExit ? 'MACD Reversal' : 'Trailing SL'),
+          pnl: pnl,
+          cumulative: cumulativePnL
+        });
+
+        activeTrade = null;
+      }
+    }
+
+    // B. ENTRY LOGIC
+    if (!activeTrade) {
+      if (prevMacd < 0 && currMacd > 0) {
+        // Bullish Crossover
+        activeTrade = { type: 'CE', entryTime: candle.timestamp, entryPrice: candle.close, highestSpot: candle.close, lowestSpot: candle.close };
+      } else if (prevMacd > 0 && currMacd < 0) {
+        // Bearish Crossover
+        activeTrade = { type: 'PE', entryTime: candle.timestamp, entryPrice: candle.close, highestSpot: candle.close, lowestSpot: candle.close };
+      }
+    }
+  }
+
+  // 5. Aggregate Statistics
+  const winningTrades = closedTrades.filter(t => t.pnl > 0);
+  const winRate = closedTrades.length > 0 ? (winningTrades.length / closedTrades.length) * 100 : 0;
+
+  return c.json({
+    success: true,
+    totalTrades: closedTrades.length,
+    winRate: winRate,
+    totalPnL: cumulativePnL,
+    maxDrawdown: maxDrawdown,
+    trades: closedTrades.reverse() // Newest first for the table
   });
 });
 
