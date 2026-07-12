@@ -6,6 +6,8 @@
 import { logInfo, logWarn, logError, logTrade } from './logger.js';
 import { ApiTracker, tracker } from './tracker.js';
 import { executeEmergencyMarketExit } from './iceberg.js';
+import { liquidityScanner } from './liquidity.js';
+import type { MarketDepth } from './ws-client.js';
 
 const HFT_URL = 'https://api-hft.upstox.com';
 const API_URL = 'https://api.upstox.com';
@@ -353,94 +355,147 @@ export async function haltTradingSession(workerUrl: string, secret: string, reas
 }
 
 export class ExecutionEngine {
+  private readonly MAX_ACCEPTABLE_SLIPPAGE_POINTS = 2.0;
   
+  // 🚨 NEW: The minimum aggressive net tick delta required to validate a trade.
+  // Example: '30' means we need at least 30 MORE aggressive buys than sells inside the 1-minute candle.
+  private readonly MIN_REQUIRED_DELTA = 30; 
+
   constructor() {
     logInfo('[EXECUTOR] Execution Matrix initialized and standing by.');
   }
 
-  /**
-   * Evaluates core capital protection rules.
-   * @returns {boolean} TRUE if it is safe to trade, FALSE if a circuit breaker tripped.
-   */
   private async evaluateCircuitBreakers(): Promise<boolean> {
     const state = tracker.getState();
 
-    // 0. If already halted, aggressively block all tick processing
-    if (state.isHalted) {
-      return false;
-    }
+    if (state.isHalted) return false;
 
-    // 1. THE 20% HARD CEILING (Greed Kill-Switch)
     if (state.dailyRealizedPnL >= state.hardCeiling) {
-      logWarn(
-        `[CIRCUIT BREAKER] 20% HARD CEILING HIT! Realized: ₹${state.dailyRealizedPnL.toFixed(2)}. ` +
-        `Target was: ₹${state.hardCeiling.toFixed(2)}. Shutting down to lock in massive gains.`
-      );
+      logWarn(`[CIRCUIT BREAKER] 20% HARD CEILING HIT! Shutting down to lock in gains.`);
       await this.triggerEmergencyShutdown('20% Max Daily Limit Reached');
       return false;
     }
 
-    // 2. THE 5% SHIELD MODE (Capital Preservation)
     if (state.isShieldModeActive) {
-      // Calculate what we would walk away with if we market-exited right this second
       const projectedNetPnL = state.dailyRealizedPnL + state.activeUnrealizedPnL;
-
       if (projectedNetPnL <= state.secureTarget) {
-        logWarn(
-          `[CIRCUIT BREAKER] SHIELD MODE BREACHED! Projected Net PnL (₹${projectedNetPnL.toFixed(2)}) ` +
-          `is threatening the secured baseline (₹${state.secureTarget.toFixed(2)}). Executing defensive exit.`
-        );
+        logWarn(`[CIRCUIT BREAKER] SHIELD MODE BREACHED! Executing defensive exit.`);
         await this.triggerEmergencyShutdown('5% Baseline Protected. Exiting to prevent drawdown.');
         return false;
       }
     }
 
-    // Safe to continue normal execution
     return true; 
   }
 
-  /**
-   * Master shutdown protocol. Fires market exits and locks the state tracker.
-   */
   private async triggerEmergencyShutdown(reason: string): Promise<void> {
     try {
-      // 1. Inform the tracker so no new signals are processed by other threads
       tracker.haltTrading(reason);
-
-      // 2. Fire the emergency market exits (Task 1.3 implementation)
       logInfo('[EXECUTOR] Firing emergency market exits for all open positions...');
       await executeEmergencyMarketExit();
-
       logInfo('[EXECUTOR] Emergency exit confirmed. System is securely halted for the day.');
     } catch (error) {
       logError(`[EXECUTOR] CRITICAL FAILURE during emergency shutdown sequence: ${error}`);
-      // Even if the exit fails, the tracker is halted, preventing new entries.
-      // (Advanced self-healing for this scenario will be handled in Phase 4)
     }
   }
 
   /**
-   * Main entry point for incoming WebSocket tick data.
-   * This is where you connect your `ws-client.ts` stream.
+   * Master Entry Gatekeeper - Now upgraded with Institutional Order Flow (Delta)
    */
-  public async processTick(tickData: any): Promise<void> {
-    // 1. Run the Execution Matrix before looking at charts
-    const isSafeToTrade = await this.evaluateCircuitBreakers();
+  public async evaluateAndExecuteTrade(
+    signal: string,
+    targetQuantity: number,
+    ltp: number,
+    depth: MarketDepth,
+    crossoverDelta: number // 🚀 Incoming Delta from WS Client
+  ): Promise<void> {
     
-    if (!isSafeToTrade) {
-      return; // Silently drop the tick. The day is done.
+    // 1. Check macro structural safety (Capital Preservation)
+    const isSafeToTrade = await this.evaluateCircuitBreakers();
+    if (!isSafeToTrade) return;
+
+    if (!signal.startsWith('BUY')) return;
+
+    logInfo(`[EXECUTOR] ${signal} signal generated. Evaluating Order Flow Convergence...`);
+
+    // ========================================================================
+    // 2. ORDER FLOW CONVERGENCE CHECK (Institutional Trap Evasion)
+    // ========================================================================
+    if (signal === 'BUY_CE') {
+      // MACD says UP, but Delta must confirm aggressive institutional BUYING
+      if (crossoverDelta < this.MIN_REQUIRED_DELTA) {
+        logWarn(
+          `[TAPE ABORT] False Breakout Trap! MACD fired BUY_CE, but order flow delta is weak/negative (${crossoverDelta}). ` +
+          `Smart money is absorbing the buying pressure. Trade aborted.`
+        );
+        return;
+      }
+    } else if (signal === 'BUY_PE') {
+      // MACD says DOWN, but Delta must confirm aggressive institutional SELLING
+      if (crossoverDelta > -this.MIN_REQUIRED_DELTA) {
+        logWarn(
+          `[TAPE ABORT] False Breakout Trap! MACD fired BUY_PE, but order flow delta is weak/positive (${crossoverDelta}). ` +
+          `Smart money is absorbing the selling pressure. Trade aborted.`
+        );
+        return;
+      }
     }
 
-    // ==========================================
-    // 2. YOUR NORMAL MACD/ENTRY LOGIC GOES HERE
-    // ==========================================
-    
-    // e.g., 
-    // const signal = macdStrategy.evaluate(tickData);
-    // if (signal === 'BUY') { ... }
+    logInfo(`[EXECUTOR] 🎯 Order Flow Confirmed! Institutional Delta: ${crossoverDelta}. X-Raying liquidity...`);
 
+    // 3. X-Ray the Order Book (Pre-Trade Slippage Abort)
+    const metrics = liquidityScanner.scanOrderBook('BUY', targetQuantity, ltp, depth);
+
+    if (!metrics.isLiquiditySufficient) {
+      logWarn(`[LIQUIDITY ABORT] Insufficient market depth. Trade aborted.`);
+      return; 
+    }
+
+    if (metrics.slippagePoints > this.MAX_ACCEPTABLE_SLIPPAGE_POINTS) {
+      logWarn(`[LIQUIDITY ABORT] Expected slippage (₹${metrics.slippagePoints.toFixed(2)}) exceeds max limit. Trade aborted.`);
+      return;
+    }
+
+    // 4. Execution Clearance Granted
+    logInfo(`[EXECUTOR] ✅ Verified WAP at ₹${metrics.expectedExecutionPrice.toFixed(2)}. Dispatching to cloud...`);
+
+    await this.dispatchToCloud(signal, targetQuantity, metrics.expectedExecutionPrice);
+  }
+
+  private async dispatchToCloud(signal: string, quantity: number, verifiedWap: number): Promise<void> {
+    const workerUrl = process.env.CLOUD_WORKER_URL || '';
+    const pollSecret = process.env.POLL_SECRET || '';
+    if (!workerUrl) {
+      logWarn('[EXECUTOR] CLOUD_WORKER_URL not configured. Cannot dispatch signal.');
+      return;
+    }
+    try {
+      const response = await fetch(`${workerUrl}/api/signal-ingest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          secret: pollSecret,
+          signal,
+          quantity,
+          executionPrice: verifiedWap,
+          timestamp: new Date().toISOString()
+        })
+      });
+      if (response.ok) {
+        logInfo(`[EXECUTOR] Secured signal ${signal} successfully dispatched to cloud.`);
+      } else {
+        const errText = await response.text();
+        logError(`[EXECUTOR] Failed to dispatch signal to cloud: ${response.status} - ${errText}`);
+      }
+    } catch (err: any) {
+      logError(`[EXECUTOR] Network error dispatching signal to cloud: ${err.message}`);
+    }
+  }
+
+  public async processTick(tickData: any): Promise<void> {
+    const isSafeToTrade = await this.evaluateCircuitBreakers();
+    if (!isSafeToTrade) return;
   }
 }
 
-// Export singleton to be used by the WebSocket listener
 export const executor = new ExecutionEngine();

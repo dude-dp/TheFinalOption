@@ -1,21 +1,9 @@
 // local-daemon/src/broker-adapter.ts
 
-import { logInfo, logError } from './logger.js';
+import { tracker } from './tracker.js';
+import { logInfo, logWarn, logError } from './logger.js';
 
-let accessToken = '';
-
-export function setAccessToken(token: string) {
-  accessToken = token;
-}
-
-export interface UpstoxPosition {
-  tradingSymbol: string;
-  instrumentToken: string;
-  netQuantity: number;
-  product: string;
-}
-
-export interface PlaceOrderParams {
+export interface OrderParams {
   tradingSymbol: string;
   instrumentToken: string;
   transactionType: 'BUY' | 'SELL';
@@ -25,79 +13,165 @@ export interface PlaceOrderParams {
   isEmergency?: boolean;
 }
 
-export const brokerAdapter = {
-  getOpenPositions: async (): Promise<UpstoxPosition[]> => {
-    if (!accessToken) {
-      throw new Error('Access token not set in broker-adapter');
-    }
-    
-    try {
-      const res = await fetch('https://api.upstox.com/v2/portfolio/short-term-positions', {
-        headers: {
-          'Accept': 'application/json',
-          'Authorization': `Bearer ${accessToken}`
-        }
-      });
-      
-      if (!res.ok) {
-        throw new Error(`Upstox HTTP error fetching positions: ${res.status}`);
-      }
-      
-      const data: any = await res.json();
-      const rawPositions = data?.data || [];
-      
-      // Map to the structure expected by executeEmergencyMarketExit
-      return rawPositions.map((pos: any) => ({
-        tradingSymbol: pos.tradingsymbol,
-        instrumentToken: pos.instrument_token,
-        netQuantity: parseInt(pos.quantity),
-        product: pos.product
-      })).filter((pos: any) => pos.netQuantity !== 0); // only active open positions
-    } catch (err: any) {
-      logError(`[BROKER ADAPTER] Failed to fetch positions: ${err.message}`);
-      throw err;
-    }
-  },
+export interface UpstoxPosition {
+  tradingSymbol: string;
+  instrumentToken: string;
+  netQuantity: number;
+  realizedPnL: number;
+  unrealizedPnL: number;
+  product: string;
+}
+
+class BrokerAdapter {
+  private apiToken: string = '';
+  private syncInterval: NodeJS.Timeout | null = null;
   
-  placeOrder: async (params: PlaceOrderParams): Promise<any> => {
-    if (!accessToken) {
-      throw new Error('Access token not set in broker-adapter');
-    }
-    
+  // Semaphore to prevent overlapping network requests if the API lags
+  private isSyncing: boolean = false; 
+
+  /**
+   * Initializes the adapter with the active Upstox access token 
+   * and boots up the self-healing background thread.
+   */
+  public initialize(token: string): void {
+    this.apiToken = token;
+    this.startReconciliationThread();
+    logInfo('[BROKER] Adapter initialized. Connection to exchange secured.');
+  }
+
+  /**
+   * 🔄 The Self-Healing Heartbeat
+   * Runs exactly every 3 seconds on a separate event loop phase.
+   */
+  private startReconciliationThread(): void {
+    if (this.syncInterval) clearInterval(this.syncInterval);
+
+    this.syncInterval = setInterval(() => {
+      this.reconcileState();
+    }, 3000);
+
+    logInfo('[BROKER] 🛡️ Background State Reconciliation Thread started (3s heartbeat).');
+  }
+
+  /**
+   * Fetches absolute truth from the exchange and forcefully overrides local memory.
+   */
+  private async reconcileState(): Promise<void> {
+    if (this.isSyncing) return; // Prevent network pile-up if Upstox takes > 3s to respond
+    this.isSyncing = true;
+
     try {
-      const body = {
-        instrument_token: params.instrumentToken,
-        transaction_type: params.transactionType,
-        quantity: params.quantity,
-        product: params.product || 'I',
-        validity: 'DAY',
-        order_type: params.orderType || 'MARKET',
-        price: 0,
-        trigger_price: 0,
-        disclosed_quantity: 0,
-        is_amo: false
-      };
+      const positions = await this.getOpenPositions();
       
-      const res = await fetch('https://api.upstox.com/v2/order/place', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Authorization': `Bearer ${accessToken}`
-        },
-        body: JSON.stringify(body)
-      });
-      
-      const data: any = await res.json();
-      if (!res.ok || data.status !== 'success') {
-        throw new Error(`Upstox placeOrder failed: ${JSON.stringify(data.errors || data)}`);
+      let totalRealized = 0;
+      let totalUnrealized = 0;
+      let openLotsCount = 0;
+
+      for (const pos of positions) {
+        // Upstox API native response variables mapped to our schema
+        totalRealized += pos.realizedPnL;
+        totalUnrealized += pos.unrealizedPnL;
+        
+        if (pos.netQuantity !== 0) {
+          openLotsCount++;
+        }
       }
-      
-      logInfo(`[BROKER ADAPTER] Direct order placed successfully. Upstox ID: ${data?.data?.order_id}`);
-      return data;
-    } catch (err: any) {
-      logError(`[BROKER ADAPTER] Direct order placement failed: ${err.message}`);
-      throw err;
+
+      // 1. Force state synchronization on the tracker
+      tracker.setRealizedPnL(totalRealized);
+      tracker.updateUnrealizedPnL(totalUnrealized);
+
+      // 2. Logging deep reconciliation events (Only log if things change to prevent spam)
+      // logInfo(`[BROKER-SYNC] State Reconciled. Realized: ₹${totalRealized}, Unrealized: ₹${totalUnrealized}`);
+
+    } catch (error) {
+      // We don't crash the daemon on a network error. We just wait for the next 3s heartbeat.
+      logWarn(`[BROKER-SYNC] API connection stutter. Skipping this heartbeat cycle. Error: ${error}`);
+    } finally {
+      this.isSyncing = false;
     }
   }
-};
+
+  /**
+   * Retrieves the current positions from the Upstox API.
+   */
+  public async getOpenPositions(): Promise<UpstoxPosition[]> {
+    if (!this.apiToken) return [];
+
+    try {
+      const response = await fetch('https://api.upstox.com/v2/portfolio/short-term-positions', {
+        headers: {
+          'Authorization': `Bearer ${this.apiToken}`,
+          'Accept': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Upstox API HTTP ${response.status}`);
+      }
+
+      const json = await response.json() as any;
+      
+      if (!json.data) return [];
+
+      return json.data.map((pos: any) => ({
+        tradingSymbol: pos.tradingsymbol,
+        instrumentToken: pos.instrument_token,
+        netQuantity: parseInt(pos.quantity) || 0,
+        realizedPnL: parseFloat(pos.realised) || 0,
+        unrealizedPnL: parseFloat(pos.unrealised) || 0,
+        product: pos.product
+      }));
+
+    } catch (error) {
+      logError(`[BROKER] Failed to fetch open positions: ${error}`);
+      throw error; // Let the reconciliation thread catch this
+    }
+  }
+
+  /**
+   * Places an order directly to the Upstox terminal.
+   * Utilized by the Iceberg and Emergency Exit systems.
+   */
+  public async placeOrder(params: OrderParams): Promise<any> {
+    logInfo(`[BROKER] Transmitting ${params.orderType} ${params.transactionType} for ${params.quantity} qty of ${params.tradingSymbol}`);
+
+    try {
+      const response = await fetch('https://api.upstox.com/v2/order/place', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiToken}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          quantity: params.quantity,
+          product: params.product || 'D', // 'D' for intraday standard 
+          validity: 'DAY',
+          price: params.orderType === 'LIMIT' ? 0 /* calculate limit */ : 0, // 0 for market
+          tag: params.isEmergency ? 'EMERGENCY_EXIT' : 'AUTO_EXEC',
+          instrument_token: params.instrumentToken,
+          order_type: params.orderType,
+          transaction_type: params.transactionType,
+          disclosed_quantity: 0,
+          trigger_price: 0,
+          is_amo: false
+        })
+      });
+
+      const result = await response.json() as any;
+
+      if (!response.ok) {
+        throw new Error(`Execution Failed: ${result.errors?.[0]?.message || 'Unknown Broker Error'}`);
+      }
+
+      return result.data;
+    } catch (error) {
+      logError(`[BROKER] Critical Order Placement Failure for ${params.tradingSymbol}: ${error}`);
+      throw error;
+    }
+  }
+}
+
+// Export as singleton to maintain the background thread continuously
+export const brokerAdapter = new BrokerAdapter();

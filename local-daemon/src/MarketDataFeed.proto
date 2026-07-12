@@ -2,15 +2,12 @@ syntax = "proto3";
 
 package com.upstox.marketdatafeeder.rpc.proto;
 
-// Note: Replace this with the full official Upstox MarketDataFeed.proto 
-// from the Upstox Developer Portal to ensure all tags map correctly.
-
 message FeedResponse {
   map<string, Feed> feeds = 1;
 }
 
 message Feed {
-  FullFeed fullFeed = 2; // Replace with correct tag from Upstox schema
+  FullFeed fullFeed = 2;
 }
 
 message FullFeed {
@@ -23,8 +20,23 @@ message FF {
 
 message MarketFF {
   LTPC ltpc = 1;
+  MarketLevel marketLevel = 2; // Injecting Market Depth parsing
 }
 
 message LTPC {
   double ltp = 1;
+}
+
+// Structuring the Top 5 Order Book levels
+message MarketLevel {
+  repeated Quote bidAskQuote = 1; 
+}
+
+message Quote {
+  int32 bq = 1;  // Bid Quantity
+  double bp = 2; // Bid Price
+  int32 bno = 3; // Bid Number of Orders
+  int32 aq = 4;  // Ask Quantity
+  double ap = 5; // Ask Price
+  int32 ano = 6; // Ask Number of Orders
 }

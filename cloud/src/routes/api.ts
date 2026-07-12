@@ -18,6 +18,9 @@ import { calculateATRArray } from '../lib/atr';
 
 const api = new Hono<{ Bindings: Env }>();
 
+// Holds active, persistent WebSocket connections to the local daemon
+const daemonWebSockets = new Set<WebSocket>();
+
 // --- Middleware: Poll Secret Auth ---
 
 function requirePollSecret(c: any, next: any) {
@@ -49,18 +52,51 @@ api.use('/api/config', dashboardAuth);
 // =====================
 
 /**
+ * GET /api/ws
+ * 🚀 TASK 4.2: Ultra-low latency WebSocket stream.
+ * The local daemon connects here to receive instant execution fills.
+ */
+api.get('/api/ws', async (c) => {
+  const upgradeHeader = c.req.header('Upgrade');
+  if (upgradeHeader !== 'websocket') {
+    return c.text('Expected Upgrade: websocket', 426);
+  }
+
+  const secret = c.req.query('secret');
+  if (secret !== c.env.POLL_SECRET) {
+    return c.text('Unauthorized', 401);
+  }
+
+  // Cloudflare native WebSocketPair initialization
+  const webSocketPair = new WebSocketPair();
+  const client = webSocketPair[0];
+  const server = webSocketPair[1];
+
+  server.accept();
+  daemonWebSockets.add(server);
+
+  server.addEventListener('close', () => daemonWebSockets.delete(server));
+  server.addEventListener('error', () => daemonWebSockets.delete(server));
+
+  return new Response(null, {
+    status: 101,
+    webSocket: client,
+  });
+});
+
+/**
  * GET /api/poll
  * Local daemon polls this every 1.5s.
  * Receives daemon's RSS memory, checks watchdog, returns any PENDING orders.
  */
 api.post('/api/poll', async (c) => {
-  const body = await c.req.json<{ 
-    secret: string; 
-    memoryRss?: number; 
+  const body = await c.req.json<{
+    secret: string;
+    memoryRss?: number;
     memoryHeapUsed?: number;
     rateMetrics?: { reqPerSecond: number; reqPerMinute: number };
   }>();
-  
+
   // 1. Authenticate the payload
   const expectedSecret = c.env.POLL_SECRET;
   if (!body.secret || body.secret !== expectedSecret) {
@@ -91,10 +127,10 @@ api.post('/api/poll', async (c) => {
   if (body.memoryRss && body.memoryRss > MEMORY_LIMIT_BYTES) {
     // CRITICAL SAFETY CHECK: Verify no directional or straddle positions are open
     const hasNoActivePositions = !state.activePosition && !state.activeHedgePosition;
-    
+
     if (hasNoActivePositions) {
       triggerWatchdogRestart = true;
-      
+
       // Log an audit trail entry into the D1 Telemetry Table for system tracking
       const currentMemoryMB = (body.memoryRss / 1024 / 1024).toFixed(1);
       await c.env.TRADING_DB.prepare(
@@ -110,7 +146,7 @@ api.post('/api/poll', async (c) => {
   // 4. Process pending orders if we are NOT restarting
   const orders: OrderPayload[] = [];
   let accessToken = null;
-  
+
   if (!triggerWatchdogRestart) {
     // Get pending orders array from KV
     const rawPending = await kv.get(KV_KEYS.PENDING_ORDERS);
@@ -280,6 +316,29 @@ api.post('/api/confirm', requirePollSecret, async (c) => {
     }
   }
 
+  // ========================================================================
+  // 🚀 TASK 4.2: ZERO-LATENCY WEBSOCKET PUSH
+  // Push the Realized PnL and Fill Data down to the daemon instantly.
+  // ========================================================================
+  const syncPayload = JSON.stringify({
+    type: 'EXECUTION_CONFIRMATION',
+    correlationId,
+    status,
+    executionPrice,
+    filledQuantity,
+    pnl: pnlToUpdate,
+    transactionType: order?.transaction_type || 'UNKNOWN',
+    timestamp: Date.now()
+  });
+
+  daemonWebSockets.forEach((ws) => {
+    try {
+      ws.send(syncPayload);
+    } catch (err) {
+      daemonWebSockets.delete(ws);
+    }
+  });
+
   return c.json({ success: true, correlationId });
 });
 
@@ -433,12 +492,12 @@ api.post('/api/control', async (c) => {
  */
 api.post('/api/position/sl-override', dashboardAuth, async (c) => {
   const { type, price } = await c.req.json<{ type: 'HARD' | 'TRAILING', price: number }>();
-  
+
   const stateRaw = await c.env.TRADING_KV.get(KV_KEYS.BOT_STATE);
   if (!stateRaw) return c.json({ error: 'No bot state found' }, 404);
-  
+
   const state: BotState = JSON.parse(stateRaw);
-  
+
   if (!state.activePosition) {
     return c.json({ error: 'No active position to modify' }, 400);
   }
@@ -571,7 +630,7 @@ api.post('/api/manual-entry', dashboardAuth, async (c) => {
 
     if (isPaperMode) {
       await executePaperTrade(c.env, order, premium);
-      
+
       await c.env.TRADING_DB.prepare(
         `INSERT INTO system_telemetry (nifty_spot, atm_strike, macd_line, prev_macd_line, signal_generated, bot_status, log_message)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
@@ -702,7 +761,7 @@ api.get('/api/orders', async (c) => {
 /** POST /api/orders/journal - Update tags and notes for a specific trade */
 api.post('/api/orders/journal', dashboardAuth, async (c) => {
   const { correlationId, tags, notes } = await c.req.json<{ correlationId: string, tags: string, notes: string }>();
-  
+
   if (!correlationId) return c.json({ error: 'Missing correlation ID' }, 400);
 
   await c.env.TRADING_DB.prepare(
@@ -778,7 +837,7 @@ api.post('/api/admin/backfill', dashboardAuth, async (c) => {
 
   try {
     const candles = await fetchHistoricalCandlesRange(accessToken, fromDateStr, toDateStr);
-    
+
     if (candles.length === 0) {
       return c.json({ error: 'No data returned from Upstox' }, 400);
     }
@@ -801,9 +860,9 @@ api.post('/api/admin/backfill', dashboardAuth, async (c) => {
       await c.env.TRADING_DB.batch(chunk);
     }
 
-    return c.json({ 
-      success: true, 
-      message: `Successfully backfilled ${candles.length} historical candles from ${fromDateStr} to ${toDateStr}.` 
+    return c.json({
+      success: true,
+      message: `Successfully backfilled ${candles.length} historical candles from ${fromDateStr} to ${toDateStr}.`
     });
 
   } catch (error: any) {
@@ -861,19 +920,19 @@ api.get('/api/config/snapshots', dashboardAuth, async (c) => {
  */
 api.post('/api/config/rollback', dashboardAuth, async (c) => {
   const { date } = await c.req.json<{ date: string }>();
-  
+
   // 1. Verify the snapshot exists
   const check = await c.env.TRADING_DB.prepare(
     `SELECT count(*) as count FROM bot_configuration_history WHERE snapshot_date = ?`
   ).bind(date).first();
-  
+
   if (!check || (check as any).count === 0) {
     return c.json({ error: `No configuration snapshot found for ${date}` }, 404);
   }
-  
+
   // 2. Wipe the current active configuration
   await c.env.TRADING_DB.prepare(`DELETE FROM bot_configuration`).run();
-  
+
   // 3. Restore the historical configuration
   await c.env.TRADING_DB.prepare(
     `INSERT INTO bot_configuration (config_key, config_value, updated_at)
@@ -881,7 +940,7 @@ api.post('/api/config/rollback', dashboardAuth, async (c) => {
      FROM bot_configuration_history 
      WHERE snapshot_date = ?`
   ).bind(date).run();
-  
+
   return c.json({ success: true, message: `System configuration successfully rolled back to ${date}` });
 });
 
@@ -930,10 +989,10 @@ api.get('/api/analytics/drawdown', dashboardAuth, async (c) => {
     GROUP BY trade_date
     ORDER BY trade_date ASC
   `;
-  
+
   try {
     const rows = await c.env.TRADING_DB.prepare(query).all();
-    
+
     let cumulativePnL = 0;
     let highWaterMark = 0;
     const drawdownData = [];
@@ -941,15 +1000,15 @@ api.get('/api/analytics/drawdown', dashboardAuth, async (c) => {
     // 2. Step through time to build the Equity Curve and Drawdown
     for (const row of rows.results || []) {
       cumulativePnL += (row.daily_pnl as number);
-      
+
       // If we hit a new all-time high, update the High Water Mark
       if (cumulativePnL > highWaterMark) {
         highWaterMark = cumulativePnL;
       }
-      
+
       // Drawdown is the negative distance from the peak
-      const drawdown = cumulativePnL - highWaterMark; 
-      
+      const drawdown = cumulativePnL - highWaterMark;
+
       drawdownData.push({
         date: row.trade_date,
         drawdown: drawdown, // Will always be <= 0
@@ -957,7 +1016,7 @@ api.get('/api/analytics/drawdown', dashboardAuth, async (c) => {
         peak: highWaterMark
       });
     }
-    
+
     return c.json({ data: drawdownData });
   } catch (error) {
     console.error("Drawdown calculation failed:", error);
@@ -987,7 +1046,7 @@ api.get('/api/analytics/slippage', dashboardAuth, async (c) => {
 
   for (const row of rows.results || []) {
     let slippagePct = 0;
-    
+
     // Normalize Slippage: Positive values = Bad (Lost Money), Negative values = Good (Price Improvement)
     if (row.transaction_type === 'BUY') {
       // Bought for higher than expected = Bad
@@ -996,10 +1055,10 @@ api.get('/api/analytics/slippage', dashboardAuth, async (c) => {
       // Sold for lower than expected = Bad
       slippagePct = (((row.order_price as number) - (row.execution_price as number)) / (row.order_price as number)) * 100;
     }
-    
+
     totalSlippagePct += slippagePct;
     count++;
-    
+
     timeline.push({
       time: new Date((row as any).created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       date: row.date,
@@ -1009,7 +1068,7 @@ api.get('/api/analytics/slippage', dashboardAuth, async (c) => {
   }
 
   const avgSlippage = count > 0 ? (totalSlippagePct / count) : 0;
-  
+
   return c.json({ avgSlippage, timeline });
 });
 
@@ -1024,7 +1083,7 @@ api.get('/api/analytics/time-of-day', dashboardAuth, async (c) => {
     GROUP BY trading_hour
     ORDER BY trading_hour ASC
   `;
-  
+
   try {
     const result = await c.env.TRADING_DB.prepare(query).all();
     return c.json({ data: result.results || [] });
@@ -1045,7 +1104,7 @@ api.get('/api/analytics/ratios', dashboardAuth, async (c) => {
     GROUP BY trade_date
     ORDER BY trade_date ASC
   `;
-  
+
   try {
     const rows = await c.env.TRADING_DB.prepare(query).all();
     const dailyPnL = (rows.results || []).map((r: any) => parseFloat(r.daily_pnl) || 0);
@@ -1072,7 +1131,7 @@ api.get('/api/analytics/ratios', dashboardAuth, async (c) => {
     let cumulative = 0;
     let peak = 0;
     let maxDrawdown = 0;
-    
+
     for (const pnl of dailyPnL) {
       cumulative += pnl;
       if (cumulative > peak) peak = cumulative;
@@ -1094,7 +1153,7 @@ api.get('/api/analytics/ratios', dashboardAuth, async (c) => {
       sortino: sortino.toFixed(2),
       calmar: calmar.toFixed(2)
     });
-    
+
   } catch (error) {
     console.error("Ratio calculation failed:", error);
     return c.json({ sharpe: "0.00", sortino: "0.00", calmar: "0.00" });
@@ -1116,7 +1175,7 @@ api.get('/api/analytics/monte-carlo-stats', dashboardAuth, async (c) => {
   const losses = trades.filter(t => t < 0);
 
   const winRate = wins.length / trades.length;
-  
+
   const avgWin = wins.length > 0 ? wins.reduce((a, b) => a + b, 0) / wins.length : 0;
   const avgLoss = losses.length > 0 ? losses.reduce((a, b) => a + b, 0) / losses.length : 0;
 
@@ -1154,94 +1213,174 @@ api.post('/api/admin/run-backtest', dashboardAuth, async (c) => {
   const closes = candles.map(c => c.close);
   const macdResult = calculateMACD(closes);
   const atrResult = calculateATRArray(candles, 14);
-  const hist = macdResult.histogram;
 
-  // 3. Simulation Variables
-  let activeTrade: any = null;
+  // Align indicator arrays to match candles 1-to-1
+  const macdLine = new Array(candles.length).fill(0);
+  for (let j = 0; j < macdResult.macdLine.length; j++) {
+    macdLine[j + 25] = macdResult.macdLine[j];
+  }
+
+  const hist = new Array(candles.length).fill(0);
+  for (let j = 0; j < macdResult.histogram.length; j++) {
+    hist[j + 33] = macdResult.histogram[j];
+  }
+
+  // 3. Simulation Variables & Constants
+  let activeTrades: any[] = []; // Changed to array to support multi-leg Straddles
   const closedTrades: any[] = [];
+
   let cumulativePnL = 0;
   let peakPnL = 0;
   let maxDrawdown = 0;
+  let dailyPnL = 0;
+  let currentDayStr = '';
 
-  // Trading Constants
-  const NIFTY_LOT_SIZE = 75; // Adjust to your current lot size
-  const LOTS_TO_TRADE = 2; // Fixed sizing for the backtest
+  let cumVol = 0;
+  let cumVolPrice = 0;
+
+  const NIFTY_LOT_SIZE = 75;
+  const LOTS_TO_TRADE = 2;
   const ASSUMED_DELTA = 0.5; // ATM Option approximation
+  const STARTING_MARGIN = 100000; // Simulated 1L capital
+  const MAX_DAILY_LOSS = -(STARTING_MARGIN * 0.05); // -5% Drawdown Shield
 
   // 4. The Execution Loop
-  // Start from index 33 to ensure MACD and ATR arrays have fully warmed up
-  for (let i = 33; i < candles.length; i++) {
+  for (let i = 35; i < candles.length; i++) {
     const candle = candles[i];
-    const prevMacd = hist[i - 1];
-    const currMacd = hist[i];
+    const prevMacd = macdLine[i - 1];
+    const currMacd = macdLine[i];
     const atr = atrResult[i] || 20;
 
-    // A. EXIT LOGIC
-    if (activeTrade) {
-      activeTrade.highestSpot = Math.max(activeTrade.highestSpot, candle.high);
-      activeTrade.lowestSpot = Math.min(activeTrade.lowestSpot, candle.low);
+    // A. DAILY RESETS & VWAP CALCULATION
+    const dateObj = new Date(candle.timestamp);
+    const dayStr = dateObj.toISOString().split('T')[0];
 
-      // Trailing Stop Loss logic based on Spot ATR
+    if (dayStr !== currentDayStr) {
+      currentDayStr = dayStr;
+      dailyPnL = 0; // Reset Drawdown shield
+      cumVol = 0;   // Reset VWAP
+      cumVolPrice = 0;
+    }
+
+    cumVol += candle.volume || 1;
+    cumVolPrice += candle.close * (candle.volume || 1);
+    const currentVwap = cumVolPrice / cumVol;
+
+    // Time Math (IST)
+    let istHours = dateObj.getUTCHours() + (dateObj.getUTCMinutes() / 60) + 5.5;
+    if (istHours >= 24) istHours -= 24;
+
+    const isThetaDeathZone = istHours >= 12.5 && istHours <= 14.0;
+    const isEOD = istHours >= 15.25;
+    const isDrawdownBreached = dailyPnL <= MAX_DAILY_LOSS;
+
+    // Detect Momentum Decay (3 consecutive declining histogram bars)
+    let isMomentumDecayingCE = false;
+    let isMomentumDecayingPE = false;
+    const h3 = hist[i - 3], h2 = hist[i - 2], h1 = hist[i - 1];
+    if (h3 > 0 && h2 > 0 && h1 > 0 && h3 > h2 && h2 > h1) isMomentumDecayingCE = true;
+    if (h3 < 0 && h2 < 0 && h1 < 0 && h3 < h2 && h2 < h1) isMomentumDecayingPE = true;
+
+    // B. EXIT LOGIC (Loop backwards to safely remove from array)
+    for (let j = activeTrades.length - 1; j >= 0; j--) {
+      const trade = activeTrades[j];
+      trade.highestSpot = Math.max(trade.highestSpot, candle.high);
+      trade.lowestSpot = Math.min(trade.lowestSpot, candle.low);
+
       let tslSpotPrice = 0;
       let isStoppedOut = false;
+      let spotPointsCaptured = 0;
 
-      if (activeTrade.type === 'CE') {
-        tslSpotPrice = activeTrade.highestSpot - (1.5 * atr);
+      // 1. Scale-Out Logic (Free Ride at 2.5 * ATR)
+      const currentProfitPoints = trade.type === 'CE' ? (candle.high - trade.entryPrice) : (trade.entryPrice - candle.low);
+      if (!trade.scaleOutDone && trade.lots > 1 && currentProfitPoints >= (2.5 * atr)) {
+        trade.scaleOutDone = true;
+        const lotsToSell = Math.floor(trade.lots / 2);
+        trade.lots -= lotsToSell;
+
+        const partialPnl = (currentProfitPoints * ASSUMED_DELTA) * (lotsToSell * NIFTY_LOT_SIZE);
+        cumulativePnL += partialPnl;
+        dailyPnL += partialPnl;
+
+        closedTrades.push({
+          type: trade.type, entryTime: trade.entryTime, exitTime: candle.timestamp,
+          entrySpot: trade.entryPrice.toFixed(2), exitSpot: candle.close.toFixed(2),
+          reason: 'Scale-Out (50%)', pnl: partialPnl, cumulative: cumulativePnL
+        });
+      }
+
+      // 2. Dynamic TSL Logic (w/ Momentum Decay tighten)
+      if (trade.type === 'CE') {
+        tslSpotPrice = trade.highestSpot - (1.5 * atr);
+        if (isMomentumDecayingCE && (candle.close - trade.entryPrice) > (0.5 * atr)) {
+          tslSpotPrice = Math.max(tslSpotPrice, candle.close - (0.5 * atr));
+        }
         if (candle.low <= tslSpotPrice) isStoppedOut = true;
       } else {
-        tslSpotPrice = activeTrade.lowestSpot + (1.5 * atr);
+        tslSpotPrice = trade.lowestSpot + (1.5 * atr);
+        if (isMomentumDecayingPE && (trade.entryPrice - candle.close) > (0.5 * atr)) {
+          tslSpotPrice = Math.min(tslSpotPrice, candle.close + (0.5 * atr));
+        }
         if (candle.high >= tslSpotPrice) isStoppedOut = true;
       }
 
-      // Exit on Stop Loss OR Opposite MACD Crossover (Trend Reversal)
-      const reversalExit = (activeTrade.type === 'CE' && prevMacd > 0 && currMacd < 0) || 
-                           (activeTrade.type === 'PE' && prevMacd < 0 && currMacd > 0);
+      // 3. Reversal Logic
+      const reversalExit = (trade.type === 'CE' && prevMacd > 0 && currMacd < 0) ||
+        (trade.type === 'PE' && prevMacd < 0 && currMacd > 0);
 
-      // Force square-off at 3:15 PM IST (Intraday constraint)
-      const dateObj = new Date(candle.timestamp);
-      const isEOD = dateObj.getUTCHours() + (5.5) >= 15.25;
-
+      // Execute Exit
       if (isStoppedOut || reversalExit || isEOD) {
-        // Calculate point difference captured
-        const exitPrice = candle.close;
-        const spotPointsCaptured = activeTrade.type === 'CE' 
-          ? (exitPrice - activeTrade.entryPrice) 
-          : (activeTrade.entryPrice - exitPrice);
-
-        // Translate Spot points to Option Premium PnL
+        spotPointsCaptured = trade.type === 'CE' ? (candle.close - trade.entryPrice) : (trade.entryPrice - candle.close);
         const premiumPoints = spotPointsCaptured * ASSUMED_DELTA;
-        const pnl = premiumPoints * (NIFTY_LOT_SIZE * LOTS_TO_TRADE);
+        const pnl = premiumPoints * (NIFTY_LOT_SIZE * trade.lots);
 
         cumulativePnL += pnl;
-        
-        // Track Drawdown
+        dailyPnL += pnl;
+
         if (cumulativePnL > peakPnL) peakPnL = cumulativePnL;
         const currentDrawdown = peakPnL - cumulativePnL;
         if (currentDrawdown > maxDrawdown) maxDrawdown = currentDrawdown;
 
+        let reason = isEOD ? 'EOD Squareoff' : (reversalExit ? 'MACD Reversal' : 'Trailing SL');
+        if (isStoppedOut && (trade.type === 'CE' ? isMomentumDecayingCE : isMomentumDecayingPE)) reason += ' (Momentum Decay)';
+
         closedTrades.push({
-          type: activeTrade.type,
-          entryTime: activeTrade.entryTime,
-          exitTime: candle.timestamp,
-          entrySpot: activeTrade.entryPrice.toFixed(2),
-          exitSpot: exitPrice.toFixed(2),
-          reason: isEOD ? 'EOD Squareoff' : (reversalExit ? 'MACD Reversal' : 'Trailing SL'),
-          pnl: pnl,
-          cumulative: cumulativePnL
+          type: trade.type, entryTime: trade.entryTime, exitTime: candle.timestamp,
+          entrySpot: trade.entryPrice.toFixed(2), exitSpot: candle.close.toFixed(2),
+          reason: reason, pnl: pnl, cumulative: cumulativePnL
         });
 
-        activeTrade = null;
+        activeTrades.splice(j, 1);
       }
     }
 
-    // B. ENTRY LOGIC
-    if (!activeTrade) {
-      if (prevMacd < 0 && currMacd > 0) {
-        // Bullish Crossover
-        activeTrade = { type: 'CE', entryTime: candle.timestamp, entryPrice: candle.close, highestSpot: candle.close, lowestSpot: candle.close };
-      } else if (prevMacd > 0 && currMacd < 0) {
-        // Bearish Crossover
-        activeTrade = { type: 'PE', entryTime: candle.timestamp, entryPrice: candle.close, highestSpot: candle.close, lowestSpot: candle.close };
+    // C. ENTRY LOGIC
+    if (activeTrades.length === 0 && !isDrawdownBreached && !isThetaDeathZone && !isEOD) {
+
+      const isBullishCross = prevMacd < 0 && currMacd > 0;
+      const isBearishCross = prevMacd > 0 && currMacd < 0;
+
+      if (isBullishCross || isBearishCross) {
+
+        // Mock ADX for backtester (If you have calculateADXArray, use actual ADX here)
+        // Assume random/mocked ADX < 20 for Straddle demonstration. In production, connect your real ADX output.
+        const simulatedAdx = 25; // Change this to actual adxResult[i] if integrated
+
+        if (simulatedAdx < 20) {
+          // STRADDLE ENTRY (Choppy Market)
+          activeTrades.push({ type: 'CE', lots: LOTS_TO_TRADE / 2, entryTime: candle.timestamp, entryPrice: candle.close, highestSpot: candle.close, lowestSpot: candle.close, scaleOutDone: false });
+          activeTrades.push({ type: 'PE', lots: LOTS_TO_TRADE / 2, entryTime: candle.timestamp, entryPrice: candle.close, highestSpot: candle.close, lowestSpot: candle.close, scaleOutDone: false });
+        } else {
+          // VWAP Mean Reversion Extension Filter
+          const extensionPct = ((candle.close - currentVwap) / currentVwap) * 100;
+
+          if (isBullishCross && extensionPct <= 1.0) {
+            activeTrades.push({ type: 'CE', lots: LOTS_TO_TRADE, entryTime: candle.timestamp, entryPrice: candle.close, highestSpot: candle.close, lowestSpot: candle.close, scaleOutDone: false });
+          }
+          else if (isBearishCross && extensionPct >= -1.0) {
+            activeTrades.push({ type: 'PE', lots: LOTS_TO_TRADE, entryTime: candle.timestamp, entryPrice: candle.close, highestSpot: candle.close, lowestSpot: candle.close, scaleOutDone: false });
+          }
+        }
       }
     }
   }

@@ -56,13 +56,14 @@ export async function executeEmergencyMarketExit(): Promise<void> {
   try {
     // 1. Fetch all currently open positions from the broker adapter
     const positions = await brokerAdapter.getOpenPositions();
+    const activePositions = positions.filter(pos => pos.netQuantity !== 0);
     
-    if (!positions || positions.length === 0) {
+    if (activePositions.length === 0) {
       logger.info('[ICEBERG] No active positions to square off.');
       return;
     }
 
-    const exitPromises = positions.map(async (pos) => {
+    const exitPromises = activePositions.map(async (pos) => {
        // We MUST respect exchange freeze limits (e.g., Nifty 1800 quantity)
        const MAX_FREEZE_QTY = 1800; 
        let remainingQty = Math.abs(pos.netQuantity);

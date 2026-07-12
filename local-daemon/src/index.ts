@@ -11,9 +11,11 @@ setDefaultResultOrder('ipv4first');
 import { createServer } from 'node:http';
 import { logInfo, logWarn, logError, logTrade } from './logger.js';
 import { executeOrder, executeOrderStealth } from './executor.js';
+import { executeEmergencyMarketExit } from './iceberg.js';
 import { ApiTracker, tracker } from './tracker.js';
 import { UpstoxWSClient } from './ws-client.js';
-import { setAccessToken } from './broker-adapter.js';
+import { brokerAdapter } from './broker-adapter.js';
+import WebSocket from 'ws';
 
 // --- Configuration ---
 const CONFIG = {
@@ -23,6 +25,8 @@ const CONFIG = {
   dryRun: process.env.DRY_RUN === 'true',
   healthPort: parseInt(process.env.HEALTH_PORT || '3847', 10),
   upstoxToken: process.env.UPSTOX_TOKEN || '',
+  // 🛡️ TASK 4.3: Default lot size for Nifty (1 lot = 75 units)
+  defaultTradeQty: parseInt(process.env.DEFAULT_TRADE_QTY || '75', 10),
 };
 
 // --- Circuit Breaker ---
@@ -113,6 +117,44 @@ async function getHistoricalCandles(): Promise<any[]> {
   return [];
 }
 
+// --- Cloud WebSocket Client for Zero-Latency Sync ---
+function connectCloudWS(): void {
+  // Convert http/https to ws/wss
+  const wsUrl = CONFIG.workerUrl.replace(/^http/, 'ws') + `/api/ws?secret=${CONFIG.pollSecret}`;
+  logInfo(`🔌 Connecting to Cloud WebSocket: ${wsUrl}`);
+  
+  const ws = new WebSocket(wsUrl);
+
+  ws.on('open', () => {
+    logInfo('🟢 Connected to Cloud WebSocket for zero-latency execution synchronization.');
+  });
+
+  ws.on('message', (data) => {
+    try {
+      const message = JSON.parse(data.toString());
+      if (message.type === 'EXECUTION_CONFIRMATION') {
+        logInfo(`⚡ Zero-Latency Execution Sync: ${message.correlationId} | Status: ${message.status} | PnL: ₹${message.pnl}`);
+        tracker.setRealizedPnL(message.pnl);
+      }
+    } catch (e: any) {
+      logError(`Failed to parse Cloud WS message: ${e.message}`);
+    }
+  });
+
+  ws.on('close', () => {
+    logWarn('🟡 Cloud WebSocket closed. Retrying in 5 seconds...');
+    setTimeout(() => {
+      if (isRunning) {
+        connectCloudWS();
+      }
+    }, 5000);
+  });
+
+  ws.on('error', (err) => {
+    logError(`❌ Cloud WebSocket error: ${err.message}`);
+  });
+}
+
 // --- WS Engine ---
 async function bootstrapEngine() {
   logInfo('═══════════════════════════════════════════');
@@ -153,10 +195,58 @@ async function bootstrapEngine() {
     }
   }
 
-  setAccessToken(activeToken);
+  brokerAdapter.initialize(activeToken);
+
+  // ─────────────────────────────────────────────────────────────
+  // 🛡️ TASK 4.3: CRASH RECOVERY BOOT SEQUENCE
+  // Reconstruct reality from the exchange before opening data feed.
+  // ─────────────────────────────────────────────────────────────
+  logInfo('[BOOT] Scanning exchange for active terminal state...');
+  try {
+    const openPositions = await brokerAdapter.getOpenPositions();
+
+    let recoveredRealizedPnL = 0;
+    let recoveredUnrealizedPnL = 0;
+    let hasOpenPositions = false;
+
+    for (const pos of openPositions) {
+      recoveredRealizedPnL += pos.realizedPnL ?? 0;
+      recoveredUnrealizedPnL += pos.unrealizedPnL ?? 0;
+      if (pos.netQuantity !== 0) hasOpenPositions = true;
+    }
+
+    logInfo(`[BOOT] Recovery Data — Realized: ₹${recoveredRealizedPnL.toFixed(2)}, Unrealized: ₹${recoveredUnrealizedPnL.toFixed(2)}, Open Positions: ${hasOpenPositions}`);
+
+    // Re-arm circuit breakers with recovered state
+    await tracker.initializeDailyState(async () => parseFloat(process.env.STARTING_CAPITAL || '100000'), recoveredRealizedPnL);
+    tracker.updateUnrealizedPnL(recoveredUnrealizedPnL);
+
+    const bootState = tracker.getState();
+
+    // Evaluate if we crashed mid-drawdown and need emergency exit
+    if (bootState.isShieldModeActive && hasOpenPositions) {
+      const projectedNetPnL = bootState.dailyRealizedPnL + bootState.activeUnrealizedPnL;
+      if (projectedNetPnL <= (bootState.secureTarget ?? 0)) {
+        logWarn('[BOOT] 🚨 WOKE UP IN CRITICAL DRAWDOWN. SHIELD MODE ACTIVE. DUMPING POSITIONS NOW.');
+        await executeEmergencyMarketExit();
+        tracker.haltTrading('Mid-Crash Drawdown on boot — positions exited to protect capital baseline.');
+      }
+    }
+
+    // If already halted (e.g. 20% daily loss was hit before crash), abort the data feed
+    if (tracker.getState().isHalted) {
+      logWarn('[BOOT] System is HALTED from a prior session. Daemon is running in monitor-only mode. No new trades will fire.');
+    }
+  } catch (recoveryErr: any) {
+    logError(`[BOOT] Non-fatal: Could not complete crash recovery scan: ${recoveryErr.message}. Proceeding with fresh state.`);
+  }
+  // ─────────────────────────────────────────────────────────────
 
   // Start health check server
   startHealthServer();
+
+  // Connect to Cloud Worker WebSocket
+  connectCloudWS();
 
   // Background Sweeper (runs every 15 seconds)
   setInterval(() => {
@@ -273,7 +363,7 @@ async function bootstrapEngine() {
               const data: any = await res.json();
               if (data && data.accessToken) {
                 activeToken = data.accessToken;
-                setAccessToken(activeToken);
+                brokerAdapter.initialize(activeToken);
                 // Re-instantiate the client with the fresh token
                 wsClient = new UpstoxWSClient(activeToken);
                 (wsClient as any).aggregator.seedHistoricalData(historicalData);

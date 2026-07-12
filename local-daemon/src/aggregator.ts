@@ -1,9 +1,11 @@
 // local-daemon/src/aggregator.ts
+import type { MarketDepth } from './ws-client.js';
 
 export interface Tick {
   instrumentToken: string;
   ltp: number;
   timestamp: number;
+  depth?: MarketDepth; // Sourced from our Phase 2 WS Client upgrade
 }
 
 export interface LocalCandle {
@@ -12,16 +14,21 @@ export interface LocalCandle {
   high: number;
   low: number;
   close: number;
-  volume: number;
+  volume: number;       // Total tick events processed
+  buyVolume: number;    // Aggressive buy ticks
+  sellVolume: number;   // Aggressive sell ticks
+  delta: number;        // The net order flow (buyVolume - sellVolume)
 }
 
 export class CandleAggregator {
   private currentCandle: LocalCandle | null = null;
   private closedCandles: LocalCandle[] = [];
   private currentMinute: number | null = null;
+  private previousLtp: number = 0; // Fallback for determining tick direction
 
-  // 1. Seed the engine with historical data on boot so MACD can calculate immediately
+  // 1. Seed the engine with historical data on boot so indicators can calculate immediately
   public seedHistoricalData(candles: LocalCandle[]) {
+    // Note: Historical candles won't have exact delta, we initialize standard OHLC
     this.closedCandles = candles;
     console.log(`[AGGREGATOR] Seeded ${candles.length} historical candles.`);
   }
@@ -45,7 +52,7 @@ export class CandleAggregator {
         this.currentCandle = null;
         this.currentMinute = tickMinute;
         
-        // Return the array so the daemon can calculate MACD
+        // Return the array so the daemon can calculate MACD & evaluate Order Flow
         return finalizedCandles; 
       }
     }
@@ -60,7 +67,10 @@ export class CandleAggregator {
         high: tick.ltp,
         low: tick.ltp,
         close: tick.ltp,
-        volume: 0
+        volume: 0,
+        buyVolume: 0,
+        sellVolume: 0,
+        delta: 0
       };
     } else {
       this.currentCandle.high = Math.max(this.currentCandle.high, tick.ltp);
@@ -68,6 +78,47 @@ export class CandleAggregator {
       this.currentCandle.close = tick.ltp;
     }
 
-    return null; // Candle not closed yet
+    // ==========================================
+    // INSTITUTIONAL ORDER FLOW (TICK DELTA)
+    // ==========================================
+    
+    let isAggressiveBuy = false;
+    let isAggressiveSell = false;
+
+    // Precision Tape Reading: Compare execution against the real-time order book
+    if (tick.depth && tick.depth.asks.length > 0 && tick.depth.bids.length > 0) {
+      const bestAsk = tick.depth.asks[0].price;
+      const bestBid = tick.depth.bids[0].price;
+
+      if (tick.ltp >= bestAsk) {
+        isAggressiveBuy = true;
+      } else if (tick.ltp <= bestBid) {
+        isAggressiveSell = true;
+      } else {
+        // Trade occurred inside the spread (Mid-price execution)
+        // Fallback to standard tick direction (Uptick vs Downtick)
+        if (tick.ltp > this.previousLtp) isAggressiveBuy = true;
+        else if (tick.ltp < this.previousLtp) isAggressiveSell = true;
+      }
+    } else {
+      // Fallback if depth is momentarily unavailable from the exchange
+      if (tick.ltp > this.previousLtp) isAggressiveBuy = true;
+      else if (tick.ltp < this.previousLtp) isAggressiveSell = true;
+    }
+
+    // Accumulate Tick Volume & Delta Imbalance
+    this.currentCandle.volume += 1; 
+    
+    if (isAggressiveBuy) {
+      this.currentCandle.buyVolume += 1;
+      this.currentCandle.delta += 1;
+    } else if (isAggressiveSell) {
+      this.currentCandle.sellVolume += 1;
+      this.currentCandle.delta -= 1;
+    }
+
+    this.previousLtp = tick.ltp; // Store for next tick comparison
+
+    return null; // Candle not closed yet, continue aggregating
   }
 }
