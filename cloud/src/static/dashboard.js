@@ -6,6 +6,30 @@
 (function () {
   'use strict';
 
+  // Function to handle terminal logs in the new UI format (ToolStaq IDE aesthetic)
+  window.addLog = function(message, type = 'info') {
+      const logsContainer = document.getElementById('system-logs');
+      if (!logsContainer) return;
+
+      const colors = {
+          info: 'var(--text-primary)',
+          success: 'var(--accent-success)',
+          error: 'var(--accent-danger)',
+          warning: 'var(--accent-info)'
+      };
+
+      const timestamp = new Date().toLocaleTimeString();
+      
+      const logHTML = `
+          <div class="log-line">
+              <span class="log-time">[${timestamp}]</span>
+              <span class="log-msg" style="color: ${colors[type] || colors.info}">${message}</span>
+          </div>
+      `;
+
+      logsContainer.insertAdjacentHTML('afterbegin', logHTML);
+  };
+
   const POLL_INTERVAL = 3000;
   const HEARTBEAT_TIMEOUT = 6000;
 
@@ -511,10 +535,18 @@
         displayMsg = displayMsg.replace(regex, '<span class="log-highlight">$1</span>');
       }
 
-      return `<div class="log-entry" data-level="${level}">
-        <span class="log-time">${ts}</span>
-        <span class="log-badge" data-level="${level}">${label}</span>
-        <span class="log-msg">${displayMsg}</span>
+      const colors = {
+        'INFO': 'var(--text-primary)',
+        'TRD': 'var(--accent-success)',
+        'ERR': 'var(--accent-danger)',
+        'WARN': 'var(--accent-info)',
+        'SYS': 'var(--accent-info)',
+        'TICK': 'var(--text-secondary)'
+      };
+
+      return `<div class="log-line">
+        <span class="log-time">[${ts}]</span>
+        <span class="log-msg" style="color: ${colors[level] || colors['INFO']}"><span style="color: var(--text-secondary);">[${label}]</span> ${displayMsg}</span>
       </div>`;
     }).join('');
 
