@@ -189,22 +189,12 @@
   }
 
   // ==================== API FUEL GAUGE ====================
-  function updateFuelGauge(metrics) {
+  function updateFuelGauge(metrics, daemonAlive) {
     const fuelFill = document.getElementById('api-fuel-fill');
     const fuelText = document.getElementById('api-fuel-text');
     if (!fuelFill || !fuelText) return;
 
-    if (!metrics) {
-      fuelFill.style.width = '0%';
-      fuelFill.style.backgroundColor = 'var(--text-muted)';
-      fuelText.textContent = '0/200';
-      fuelText.style.color = 'var(--text-muted)';
-      return;
-    }
-
-    // Check if the data is stale (older than 15 seconds)
-    const isStale = (Date.now() - metrics.lastUpdated) > 15000;
-    if (isStale) {
+    if (!daemonAlive) {
       fuelFill.style.width = '0%';
       fuelFill.style.backgroundColor = 'var(--text-muted)';
       fuelText.textContent = 'Offline';
@@ -311,7 +301,7 @@
     }
 
     // Live rate metrics from daemon
-    updateFuelGauge(data.daemonMetrics);
+    updateFuelGauge(data.daemonMetrics, data.daemonAlive);
 
     // Active position tracker
     const noPosEl = document.getElementById('no-position');

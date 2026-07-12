@@ -148,10 +148,13 @@ api.post('/api/poll', async (c) => {
 });
 
 /**
- * GET /api/unresolved-orders
+ * POST /api/sweep-orphans
  * Local daemon polls this every 15s to clean up 'Phantom Orders'
  */
-api.get('/api/unresolved-orders', requirePollSecret, async (c) => {
+api.post('/api/sweep-orphans', async (c) => {
+  const body = await c.req.json<{ secret: string }>();
+  if (body.secret !== c.env.POLL_SECRET) return c.json({ error: 'Unauthorized' }, 401);
+
   // Find orders that were dispatched but never reached a final state
   const rows = await c.env.TRADING_DB.prepare(
     `SELECT correlation_id, upstox_order_id, order_status, created_at 
@@ -255,17 +258,20 @@ api.post('/api/confirm', requirePollSecret, async (c) => {
  * POST /api/heartbeat
  * Daemon health check
  */
-api.post('/api/heartbeat', requirePollSecret, async (c) => {
+api.post('/api/heartbeat', async (c) => {
+  const body = await c.req.json<{ secret: string }>();
+  if (body.secret !== c.env.POLL_SECRET) return c.json({ error: 'Unauthorized' }, 401);
+
   await c.env.TRADING_KV.put('daemon_last_heartbeat', Date.now().toString());
   return c.json({ success: true });
 });
 
 /**
- * POST /api/escalate-order
+ * POST /api/dlq
  * DLQ for orphaned orders
  */
-api.post('/api/escalate-order', requirePollSecret, async (c) => {
-  const { correlationId, upstoxOrderId } = await c.req.json();
+api.post('/api/dlq', async (c) => {
+  const { correlationId, upstoxOrderId } = await c.req.json<{ correlationId: string; upstoxOrderId: string; secret?: string }>();
 
   await c.env.TRADING_DB.prepare(
     `CREATE TABLE IF NOT EXISTS manual_intervention (
