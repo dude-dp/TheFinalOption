@@ -39,6 +39,20 @@ export async function handleQueue(
             order.lots, order.orderPrice, 'PENDING'
           ).run();
           break;
+
+        case 'DISPATCH_EMERGENCY_MARKET': {
+          const emergencyOrder = payload.order as any;
+          await addPendingOrder(env.TRADING_KV, emergencyOrder);
+          await env.TRADING_DB.prepare(
+            `INSERT OR IGNORE INTO order_ledger (order_id, correlation_id, instrument_token, trading_symbol, option_type, strike_price, transaction_type, quantity, lots, order_price, order_status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).bind(
+            emergencyOrder.orderId || crypto.randomUUID(), emergencyOrder.correlationId, emergencyOrder.instrumentToken, emergencyOrder.tradingSymbol,
+            emergencyOrder.optionType, emergencyOrder.strikePrice, emergencyOrder.transactionType, emergencyOrder.quantity,
+            emergencyOrder.lots, 0, 'PENDING_EMERGENCY'
+          ).run();
+          break;
+        }
       }
 
       msg.ack();

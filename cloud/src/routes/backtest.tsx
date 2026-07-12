@@ -78,7 +78,7 @@ export const BacktestPage = () => (
         </div>
       </div>
 
-      <script src="/static/backtest.js"></script>
+      <script src="/backtest.js"></script>
     </body>
   </html>
 );

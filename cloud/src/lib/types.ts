@@ -129,7 +129,7 @@ export interface ConfirmRequest {
 // --- Queue Messages ---
 
 export interface OrderQueueMessage {
-  type: 'ORDER_STATUS_CHECK' | 'POSITION_CLOSE' | 'DISPATCH_SLICED_ORDER';
+  type: 'ORDER_STATUS_CHECK' | 'POSITION_CLOSE' | 'DISPATCH_SLICED_ORDER' | 'DISPATCH_EMERGENCY_MARKET';
   correlationId: string;
   payload: Record<string, unknown>;
 }

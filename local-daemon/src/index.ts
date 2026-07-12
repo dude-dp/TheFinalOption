@@ -11,8 +11,9 @@ setDefaultResultOrder('ipv4first');
 import { createServer } from 'node:http';
 import { logInfo, logWarn, logError, logTrade } from './logger.js';
 import { executeOrder, executeOrderStealth } from './executor.js';
-import { ApiTracker, ProfitTracker } from './tracker.js';
+import { ApiTracker, tracker } from './tracker.js';
 import { UpstoxWSClient } from './ws-client.js';
+import { setAccessToken } from './broker-adapter.js';
 
 // --- Configuration ---
 const CONFIG = {
@@ -152,6 +153,8 @@ async function bootstrapEngine() {
     }
   }
 
+  setAccessToken(activeToken);
+
   // Start health check server
   startHealthServer();
 
@@ -270,6 +273,7 @@ async function bootstrapEngine() {
               const data: any = await res.json();
               if (data && data.accessToken) {
                 activeToken = data.accessToken;
+                setAccessToken(activeToken);
                 // Re-instantiate the client with the fresh token
                 wsClient = new UpstoxWSClient(activeToken);
                 (wsClient as any).aggregator.seedHistoricalData(historicalData);
@@ -442,16 +446,16 @@ async function syncProfitTracker(wsClient?: UpstoxWSClient): Promise<void> {
       
       // Init Capital & Realized PnL
       if (data.margin && data.margin.totalBalance) {
-        ProfitTracker.initialize(data.margin.totalBalance, data.todayRealizedPnL || 0);
+        await tracker.initializeDailyState(async () => data.margin.totalBalance, data.todayRealizedPnL || 0);
       } else {
         // Fallback to update realized PNL even if margin is delayed
-        ProfitTracker.DAILY_REALIZED_PNL = data.todayRealizedPnL || 0;
+        tracker.setRealizedPnL(data.todayRealizedPnL || 0);
       }
       
       // Sync Active Position
       if (data.activePosition) {
-        if (ProfitTracker.ACTIVE_POSITION_TOKEN !== data.activePosition.instrumentToken) {
-           ProfitTracker.setActivePosition(
+        if (tracker.activePositionToken !== data.activePosition.instrumentToken) {
+           tracker.setActivePosition(
              data.activePosition.instrumentToken, 
              data.activePosition.quantity, 
              data.activePosition.entryPrice
@@ -459,7 +463,7 @@ async function syncProfitTracker(wsClient?: UpstoxWSClient): Promise<void> {
            if (wsClient) wsClient.subscribe(data.activePosition.instrumentToken);
         }
       } else {
-        ProfitTracker.clearActivePosition();
+        tracker.clearActivePosition();
       }
     }
   } catch (e: any) {

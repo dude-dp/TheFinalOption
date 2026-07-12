@@ -4,7 +4,8 @@
 // ============================================
 
 import { logInfo, logWarn, logError, logTrade } from './logger.js';
-import { ApiTracker } from './tracker.js';
+import { ApiTracker, tracker } from './tracker.js';
+import { executeEmergencyMarketExit } from './iceberg.js';
 
 const HFT_URL = 'https://api-hft.upstox.com';
 const API_URL = 'https://api.upstox.com';
@@ -350,3 +351,96 @@ export async function haltTradingSession(workerUrl: string, secret: string, reas
     logError(`❌ Failed to halt trading session: ${err.message}`);
   }
 }
+
+export class ExecutionEngine {
+  
+  constructor() {
+    logInfo('[EXECUTOR] Execution Matrix initialized and standing by.');
+  }
+
+  /**
+   * Evaluates core capital protection rules.
+   * @returns {boolean} TRUE if it is safe to trade, FALSE if a circuit breaker tripped.
+   */
+  private async evaluateCircuitBreakers(): Promise<boolean> {
+    const state = tracker.getState();
+
+    // 0. If already halted, aggressively block all tick processing
+    if (state.isHalted) {
+      return false;
+    }
+
+    // 1. THE 20% HARD CEILING (Greed Kill-Switch)
+    if (state.dailyRealizedPnL >= state.hardCeiling) {
+      logWarn(
+        `[CIRCUIT BREAKER] 20% HARD CEILING HIT! Realized: ₹${state.dailyRealizedPnL.toFixed(2)}. ` +
+        `Target was: ₹${state.hardCeiling.toFixed(2)}. Shutting down to lock in massive gains.`
+      );
+      await this.triggerEmergencyShutdown('20% Max Daily Limit Reached');
+      return false;
+    }
+
+    // 2. THE 5% SHIELD MODE (Capital Preservation)
+    if (state.isShieldModeActive) {
+      // Calculate what we would walk away with if we market-exited right this second
+      const projectedNetPnL = state.dailyRealizedPnL + state.activeUnrealizedPnL;
+
+      if (projectedNetPnL <= state.secureTarget) {
+        logWarn(
+          `[CIRCUIT BREAKER] SHIELD MODE BREACHED! Projected Net PnL (₹${projectedNetPnL.toFixed(2)}) ` +
+          `is threatening the secured baseline (₹${state.secureTarget.toFixed(2)}). Executing defensive exit.`
+        );
+        await this.triggerEmergencyShutdown('5% Baseline Protected. Exiting to prevent drawdown.');
+        return false;
+      }
+    }
+
+    // Safe to continue normal execution
+    return true; 
+  }
+
+  /**
+   * Master shutdown protocol. Fires market exits and locks the state tracker.
+   */
+  private async triggerEmergencyShutdown(reason: string): Promise<void> {
+    try {
+      // 1. Inform the tracker so no new signals are processed by other threads
+      tracker.haltTrading(reason);
+
+      // 2. Fire the emergency market exits (Task 1.3 implementation)
+      logInfo('[EXECUTOR] Firing emergency market exits for all open positions...');
+      await executeEmergencyMarketExit();
+
+      logInfo('[EXECUTOR] Emergency exit confirmed. System is securely halted for the day.');
+    } catch (error) {
+      logError(`[EXECUTOR] CRITICAL FAILURE during emergency shutdown sequence: ${error}`);
+      // Even if the exit fails, the tracker is halted, preventing new entries.
+      // (Advanced self-healing for this scenario will be handled in Phase 4)
+    }
+  }
+
+  /**
+   * Main entry point for incoming WebSocket tick data.
+   * This is where you connect your `ws-client.ts` stream.
+   */
+  public async processTick(tickData: any): Promise<void> {
+    // 1. Run the Execution Matrix before looking at charts
+    const isSafeToTrade = await this.evaluateCircuitBreakers();
+    
+    if (!isSafeToTrade) {
+      return; // Silently drop the tick. The day is done.
+    }
+
+    // ==========================================
+    // 2. YOUR NORMAL MACD/ENTRY LOGIC GOES HERE
+    // ==========================================
+    
+    // e.g., 
+    // const signal = macdStrategy.evaluate(tickData);
+    // if (signal === 'BUY') { ... }
+
+  }
+}
+
+// Export singleton to be used by the WebSocket listener
+export const executor = new ExecutionEngine();

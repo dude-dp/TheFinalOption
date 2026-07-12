@@ -3,7 +3,7 @@ import WebSocket from 'ws';
 import protobuf from 'protobufjs';
 import { CandleAggregator } from './aggregator';
 import { TickArchiver } from './archiver';
-import { ProfitTracker } from './tracker';
+import { tracker } from './tracker';
 
 // Import local MACD if available or mock it for compilation
 // Assuming macd is moved to a local lib/macd.ts
@@ -101,20 +101,20 @@ export class UpstoxWSClient {
               this.evaluateAndPushSignal(closedCandles, onSignal);
             }
           }
-        } else if (decoded.feeds && ProfitTracker.ACTIVE_POSITION_TOKEN && decoded.feeds[ProfitTracker.ACTIVE_POSITION_TOKEN]) {
-          const feed = decoded.feeds[ProfitTracker.ACTIVE_POSITION_TOKEN];
+        } else if (decoded.feeds && tracker.activePositionToken && decoded.feeds[tracker.activePositionToken]) {
+          const feed = decoded.feeds[tracker.activePositionToken];
           if (feed.fullFeed?.ff?.marketFF?.ltpc?.ltp) {
             const ltp = feed.fullFeed.ff.marketFF.ltpc.ltp;
-            ProfitTracker.updateUnrealizedPnL(ltp);
+            tracker.updateUnrealizedPnLFromLtp(ltp);
             
             // Evaluate Circuit Breaker dynamically on every option tick
-            const cbReason = ProfitTracker.evaluateCircuitBreaker();
+            const cbReason = tracker.evaluateCircuitBreaker();
             if (cbReason) {
               import('./executor.js').then(({ executeMarketExitAll, haltTradingSession }) => {
                  console.log(`\n🛡️ [CIRCUIT BREAKER] TRIGGERED: ${cbReason}`);
                  executeMarketExitAll(this.workerUrl, this.pollSecret);
                  haltTradingSession(this.workerUrl, this.pollSecret, cbReason);
-                 ProfitTracker.clearActivePosition(); // Prevent multi-triggers
+                 tracker.clearActivePosition(); // Prevent multi-triggers
               });
             }
           }

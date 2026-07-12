@@ -46,3 +46,10 @@ export function logTrade(message: string): void {
   process.stdout.write(`\x1b[33m${line}\x1b[0m`); // Yellow
   try { appendFileSync(getLogFile(), line); } catch (_) {}
 }
+
+export const logger = {
+  info: logInfo,
+  warn: logWarn,
+  error: logError,
+  trade: logTrade
+};
