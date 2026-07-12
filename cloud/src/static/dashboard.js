@@ -901,14 +901,6 @@
     const btnStart = document.getElementById('toggle-bot-btn');
     if (btnStart) {
       btnStart.addEventListener('click', async () => {
-        // Fetch current status from the badge to toggle
-        const currentStatusStr = document.getElementById('status-badge').className;
-        // Wait, the status is not in the class of status-badge, it's in currentStatus variable!
-        // But the user's code says:
-        // const currentStatus = document.getElementById('status-badge').className;
-        // const isRunning = currentStatus.includes('running');
-        // Let's stick strictly to user's code, but wait, status-badge class might not have 'running'. The status-dot has 'running'.
-        // So I'll use the currentStatus variable from JS closure!
         const isRunning = currentStatus === 'RUNNING';
 
         if (!confirm(isRunning ? 'Stop Autonomous Trading?' : 'Start Autonomous Trading?')) return;

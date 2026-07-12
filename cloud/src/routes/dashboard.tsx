@@ -26,53 +26,59 @@ dashboard.get('/', (c) => {
 
   <!-- Top Navigation -->
   <header class="topbar">
-    <div style="max-width: 1600px; margin: 0 auto; width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 0 24px;">
+    <div class="brand-container">
       <div class="brand">
         <div class="brand-icon">T</div>
         TheFinalOption<span style="color: var(--text-secondary); font-weight: 400;">/</span>Terminal
       </div>
-      <div class="controls" style="display: flex; align-items: center; gap: 8px;">
-        <a href="/api/auth/login" class="btn btn-outline" title="Refresh Token">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4" /><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4" /></svg>
-        </a>
-        <button id="manual-ce-btn" class="btn btn-outline" style="color: var(--accent-success); border-color: rgba(16, 185, 129, 0.2);" title="Force Buy CE">
-          BUY CE
-        </button>
-        <button id="manual-pe-btn" class="btn btn-outline" style="color: var(--accent-danger); border-color: rgba(239, 68, 68, 0.2);" title="Force Buy PE">
-          BUY PE
-        </button>
-        <button id="toggle-bot-btn" class="btn btn-outline">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M6 4v16a1 1 0 0 0 1.524 .852l13 -8a1 1 0 0 0 0 -1.704l-13 -8a1 1 0 0 0 -1.524 .852z"/></svg>
-          <span style="margin-left: 4px;">Start Bot</span>
-        </button>
-        <button id="emergency-btn" class="btn btn-danger">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4" /><path d="M10.363 3.591l-8.106 13.534a1.914 1.914 0 0 0 1.636 2.871h16.214a1.914 1.914 0 0 0 1.636 -2.87l-8.106 -13.536a1.914 1.914 0 0 0 -3.274 0z" /><path d="M12 16h.01" /></svg>
-          <span style="margin-left: 4px;">EMERGENCY SQUARE-OFF</span>
-        </button>
-        <div class="metric-card" style="padding: 4px 10px; flex-direction: row; align-items: center; margin: 0; background: transparent; border: 1px solid var(--border-color); gap: 4px;">
-          <span class="metric-label" style="font-size: 10px; margin: 0;">MARG</span>
-          <span id="margin-value" class="mono" style="font-size: 12px; font-weight: 600;">---</span>
+      
+      <div class="brand-metrics">
+        <div style="display: flex; align-items: center; gap: 4px;">
+          <span style="letter-spacing: 0.05em; color: var(--text-secondary);">MARG</span>
+          <span id="margin-value" style="font-weight: 600; color: var(--text-primary);">---</span>
         </div>
-        <div class="metric-card" style="padding: 4px 10px; flex-direction: row; align-items: center; margin: 0; background: transparent; border: 1px solid var(--border-color); gap: 6px;">
-          <span class="metric-label" style="font-size: 10px; margin: 0;">API FUEL</span>
-          <div style="width: 50px; height: 4px; background: rgba(255,255,255,0.1); border-radius: 99px; overflow: hidden; display: flex;">
-            <div id="api-fuel-fill" style="height: 100%; width: 0%; background: var(--text-muted); transition: width 0.3s, background-color 0.3s;"></div>
+        <span style="color: var(--border-color);">|</span>
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <span style="letter-spacing: 0.05em; color: var(--text-secondary);">API FUEL</span>
+          <div style="width: 50px; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden;">
+            <div id="api-fuel-fill" style="width: 0%; height: 100%; background: var(--accent-success); transition: width 0.3s ease;"></div>
           </div>
-          <span id="api-fuel-text" class="mono" style="font-size: 11px; font-weight: 600; min-width: 45px; text-align: right;">0/200</span>
+          <span id="api-fuel-text" style="color: var(--text-primary);">0/200</span>
         </div>
-        <button id="mode-toggle" class="btn btn-outline" style="display: flex; align-items: center; gap: 6px; padding: 4px 10px;" title="Toggle Trading Mode">
-          <span id="mode-icon">🧪</span>
-          <span id="mode-text" class="mono" style="font-size: 11px; font-weight: 600; text-transform: uppercase;">Mode: PAPER</span>
-        </button>
-        <button id="voice-toggle" class="btn btn-outline" style="display: flex; align-items: center; gap: 6px; padding: 4px 10px;" title="Toggle Voice Telemetry">
-          <span id="voice-icon">🔇</span>
-          <span id="voice-text" class="mono" style="font-size: 11px; font-weight: 600; text-transform: uppercase;">Voice: Off</span>
-        </button>
-        <div id="status-badge" style="display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 99px; background: rgba(255,255,255,0.05); margin-left: 4px;">
-          <span id="status-dot" style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--text-secondary);"></span>
-          <span id="status-text" class="mono" style="font-size: 12px; font-weight: 600;">STOPPED</span>
+        <span style="color: var(--border-color);">|</span>
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <span id="status-dot" style="width: 6px; height: 6px; border-radius: 50%; background: var(--text-secondary); transition: background 0.3s ease;"></span>
+          <span id="status-text" style="font-weight: 500; color: var(--text-primary);">STOPPED</span>
         </div>
       </div>
+    </div>
+
+    <div class="controls" style="display: flex; align-items: center; gap: 8px;">
+      <a href="/api/auth/login" class="btn btn-outline" title="Refresh Token">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4" /><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4" /></svg>
+      </a>
+      <button id="manual-ce-btn" class="btn btn-outline" style="color: var(--accent-success); border-color: rgba(16, 185, 129, 0.2);" title="Force Buy CE">
+        BUY CE
+      </button>
+      <button id="manual-pe-btn" class="btn btn-outline" style="color: var(--accent-danger); border-color: rgba(239, 68, 68, 0.2);" title="Force Buy PE">
+        BUY PE
+      </button>
+      <button id="toggle-bot-btn" class="btn btn-outline">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M6 4v16a1 1 0 0 0 1.524 .852l13 -8a1 1 0 0 0 0 -1.704l-13 -8a1 1 0 0 0 -1.524 .852z"/></svg>
+        <span style="margin-left: 4px;">Start Bot</span>
+      </button>
+      <button id="emergency-btn" class="btn btn-danger">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4" /><path d="M10.363 3.591l-8.106 13.534a1.914 1.914 0 0 0 1.636 2.871h16.214a1.914 1.914 0 0 0 1.636 -2.87l-8.106 -13.536a1.914 1.914 0 0 0 -3.274 0z" /><path d="M12 16h.01" /></svg>
+        <span style="margin-left: 4px;">EMERGENCY SQUARE-OFF</span>
+      </button>
+      <button id="mode-toggle" class="btn btn-outline" style="display: flex; align-items: center; gap: 6px; padding: 4px 10px;" title="Toggle Trading Mode">
+        <span id="mode-icon">🧪</span>
+        <span id="mode-text" class="mono" style="font-size: 11px; font-weight: 600; text-transform: uppercase;">Mode: PAPER</span>
+      </button>
+      <button id="voice-toggle" class="btn btn-outline" style="display: flex; align-items: center; gap: 6px; padding: 4px 10px;" title="Toggle Voice Telemetry">
+        <span id="voice-icon">🔇</span>
+        <span id="voice-text" class="mono" style="font-size: 11px; font-weight: 600; text-transform: uppercase;">Voice: Off</span>
+      </button>
     </div>
   </header>
 

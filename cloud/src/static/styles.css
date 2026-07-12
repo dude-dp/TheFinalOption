@@ -33,7 +33,8 @@ body {
   font-family: var(--font-sans); 
   -webkit-font-smoothing: antialiased; 
   line-height: 1.5; 
-  padding: 24px; 
+  margin: 0; 
+  padding: 0; /* Removed the 24px padding to allow edge-to-edge navbar */
   min-height: 100vh; 
 }
 
@@ -43,23 +44,42 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.02em; }
 .text-green { color: var(--accent-success); }
 .text-red { color: var(--accent-danger); }
 
-/* Layout Structure */
-.dashboard-wrapper { max-width: 1600px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; padding: 24px; }
+/* Dashboard Content Constraints */
+.dashboard-wrapper { 
+  max-width: 1600px; 
+  margin: 0 auto; 
+  padding: 24px; 
+  display: flex; 
+  flex-direction: column; 
+  gap: 24px; 
+}
 
-/* Top Navigation */
+/* Redesigned Edge-to-Edge Sticky Topbar */
 .topbar { 
-  position: sticky; top: 0; z-index: 100;
-  width: 100%;
-  padding: 16px 0; 
-  background: rgba(10, 10, 10, 0.75); 
-  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  position: sticky; 
+  top: 0; 
+  z-index: 1000;
+  display: flex; 
+  justify-content: space-between; 
+  align-items: center; 
+  padding: 12px 24px; 
+  background: rgba(10, 10, 10, 0.85); 
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--border-color); 
 }
-.brand { display: flex; align-items: center; gap: 12px; font-size: 1.125rem; font-weight: 600; letter-spacing: -0.02em; }
+
+/* Compact Brand & Metrics Alignment */
+.brand-container { display: flex; flex-direction: column; gap: 4px; }
+.brand { display: flex; align-items: center; gap: 10px; font-size: 1.125rem; font-weight: 600; letter-spacing: -0.02em; }
 .brand-icon { 
   background: var(--text-primary); color: var(--bg-main); 
-  width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; 
-  border-radius: var(--radius-sm); font-weight: 700; font-size: 14px; 
+  width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; 
+  border-radius: var(--radius-sm); font-weight: 700; font-size: 13px; 
+}
+.brand-metrics { 
+  display: flex; align-items: center; gap: 12px; 
+  font-size: 0.7rem; font-family: var(--font-mono); color: var(--text-secondary); 
 }
 .controls { display: flex; gap: 12px; }
 
