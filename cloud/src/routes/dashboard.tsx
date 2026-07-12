@@ -57,12 +57,6 @@ dashboard.get('/', (c) => {
       <a href="/api/auth/login" class="btn btn-outline" title="Refresh Token">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4" /><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4" /></svg>
       </a>
-      <button id="manual-ce-btn" class="btn btn-outline" style="color: var(--accent-success); border-color: rgba(16, 185, 129, 0.2);" title="Force Buy CE">
-        BUY CE
-      </button>
-      <button id="manual-pe-btn" class="btn btn-outline" style="color: var(--accent-danger); border-color: rgba(239, 68, 68, 0.2);" title="Force Buy PE">
-        BUY PE
-      </button>
       <button id="toggle-bot-btn" class="btn btn-outline">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M6 4v16a1 1 0 0 0 1.524 .852l13 -8a1 1 0 0 0 0 -1.704l-13 -8a1 1 0 0 0 -1.524 .852z"/></svg>
         <span style="margin-left: 4px;">Start Bot</span>
@@ -118,6 +112,24 @@ dashboard.get('/', (c) => {
       <section class="bento-item chart-section">
         <div class="chart-header-overlay">
           <h2 class="bento-title">Market Data</h2>
+          
+          <div class="chart-actions">
+            <button id="manual-ce-btn" class="btn btn-buy-ce">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 17l6 -6l4 4l8 -8" />
+                <path d="M14 7l7 0l0 7" />
+              </svg>
+              Buy CE
+            </button>
+            
+            <button id="manual-pe-btn" class="btn btn-buy-pe">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 7l6 6l4 -4l8 8" />
+                <path d="M21 10l0 7l-7 0" />
+              </svg>
+              Buy PE
+            </button>
+          </div>
         </div>
         <div id="tv-chart-container" style="width: 100%; flex: 1; min-height: 400px;"></div>
       </section>
@@ -146,6 +158,33 @@ dashboard.get('/', (c) => {
                 <span class="metric-label">Avg Price</span>
                 <span id="pos-avg" class="metric-value" style="font-size: 1.25rem;">₹0.00</span>
               </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Quant Analytics -->
+      <section class="bento-item analytics-section">
+        <div class="bento-header" style="margin-bottom: 16px;">
+          <h2 class="bento-title">Quant Analytics</h2>
+          <span class="mono" style="font-size: 12px; color: var(--accent-info); border: 1px solid rgba(59, 130, 246, 0.3); padding: 2px 6px; border-radius: 4px; background: rgba(59, 130, 246, 0.1);">1m</span>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; flex-grow: 1; align-content: space-between;">
+          <div class="metric-card" style="padding: 12px;">
+            <span class="metric-label">PCR</span>
+            <span id="metric-pcr" class="metric-value" style="font-size: 1.25rem;">--</span>
+          </div>
+          <div class="metric-card" style="padding: 12px;">
+            <span class="metric-label">MACD Hist</span>
+            <span id="metric-macd" class="metric-value text-green" style="font-size: 1.25rem;">--</span>
+          </div>
+          <div class="metric-card" style="padding: 12px;">
+            <span class="metric-label">ATR (Vol)</span>
+            <span id="metric-atr" class="metric-value" style="font-size: 1.25rem;">--</span>
+          </div>
+          <div class="metric-card" style="padding: 12px;">
+            <span class="metric-label">ADX (Trend)</span>
+            <span id="metric-adx" class="metric-value" style="font-size: 1.25rem;">--</span>
           </div>
         </div>
       </section>
@@ -179,11 +218,12 @@ dashboard.get('/', (c) => {
                 <th>Qty</th>
                 <th>Price</th>
                 <th>Status</th>
+                <th>PnL</th>
               </tr>
             </thead>
             <tbody id="ledger-body">
               <tr>
-                 <td colspan="6" style="text-align: center; color: var(--text-secondary);">Waiting for orders...</td>
+                 <td colspan="7" style="text-align: center; color: var(--text-secondary);">Waiting for orders...</td>
               </tr>
             </tbody>
           </table>

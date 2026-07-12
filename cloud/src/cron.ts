@@ -225,6 +225,29 @@ export async function handleScheduled(env: Env): Promise<void> {
     currentMacd = macdResult.current;
     prevMacd = macdResult.previous;
 
+    // Fetch option chain to calculate PCR
+    let pcrVal: number | undefined;
+    try {
+      const rollover = shouldRollExpiry(new Date(), config.rolloverOnExpiry);
+      const expiry = getNearestWeeklyExpiry(new Date(), rollover);
+      const chain = await getOptionChain(accessToken, expiry);
+      pcrVal = calculatePCR(chain);
+    } catch (e) {
+      // Fail silently
+    }
+
+    state.indicators = {
+      pcr: pcrVal,
+      macd: currentMacd,
+      macdSignal: macdResult.signalLine[macdResult.signalLine.length - 1],
+      macdHist: macdResult.histogram[macdResult.histogram.length - 1],
+      atr: currentAtr,
+      adx: currentAdx
+    };
+
+    // Save state with updated indicators
+    await saveBotState(env.TRADING_KV, state);
+
     // DETECT SIGNAL
     const signal = detectZeroCrossover(currentMacd, prevMacd);
 

@@ -111,9 +111,53 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.02em; }
 .bento-title { font-size: 1rem; color: var(--text-secondary); font-weight: 500; display: flex; align-items: center; gap: 8px; }
 
 /* Specific Panel Spans */
-.chart-section { grid-column: span 9; grid-row: span 2; min-height: 550px; padding: 0; }
-.chart-header-overlay { position: absolute; top: 24px; left: 24px; z-index: 10; pointer-events: none; }
+.chart-section { 
+  grid-column: span 9; 
+  grid-row: span 2; /* Forces chart to match the height of 2 stacked panels on the right */
+  min-height: 640px; 
+  padding: 0; 
+}
+/* Update the chart overlay to stack the title and buttons */
+.chart-header-overlay { 
+  position: absolute; 
+  top: 24px; 
+  left: 24px; 
+  z-index: 10; 
+  pointer-events: none; /* Allows chart interaction through the div */
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Container for the in-chart buttons */
+.chart-actions {
+  display: flex;
+  gap: 8px;
+  pointer-events: auto; /* Re-enables clicking on the buttons */
+}
+
+/* Premium In-Chart Trade Buttons */
+.btn-buy-ce { 
+  background: var(--accent-success-bg); 
+  color: var(--accent-success); 
+  border-color: rgba(16, 185, 129, 0.25); 
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  cursor: pointer;
+}
+.btn-buy-ce:hover { background: rgba(16, 185, 129, 0.2); }
+
+.btn-buy-pe { 
+  background: var(--accent-danger-bg); 
+  color: var(--accent-danger); 
+  border-color: rgba(239, 68, 68, 0.25); 
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  cursor: pointer;
+}
+.btn-buy-pe:hover { background: rgba(239, 68, 68, 0.2); }
 .position-section { grid-column: span 3; }
+.analytics-section { grid-column: span 3; } /* Newly added */
 .logs-section { grid-column: span 6; height: 380px; }
 .ledger-section { grid-column: span 6; height: 380px; }
 .drawdown-section { grid-column: span 8; min-height: 380px; }
@@ -149,11 +193,11 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.02em; }
 /* Responsive Adjustments */
 @media (max-width: 1200px) {
   .chart-section { grid-column: span 12; }
-  .position-section { grid-column: span 12; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .position-section, .analytics-section { grid-column: span 12; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 }
 @media (max-width: 768px) {
   .logs-section, .ledger-section { grid-column: span 12; }
-  .position-section { grid-template-columns: 1fr; }
+  .position-section, .analytics-section { grid-template-columns: 1fr; }
 }
 
 /* Journal Modal Overlay */

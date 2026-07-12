@@ -527,6 +527,33 @@
     // Live rate metrics from daemon
     updateFuelGauge(data.daemonMetrics, data.daemonAlive);
 
+    // Update Quant Analytics indicators
+    if (data.indicators) {
+      const pcrEl = document.getElementById('metric-pcr');
+      const macdEl = document.getElementById('metric-macd');
+      const atrEl = document.getElementById('metric-atr');
+      const adxEl = document.getElementById('metric-adx');
+
+      if (pcrEl) {
+        pcrEl.innerText = data.indicators.pcr !== undefined && data.indicators.pcr !== null ? data.indicators.pcr.toFixed(2) : '--';
+      }
+      if (macdEl) {
+        const hist = data.indicators.macdHist || 0;
+        macdEl.innerText = hist.toFixed(2);
+        if (hist >= 0) {
+          macdEl.className = 'metric-value text-green';
+        } else {
+          macdEl.className = 'metric-value text-red';
+        }
+      }
+      if (atrEl) {
+        atrEl.innerText = data.indicators.atr !== undefined && data.indicators.atr !== null ? data.indicators.atr.toFixed(2) : '--';
+      }
+      if (adxEl) {
+        adxEl.innerText = data.indicators.adx !== undefined && data.indicators.adx !== null ? data.indicators.adx.toFixed(2) : '--';
+      }
+    }
+
     // Active position tracker
     const noPosEl = document.getElementById('no-position');
     const activePosEl = document.getElementById('active-position');

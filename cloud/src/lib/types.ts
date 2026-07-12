@@ -42,6 +42,14 @@ export interface BotState {
   lastProfitPct?: number;
   lastVoiceAlert?: string;
   lastVoiceAlertId?: string;
+  indicators?: {
+    pcr?: number;
+    macd?: number;
+    macdSignal?: number;
+    macdHist?: number;
+    atr?: number;
+    adx?: number;
+  };
 }
 
 export interface ActivePosition {
