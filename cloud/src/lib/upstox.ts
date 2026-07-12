@@ -285,3 +285,42 @@ export async function notifyDiscord(webhookUrl: string | undefined, message: str
     console.error('Discord webhook failed:', error);
   }
 }
+
+/**
+ * Fetches historical 1-minute candles for a specific date range.
+ * Dates must be in YYYY-MM-DD format.
+ */
+export async function fetchHistoricalCandlesRange(accessToken: string, fromDate: string, toDate: string): Promise<any[]> {
+  const instrumentKey = encodeURIComponent('NSE_INDEX|Nifty 50');
+  // Upstox URL format: /v2/historical-candle/{instrumentKey}/{interval}/{to_date}/{from_date}
+  const url = `https://api.upstox.com/v2/historical-candle/${instrumentKey}/1minute/${toDate}/${fromDate}`;
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Accept': 'application/json',
+      'Authorization': `Bearer ${accessToken}`
+    }
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Upstox API Error: ${response.status} - ${errorText}`);
+  }
+
+  const data: any = await response.json();
+  if (data.status !== 'success' || !data.data || !data.data.candles) {
+    return [];
+  }
+
+  // Upstox historical format is an array of arrays: [timestamp, open, high, low, close, volume, oi]
+  // We need to map it to our standard object and convert the timestamp to a standard ISO string.
+  return data.data.candles.map((c: any[]) => ({
+    timestamp: new Date(c[0]).toISOString(),
+    open: c[1],
+    high: c[2],
+    low: c[3],
+    close: c[4],
+    volume: c[5] || 0
+  })).reverse(); // Upstox returns newest first; reverse to chronological ASC
+}

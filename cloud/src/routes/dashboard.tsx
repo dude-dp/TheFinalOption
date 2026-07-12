@@ -17,6 +17,7 @@ dashboard.get('/', (c) => {
   <title>TheFinalOption Terminal</title>
   <link rel="stylesheet" href="/styles.css">
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
   <!-- Toast Container -->
@@ -144,6 +145,38 @@ dashboard.get('/', (c) => {
               </tr>
             </tbody>
           </table>
+        </div>
+      </section>
+
+      <!-- System Drawdown -->
+      <section class="bento-item drawdown-section">
+        <div class="bento-header">
+          <h2 class="bento-title">System Drawdown (Peak-to-Trough)</h2>
+          <span class="mono" style="font-size: 12px; color: var(--accent-danger); border: 1px solid var(--accent-danger-bg); padding: 2px 6px; border-radius: 4px;">Psychology Anchor</span>
+        </div>
+        <div style="position: relative; flex: 1; min-height: 300px; width: 100%;">
+          <canvas id="drawdownChart"></canvas>
+        </div>
+      </section>
+
+      <!-- Time of Day Analytics -->
+      <section class="bento-item time-of-day-section">
+        <div class="bento-header">
+          <h2 class="bento-title">Time of Day</h2>
+        </div>
+        <div style="position: relative; flex: 1; min-height: 300px; width: 100%;">
+          <canvas id="timeOfDayChart"></canvas>
+        </div>
+      </section>
+
+      <!-- Execution Slippage Heatmap -->
+      <section class="bento-item slippage-section">
+        <div class="bento-header">
+          <h2 class="bento-title">Execution Slippage Heatmap</h2>
+          <div id="slippage-gauge" class="mono" style="font-size: 12px; color: var(--text-secondary); border: 1px solid var(--border-color); padding: 2px 6px; border-radius: 4px;">Loading...</div>
+        </div>
+        <div style="position: relative; flex: 1; min-height: 250px; width: 100%;">
+          <canvas id="slippageChart"></canvas>
         </div>
       </section>
 

@@ -2,6 +2,7 @@
 import WebSocket from 'ws';
 import protobuf from 'protobufjs';
 import { CandleAggregator } from './aggregator';
+import { TickArchiver } from './archiver';
 
 // Import local MACD if available or mock it for compilation
 // Assuming macd is moved to a local lib/macd.ts
@@ -15,6 +16,7 @@ try {
 export class UpstoxWSClient {
   private ws: WebSocket | null = null;
   private aggregator = new CandleAggregator();
+  private archiver = new TickArchiver();
   private token: string;
   private instrumentKey = 'NSE_INDEX|Nifty 50'; // Spot Index
 
@@ -72,6 +74,11 @@ export class UpstoxWSClient {
               ltp: feed.fullFeed.ff.marketFF.ltpc.ltp,
               timestamp: Date.now() // Upstox feed also contains exchange timestamp
             };
+
+            // ==========================================
+            // INSTITUTIONAL TICK ARCHIVAL (Zero-Latency)
+            // ==========================================
+            this.archiver.recordTick(tick); 
 
             // Pass to aggregator
             const closedCandles = this.aggregator.processTick(tick);

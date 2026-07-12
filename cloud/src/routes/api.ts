@@ -7,7 +7,7 @@ import { Hono } from 'hono';
 import { basicAuth } from 'hono/basic-auth';
 import type { Env, BotState, ConfirmRequest, OrderPayload, PollResponse } from '../lib/types';
 import { KV_KEYS } from '../lib/types';
-import { getAuthorizationUrl, exchangeCodeForToken, fetchNiftyCandles, getOptionChain, getLTP, getFundsAndMargin } from '../lib/upstox';
+import { getAuthorizationUrl, exchangeCodeForToken, fetchNiftyCandles, getOptionChain, getLTP, getFundsAndMargin, fetchHistoricalCandlesRange } from '../lib/upstox';
 import { getPreferredStrikes, shouldRollExpiry, getNearestWeeklyExpiry } from '../lib/strike';
 import { calculateLots, lotsToQuantity } from '../lib/lot-sizing';
 import { getTodayDateStr, generateCorrelationId } from '../lib/time';
@@ -598,49 +598,79 @@ api.get('/api/debug-time', (c) => {
 });
 
 /** GET /api/chart-data — NIFTY OHLC Candles + MACD */
-api.get('/api/chart-data', async (c) => {
-  // 1. Get MACD telemetry from your D1 database
+api.get('/api/chart-data', dashboardAuth, async (c) => {
+  // 1. Fetch the most recent 3000 candles (Roughly 8 trading days) from D1.
+  // By ordering DESC and limiting, we ALWAYS get data, even on weekends.
   const rows = await c.env.TRADING_DB.prepare(
+    `SELECT * FROM nifty_candles ORDER BY timestamp DESC LIMIT 3000`
+  ).all();
+
+  // Reverse them back to ASC so the chart draws from left to right
+  let spots = rows.results ? rows.results.reverse() : [];
+
+  // 2. Fetch MACD telemetry for the dashboard signals
+  const macdRows = await c.env.TRADING_DB.prepare(
     `SELECT timestamp, nifty_spot, macd_line FROM system_telemetry 
-     WHERE date(timestamp) = ? ORDER BY timestamp`
-  ).bind(getTodayDateStr()).all();
+     ORDER BY timestamp DESC LIMIT 3000`
+  ).all();
 
-  const telemetryData = rows.results || [];
-  let spots: any[] = [];
-
-  // 2. Try to fetch rich OHLC candles directly from Upstox
-  const accessToken = await c.env.TRADING_KV.get(KV_KEYS.UPSTOX_ACCESS_TOKEN);
-  if (accessToken) {
-    try {
-      const upstoxCandles = await fetchNiftyCandles(accessToken, getTodayDateStr());
-      spots = upstoxCandles.map(c => ({
-        timestamp: c.timestamp,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close
-      }));
-    } catch (e) {
-      console.warn("Failed to fetch Upstox candles, falling back to telemetry.");
-    }
-  }
-
-  // 3. Fallback: If Upstox fetch fails, synthesize flat candles from telemetry 
-  // to prevent the dashboard from breaking.
-  if (spots.length === 0) {
-    spots = telemetryData.map((r: any) => ({
-      timestamp: r.timestamp,
-      open: r.nifty_spot,
-      high: r.nifty_spot,
-      low: r.nifty_spot,
-      close: r.nifty_spot
-    }));
-  }
+  const macdResults = macdRows.results ? macdRows.results.reverse() : [];
 
   return c.json({
     spots: spots,
-    macd: telemetryData.map((r: any) => ({ timestamp: r.timestamp, value: r.macd_line })),
+    macd: macdResults.map((r: any) => ({ timestamp: r.timestamp, value: r.macd_line })),
   });
+});
+
+/** 
+ * POST /api/admin/backfill 
+ * Downloads the last 30 days of 1-min candles and saves them to D1 
+ */
+api.post('/api/admin/backfill', dashboardAuth, async (c) => {
+  const accessToken = await c.env.TRADING_KV.get(KV_KEYS.UPSTOX_ACCESS_TOKEN);
+  if (!accessToken) return c.json({ error: 'No Upstox token found. Please login first.' }, 401);
+
+  // Calculate dates (Today and 30 days ago)
+  const today = new Date();
+  const past = new Date();
+  past.setDate(today.getDate() - 30);
+
+  const toDateStr = today.toISOString().split('T')[0];
+  const fromDateStr = past.toISOString().split('T')[0];
+
+  try {
+    const candles = await fetchHistoricalCandlesRange(accessToken, fromDateStr, toDateStr);
+    
+    if (candles.length === 0) {
+      return c.json({ error: 'No data returned from Upstox' }, 400);
+    }
+
+    // D1 accepts a maximum of 100 statements per batch operation.
+    // We must chunk the thousands of candles into groups of 100.
+    const statements = [];
+    for (const candle of candles) {
+      statements.push(
+        c.env.TRADING_DB.prepare(
+          `INSERT OR IGNORE INTO nifty_candles (timestamp, open, high, low, close, volume) 
+           VALUES (?, ?, ?, ?, ?, ?)`
+        ).bind(candle.timestamp, candle.open, candle.high, candle.low, candle.close, candle.volume)
+      );
+    }
+
+    const CHUNK_SIZE = 100;
+    for (let i = 0; i < statements.length; i += CHUNK_SIZE) {
+      const chunk = statements.slice(i, i + CHUNK_SIZE);
+      await c.env.TRADING_DB.batch(chunk);
+    }
+
+    return c.json({ 
+      success: true, 
+      message: `Successfully backfilled ${candles.length} historical candles from ${fromDateStr} to ${toDateStr}.` 
+    });
+
+  } catch (error: any) {
+    return c.json({ error: error.message }, 500);
+  }
 });
 
 /** GET /api/summary — Daily AI summary */
@@ -749,6 +779,100 @@ api.get('/oauth/callback', async (c) => {
   } catch (e: any) {
     return c.text(`Auth failed: ${e.message}`, 500);
   }
+});
+
+api.get('/api/analytics/drawdown', dashboardAuth, async (c) => {
+  // 1. Fetch daily realized PnL from the order ledger
+  const query = `
+    SELECT 
+      date(updated_at) as trade_date,
+      SUM(pnl) as daily_pnl
+    FROM order_ledger 
+    WHERE pnl IS NOT NULL AND pnl != 0
+    GROUP BY trade_date
+    ORDER BY trade_date ASC
+  `;
+  
+  try {
+    const rows = await c.env.TRADING_DB.prepare(query).all();
+    
+    let cumulativePnL = 0;
+    let highWaterMark = 0;
+    const drawdownData = [];
+
+    // 2. Step through time to build the Equity Curve and Drawdown
+    for (const row of rows.results || []) {
+      cumulativePnL += (row.daily_pnl as number);
+      
+      // If we hit a new all-time high, update the High Water Mark
+      if (cumulativePnL > highWaterMark) {
+        highWaterMark = cumulativePnL;
+      }
+      
+      // Drawdown is the negative distance from the peak
+      const drawdown = cumulativePnL - highWaterMark; 
+      
+      drawdownData.push({
+        date: row.trade_date,
+        drawdown: drawdown, // Will always be <= 0
+        cumulative: cumulativePnL,
+        peak: highWaterMark
+      });
+    }
+    
+    return c.json({ data: drawdownData });
+  } catch (error) {
+    console.error("Drawdown calculation failed:", error);
+    return c.json({ data: [] });
+  }
+});
+
+api.get('/api/analytics/slippage', dashboardAuth, async (c) => {
+  // Fetch filled orders that have both expected and execution prices
+  const rows = await c.env.TRADING_DB.prepare(
+    `SELECT 
+       date(created_at) as date, 
+       created_at,
+       transaction_type, 
+       order_price, 
+       execution_price 
+     FROM order_ledger 
+     WHERE order_status = 'FILLED' 
+       AND execution_price > 0 
+       AND order_price > 0
+     ORDER BY created_at ASC LIMIT 100`
+  ).all();
+
+  let totalSlippagePct = 0;
+  let count = 0;
+  const timeline: any[] = [];
+
+  for (const row of rows.results || []) {
+    let slippagePct = 0;
+    
+    // Normalize Slippage: Positive values = Bad (Lost Money), Negative values = Good (Price Improvement)
+    if (row.transaction_type === 'BUY') {
+      // Bought for higher than expected = Bad
+      slippagePct = (((row.execution_price as number) - (row.order_price as number)) / (row.order_price as number)) * 100;
+    } else {
+      // Sold for lower than expected = Bad
+      slippagePct = (((row.order_price as number) - (row.execution_price as number)) / (row.order_price as number)) * 100;
+    }
+    
+    totalSlippagePct += slippagePct;
+    count++;
+    
+    timeline.push({
+      time: new Date((row as any).created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      date: row.date,
+      slippage: slippagePct,
+      type: row.transaction_type
+    });
+  }
+
+  const avgSlippage = count > 0 ? (totalSlippagePct / count) : 0;
+  
+  return c.json({ avgSlippage, timeline });
 });
 
 api.get('/api/analytics/time-of-day', dashboardAuth, async (c) => {

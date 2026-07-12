@@ -43,6 +43,7 @@
 
   let tvChart = null;
   let candleSeries = null;
+  let macdSeries = null;
   let currentStatus = 'STOPPED';
 
   function initTradingViewChart() {
@@ -52,7 +53,7 @@
     // 1. Initialize the Chart with a custom deep-dark aesthetic
     tvChart = window.LightweightCharts.createChart(container, {
       layout: {
-        background: { type: 'solid', color: '#301934' }, // Deep aesthetic background
+        background: { type: 'solid', color: 'transparent' }, // Transparent background
         textColor: '#D9D9D9',
       },
       grid: {
@@ -79,7 +80,20 @@
         borderColor: 'rgba(255, 255, 255, 0.1)',
         timeVisible: true,
         secondsVisible: false,
+        tickMarkFormatter: (time, tickMarkType, locale) => {
+          const date = new Date(time * 1000);
+          const timeStr = date.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
+          const dateStr = date.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric' });
+          // If it's a new day/month, show date instead of time, otherwise time.
+          return (tickMarkType === 2 || tickMarkType === 3) ? dateStr : timeStr;
+        }
       },
+      localization: {
+        timeFormatter: (time) => {
+          const date = new Date(time * 1000);
+          return date.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+        }
+      }
     });
 
     // 2. Create the Candlestick Series
@@ -92,6 +106,18 @@
       wickDownColor: '#ff1744',
     });
 
+    macdSeries = tvChart.addLineSeries({
+      color: '#2962FF',
+      lineWidth: 2,
+      crosshairMarkerVisible: false,
+      priceScaleId: 'left', // Render on left scale to avoid squishing the price candles
+    });
+
+    tvChart.priceScale('left').applyOptions({
+      visible: true,
+      borderColor: 'rgba(255, 255, 255, 0.1)',
+    });
+
     // 3. Make the chart responsive to window resizing
     new ResizeObserver(entries => {
       if (entries.length === 0 || entries[0].target !== container) { return; }
@@ -100,11 +126,12 @@
     }).observe(container);
   }
 
-  function loadHistoricalCandles(historicalData) {
+  function loadHistoricalCandles(historicalData, macdData) {
     if (candleSeries && historicalData) {
-      // Data format expected: { time, open, high, low, close }
-      // The old /api/chart-data might not return it exactly like this.
       candleSeries.setData(historicalData);
+    }
+    if (macdSeries && macdData) {
+      macdSeries.setData(macdData);
     }
   }
 
@@ -120,6 +147,14 @@
     };
 
     candleSeries.update(tvTick);
+    
+    // Also update MACD if present
+    if (macdSeries && latestTick.macd_line !== undefined) {
+      macdSeries.update({
+        time: tvTick.time,
+        value: latestTick.macd_line
+      });
+    }
   }
   let lastActivePosition = null;
   let lastActiveHedgePosition = null;
@@ -445,7 +480,16 @@
       }));
       // Sort strictly ascending
       historicalData.sort((a, b) => a.time - b.time);
-      loadHistoricalCandles(historicalData);
+      
+      let macdData = [];
+      if (data.macd && data.macd.length > 0) {
+        macdData = data.macd.map(m => ({
+          time: Math.floor(new Date(m.timestamp).getTime() / 1000),
+          value: m.value
+        })).sort((a, b) => a.time - b.time);
+      }
+
+      loadHistoricalCandles(historicalData, macdData);
       renderTVMarkers();
     }
   }

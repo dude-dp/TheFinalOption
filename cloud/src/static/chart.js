@@ -616,8 +616,159 @@
     }
   }
 
+  async function renderDrawdownChart() {
+    try {
+      const res = await fetch('/api/analytics/drawdown');
+      const json = await res.json();
+      
+      if (!json.data || json.data.length === 0) return;
+
+      const labels = json.data.map(d => d.date);
+      const drawdowns = json.data.map(d => d.drawdown); // These are negative values
+
+      const canvas = document.getElementById('drawdownChart');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      
+      // Create an institutional deep-red gradient for the mountain fill
+      const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+      gradient.addColorStop(0, 'rgba(255, 23, 68, 0.4)'); // Top (0 axis - lighter red)
+      gradient.addColorStop(1, 'rgba(255, 23, 68, 0.0)'); // Bottom (deepest drawdown - fades to dark)
+      
+      // @ts-ignore
+      new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: 'Drawdown from Peak (₹)',
+            data: drawdowns,
+            fill: true,
+            backgroundColor: gradient,
+            borderColor: '#ff1744',
+            borderWidth: 2,
+            pointRadius: 0, // Hide dots for a smooth mountain look
+            pointHitRadius: 10,
+            tension: 0.3 // Smooth curves
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            y: {
+              beginAtZero: true,
+              max: 0, // Forces the chart to hang from the top ceiling
+              grid: { color: 'rgba(255,255,255,0.05)' }
+            },
+            x: {
+              grid: { display: false },
+              ticks: { maxTicksLimit: 10, color: '#a0a0a0' }
+            }
+          },
+          plugins: {
+            tooltip: {
+              mode: 'index',
+              intersect: false,
+              callbacks: {
+                label: (ctx) => `Depth: ₹${ctx.parsed.y.toLocaleString('en-IN')}`
+              }
+            },
+            legend: { display: false }
+          },
+          interaction: {
+            mode: 'nearest',
+            axis: 'x',
+            intersect: false
+          }
+        }
+      });
+    } catch (err) {
+      console.error('Failed to load Drawdown chart', err);
+    }
+  }
+
+  async function renderSlippageChart() {
+    try {
+      const res = await fetch('/api/analytics/slippage');
+      const json = await res.json();
+      
+      if (!json.timeline || json.timeline.length === 0) return;
+
+      const gaugeEl = document.getElementById('slippage-gauge');
+      if (gaugeEl) {
+        if (json.avgSlippage > 1.0) {
+          gaugeEl.innerHTML = `⚠️ DANGER: ${json.avgSlippage.toFixed(2)}% AVG SLIPPAGE`;
+          gaugeEl.style.color = "var(--accent-danger)";
+          gaugeEl.style.border = "1px solid var(--accent-danger-bg)";
+        } else if (json.avgSlippage > 0.3) {
+          gaugeEl.innerHTML = `⚠️ WARNING: ${json.avgSlippage.toFixed(2)}% AVG SLIPPAGE`;
+          gaugeEl.style.color = "var(--accent-warning)";
+          gaugeEl.style.border = "1px solid var(--accent-warning-bg)";
+        } else {
+          gaugeEl.innerHTML = `✅ OPTIMAL: ${json.avgSlippage.toFixed(2)}% AVG SLIPPAGE`;
+          gaugeEl.style.color = "var(--accent-success)";
+          gaugeEl.style.border = "1px solid var(--accent-success-bg)";
+        }
+      }
+
+      const labels = json.timeline.map(d => `${d.type} at ${d.time}`);
+      const dataPoints = json.timeline.map(d => d.slippage);
+      
+      const bgColors = dataPoints.map(val => val > 0 ? 'rgba(255, 23, 68, 0.8)' : 'rgba(0, 230, 118, 0.8)');
+
+      const canvas = document.getElementById('slippageChart');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      
+      // @ts-ignore
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: 'Slippage (%)',
+            data: dataPoints,
+            backgroundColor: bgColors,
+            borderRadius: 4,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            y: {
+              title: { display: true, text: 'Slippage %', color: '#a0a0a0' },
+              grid: { color: 'rgba(255,255,255,0.05)' }
+            },
+            x: {
+              display: false,
+            }
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => {
+                  const val = ctx.parsed.y;
+                  return val > 0 
+                    ? `Lost ${val.toFixed(2)}% to latency` 
+                    : `Gained ${Math.abs(val).toFixed(2)}% price improvement`;
+                }
+              }
+            }
+          }
+        }
+      });
+    } catch (err) {
+      console.error('Failed to load Slippage chart', err);
+    }
+  }
+
   // Ensure Chart.js is loaded then run
   document.addEventListener('DOMContentLoaded', () => {
     renderTimeOfDayChart();
+    renderDrawdownChart();
+    renderSlippageChart();
   });
 })();

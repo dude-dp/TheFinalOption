@@ -282,12 +282,14 @@ async function bootstrapEngine() {
   process.on('SIGINT', () => {
     logInfo('🛑 Shutting down gracefully...');
     isRunning = false;
+    if (wsClient) (wsClient as any).archiver?.close(); // Flush CSV buffer to disk
     setTimeout(() => process.exit(0), 1000);
   });
 
   process.on('SIGTERM', () => {
     logInfo('🛑 SIGTERM received, shutting down...');
     isRunning = false;
+    if (wsClient) (wsClient as any).archiver?.close(); // Flush CSV buffer to disk
     setTimeout(() => process.exit(0), 1000);
   });
 }
