@@ -356,10 +356,15 @@ export async function haltTradingSession(workerUrl: string, secret: string, reas
 
 export class ExecutionEngine {
   private readonly MAX_ACCEPTABLE_SLIPPAGE_POINTS = 2.0;
-  
-  // 🚨 NEW: The minimum aggressive net tick delta required to validate a trade.
-  // Example: '30' means we need at least 30 MORE aggressive buys than sells inside the 1-minute candle.
-  private readonly MIN_REQUIRED_DELTA = 30; 
+
+  // Static delta floor kept for candle-close MACD confirmation (entry filter)
+  private readonly MIN_REQUIRED_DELTA = 30;
+
+  // 🚨 DYNAMIC TAPE READING THRESHOLDS (X-Ray Matrix)
+  private readonly MIN_TICK_VOLUME = 200;           // Ignore noise in first few seconds of a candle
+  private readonly ABSOLUTE_DELTA_FLOOR = 120;      // Hard minimum net tick imbalance
+  private readonly RELATIVE_DELTA_DOMINANCE = 0.35; // 35% of all ticks must be one-sided
+  private isExecutingTapeExit = false;
 
   constructor() {
     logInfo('[EXECUTOR] Execution Matrix initialized and standing by.');
@@ -400,6 +405,68 @@ export class ExecutionEngine {
   }
 
   /**
+   * 🔬 X-RAY VISION: Runs on every single WebSocket tick if a position is open.
+   * Calculates institutional exhaustion dynamically based on real-time volume.
+   * A static threshold would fire on noise — this one adapts to the candle's actual energy.
+   */
+  public async monitorLiveOrderFlow(liveDelta: number, liveVolume: number, currentLtp: number): Promise<void> {
+    const state = tracker.getState();
+
+    // Derive option type from the instrument token (Upstox tokens end in 'CE' or 'PE')
+    const token = tracker.activePositionToken;
+    const isLong  = token.endsWith('CE') || token.includes('CE-');
+    const isShort = token.endsWith('PE') || token.includes('PE-');
+
+    // Skip if: no active position, already in exit, or candle has too few ticks to be reliable
+    if (tracker.activePositionQty === 0 || this.isExecutingTapeExit || liveVolume < this.MIN_TICK_VOLUME) return;
+
+    // Dynamic threshold: the greater of the hard floor OR 35% of live candle volume
+    const dynamicThreshold = Math.max(
+      this.ABSOLUTE_DELTA_FLOOR,
+      liveVolume * this.RELATIVE_DELTA_DOMINANCE
+    );
+
+    if (isLong) {
+      // 📉 LONG EXHAUSTION: Holding CE. Look for massive sudden SELLING pressure.
+      if (liveDelta <= -dynamicThreshold) {
+        logWarn(
+          `[TAPE EXIT] 🚨 Institutional SELLING Wall Detected! ` +
+          `Live Volume: ${liveVolume} | Live Delta: ${liveDelta} (Threshold: -${dynamicThreshold.toFixed(0)}). ` +
+          `Front-running the dump!`
+        );
+        await this.executeOrderFlowExit('CE Tape Exhaustion / Absorption Trap');
+      }
+    } else if (isShort) {
+      // 📈 SHORT EXHAUSTION: Holding PE. Look for massive sudden BUYING pressure.
+      if (liveDelta >= dynamicThreshold) {
+        logWarn(
+          `[TAPE EXIT] 🚨 Institutional BUYING Wall Detected! ` +
+          `Live Volume: ${liveVolume} | Live Delta: ${liveDelta} (Threshold: +${dynamicThreshold.toFixed(0)}). ` +
+          `Front-running the short squeeze!`
+        );
+        await this.executeOrderFlowExit('PE Tape Exhaustion / Squeeze');
+      }
+    }
+  }
+
+  /**
+   * Bypasses standard trailing stops — executes a ruthless MARKET exit instantly.
+   */
+  private async executeOrderFlowExit(reason: string): Promise<void> {
+    this.isExecutingTapeExit = true;
+    try {
+      logInfo(`[EXECUTOR] Executing high-speed Tape Exit. Reason: ${reason}`);
+      await executeEmergencyMarketExit();
+      logInfo('[EXECUTOR] Tape Exit confirmed. Capital secured before chart breakdown.');
+    } catch (error) {
+      logError(`[EXECUTOR] Failure during Tape Exit: ${error}`);
+    } finally {
+      // Reset the lock after 5s buffer to prevent duplicate orders if exit had a hiccup
+      setTimeout(() => { this.isExecutingTapeExit = false; }, 5000);
+    }
+  }
+
+  /**
    * Master Entry Gatekeeper - Now upgraded with Institutional Order Flow (Delta)
    */
   public async evaluateAndExecuteTrade(
@@ -415,6 +482,9 @@ export class ExecutionEngine {
     if (!isSafeToTrade) return;
 
     if (!signal.startsWith('BUY')) return;
+
+    // Reset tape exit lock — a new MACD signal means a new trade opportunity
+    this.isExecutingTapeExit = false;
 
     logInfo(`[EXECUTOR] ${signal} signal generated. Evaluating Order Flow Convergence...`);
 

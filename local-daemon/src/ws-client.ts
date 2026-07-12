@@ -5,6 +5,7 @@ import { CandleAggregator } from './aggregator';
 import { TickArchiver } from './archiver';
 import { tracker } from './tracker';
 import { varianceEngine } from './variance.js';
+import { executor } from './executor.js';
 
 // Import local MACD if available or mock it for compilation
 let calculateMACD: any = null;
@@ -122,9 +123,19 @@ export class UpstoxWSClient {
             // 1. Measure Kinetic Velocity
             const volatilityState = varianceEngine.evaluateVelocity(tick.timestamp);
 
-            this.archiver.recordTick(tick); 
+            this.archiver.recordTick(tick);
+
+            // 1. Process the standard candle close logic
             const closedCandles = this.aggregator.processTick(tick);
-            
+
+            // 2. 🚀 X-RAY EXTRACTION: Get live, unfinished delta and volume from the active candle
+            const liveDelta = this.aggregator.getLiveDelta();
+            const liveVolume = this.aggregator.getLiveVolume();
+
+            // 3. Monitor active positions for institutional exhaustion on EVERY millisecond tick
+            executor.monitorLiveOrderFlow(liveDelta, liveVolume, tick.ltp);
+
+            // 4. Standard MACD signal generation fires only when a full 1-minute candle closes
             if (closedCandles) {
               this.evaluateAndPushSignal(closedCandles, onSignal);
             }

@@ -121,4 +121,20 @@ export class CandleAggregator {
 
     return null; // Candle not closed yet, continue aggregating
   }
+
+  /**
+   * 🚀 Returns the real-time order flow imbalance of the active, unfinished candle.
+   * Positive = Aggressive Buying. Negative = Aggressive Selling.
+   */
+  public getLiveDelta(): number {
+    return this.currentCandle ? this.currentCandle.delta : 0;
+  }
+
+  /**
+   * 🚀 Returns the total tick volume of the active, unfinished candle.
+   * Used to calculate the percentage dominance of the delta.
+   */
+  public getLiveVolume(): number {
+    return this.currentCandle ? this.currentCandle.volume : 0;
+  }
 }
