@@ -22,10 +22,9 @@ dashboard.get('/', (c) => {
   <!-- Toast Container -->
   <div id="toast-container" style="position: fixed; top: 20px; right: 20px; z-index: 9999;"></div>
 
-  <div class="dashboard-wrapper">
-    
-    <!-- Top Navigation -->
-    <header class="topbar">
+  <!-- Top Navigation -->
+  <header class="topbar">
+    <div style="max-width: 1600px; margin: 0 auto; width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 0 24px;">
       <div class="brand">
         <div class="brand-icon">T</div>
         TheFinalOption<span style="color: var(--text-secondary); font-weight: 400;">/</span>Terminal
@@ -64,8 +63,11 @@ dashboard.get('/', (c) => {
           <span id="status-text" class="mono" style="font-size: 12px; font-weight: 600;">STOPPED</span>
         </div>
       </div>
-    </header>
+    </div>
+  </header>
 
+  <div class="dashboard-wrapper">
+    <!-- Main Content -->
     <!-- Bento Grid Content -->
     <main class="bento-grid">
       
@@ -74,7 +76,7 @@ dashboard.get('/', (c) => {
         <div class="chart-header-overlay">
           <h2 class="bento-title">Market Data</h2>
         </div>
-        <div id="tv-chart-container" style="width: 100%; height: 100%;"></div>
+        <div id="tv-chart-container" style="width: 100%; flex: 1; min-height: 400px;"></div>
       </section>
 
       <!-- Position Metrics -->
