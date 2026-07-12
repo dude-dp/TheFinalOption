@@ -765,10 +765,142 @@
     }
   }
 
+  // Box-Muller transform to generate normally distributed random numbers
+  function randomNormal(mean, stdDev) {
+    let u = 0, v = 0;
+    while(u === 0) u = Math.random(); 
+    while(v === 0) v = Math.random();
+    const num = Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+    return num * stdDev + mean;
+  }
+
+  async function renderMonteCarloChart() {
+    try {
+      const res = await fetch('/api/analytics/monte-carlo-stats');
+      if (!res.ok) return;
+      const stats = await res.json();
+      const labelEl = document.getElementById('mc-expectancy-label');
+      
+      if (stats.error) {
+        if (labelEl) labelEl.innerText = "Awaiting Data";
+        return;
+      }
+
+      const SIMULATION_COUNT = 1000;
+      const TRADES_FORWARD = 30; // Projecting the next 30 trades
+      const paths = [];
+
+      // 1. Run 1,000 Alternate Realities
+      for (let i = 0; i < SIMULATION_COUNT; i++) {
+        let balance = 0;
+        const currentPath = [0]; // Day 0
+        
+        for (let t = 1; t <= TRADES_FORWARD; t++) {
+          // Did we win or lose this trade?
+          if (Math.random() <= stats.winRate) {
+            // We won. Generate a random win amount based on our historical average + volatility
+            const winAmount = Math.max(0, randomNormal(stats.avgWin, stats.winStdDev));
+            balance += winAmount;
+          } else {
+            // We lost. Generate a random loss amount
+            const lossAmount = Math.min(0, randomNormal(stats.avgLoss, stats.lossStdDev));
+            balance += lossAmount;
+          }
+          currentPath.push(balance);
+        }
+        paths.push(currentPath);
+      }
+
+      // 2. Extract the Probability Cone (10th, 50th, and 90th Percentiles)
+      const p10 = [];
+      const p50 = [];
+      const p90 = [];
+      const labels = [];
+
+      for (let step = 0; step <= TRADES_FORWARD; step++) {
+        labels.push(`Trade ${step}`);
+        
+        // Grab all 1,000 balances for this specific step and sort them
+        const stepBalances = paths.map(p => p[step]).sort((a, b) => a - b);
+        
+        p10.push(stepBalances[Math.floor(SIMULATION_COUNT * 0.10)]); // Worst 10%
+        p50.push(stepBalances[Math.floor(SIMULATION_COUNT * 0.50)]); // Median Expected
+        p90.push(stepBalances[Math.floor(SIMULATION_COUNT * 0.90)]); // Top 10%
+      }
+
+      // Update Expectancy Label
+      const medianFinal = p50[p50.length - 1];
+      if (labelEl) {
+        labelEl.innerText = `Expected: ₹${medianFinal.toLocaleString('en-IN', {maximumFractionDigits: 0})}`;
+        labelEl.style.color = medianFinal >= 0 ? 'var(--accent-success)' : 'var(--accent-danger)';
+        labelEl.style.borderColor = medianFinal >= 0 ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)';
+      }
+
+      // 3. Render the Cone using Chart.js
+      const canvas = document.getElementById('monteCarloChart');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      
+      // @ts-ignore
+      new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: 'Optimistic (90th Pct)',
+              data: p90,
+              borderColor: 'rgba(0, 230, 118, 0.8)',
+              backgroundColor: 'rgba(0, 230, 118, 0.1)',
+              fill: '+1', // Fill down to the median line
+              pointRadius: 0,
+              tension: 0.2
+            },
+            {
+              label: 'Median Expected',
+              data: p50,
+              borderColor: '#ffffff',
+              borderWidth: 2,
+              borderDash: [5, 5],
+              fill: false,
+              pointRadius: 0,
+              tension: 0.2
+            },
+            {
+              label: 'Pessimistic (10th Pct)',
+              data: p10,
+              borderColor: 'rgba(255, 23, 68, 0.8)',
+              backgroundColor: 'rgba(255, 23, 68, 0.1)',
+              fill: '-1', // Fill up to the median line
+              pointRadius: 0,
+              tension: 0.2
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          scales: {
+            x: { grid: { display: false }, ticks: { maxTicksLimit: 10, color: '#a0a0a0' } },
+            y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#a0a0a0' } }
+          },
+          plugins: {
+            legend: { labels: { color: '#D9D9D9', usePointStyle: true, boxWidth: 8 } },
+            tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ₹${ctx.parsed.y.toFixed(0)}` } }
+          }
+        }
+      });
+    } catch (err) {
+      console.error('Failed to load Monte Carlo chart', err);
+    }
+  }
+
   // Ensure Chart.js is loaded then run
   document.addEventListener('DOMContentLoaded', () => {
     renderTimeOfDayChart();
     renderDrawdownChart();
     renderSlippageChart();
+    renderMonteCarloChart();
   });
 })();

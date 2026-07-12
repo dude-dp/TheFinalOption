@@ -12,6 +12,7 @@ import { getPreferredStrikes, shouldRollExpiry, getNearestWeeklyExpiry } from '.
 import { calculateLots, lotsToQuantity } from '../lib/lot-sizing';
 import { getTodayDateStr, generateCorrelationId } from '../lib/time';
 import { addPendingOrder, removePendingOrder } from '../lib/orders';
+import { executePaperTrade } from '../lib/paper';
 
 const api = new Hono<{ Bindings: Env }>();
 
@@ -188,6 +189,7 @@ api.post('/api/confirm', requirePollSecret, async (c) => {
   if (existing) return c.json({ success: true, correlationId, idempotent: true });
 
   let pnlToUpdate = 0;
+  let profitPct = 0;
   const order = await c.env.TRADING_DB.prepare(
     'SELECT transaction_type, quantity, trading_symbol FROM order_ledger WHERE correlation_id = ?'
   ).bind(correlationId).first();
@@ -200,7 +202,9 @@ api.post('/api/confirm', requirePollSecret, async (c) => {
     ).bind(order.trading_symbol).first();
 
     if (buyOrder && buyOrder.execution_price) {
-      pnlToUpdate = (executionPrice - (buyOrder.execution_price as number)) * (order.quantity as number);
+      const buyPrice = buyOrder.execution_price as number;
+      pnlToUpdate = (executionPrice - buyPrice) * (order.quantity as number);
+      profitPct = ((executionPrice - buyPrice) / buyPrice) * 100;
     }
   }
 
@@ -237,6 +241,22 @@ api.post('/api/confirm', requirePollSecret, async (c) => {
           if (state.activePosition?.correlationId === correlationId) state.activePosition = null;
           if (state.activeHedgePosition?.correlationId === correlationId) state.activeHedgePosition = null;
         }
+
+        if (profitPct >= 15.0) {
+          state.lastProfitableTradeId = correlationId;
+          state.lastProfitPct = profitPct;
+        }
+
+        // ==========================================
+        // VOICE ALERT: EXIT NOTIFICATION
+        // ==========================================
+        if (pnlToUpdate < 0) {
+          state.lastVoiceAlert = `Warning. Stop loss hit. Position closed at ${executionPrice.toFixed(2)}.`;
+        } else {
+          state.lastVoiceAlert = `Target reached. Position closed in profit at ${executionPrice.toFixed(2)}.`;
+        }
+        state.lastVoiceAlertId = `${correlationId}-SELL`;
+
       } else if (order?.transaction_type === 'BUY') {
         if (state.activePosition?.correlationId === correlationId) {
           state.activePosition.entryPrice = executionPrice;
@@ -244,6 +264,13 @@ api.post('/api/confirm', requirePollSecret, async (c) => {
         if (state.activeHedgePosition?.correlationId === correlationId && state.activeHedgePosition) {
           state.activeHedgePosition.entryPrice = executionPrice;
         }
+
+        // ==========================================
+        // VOICE ALERT: ENTRY NOTIFICATION
+        // ==========================================
+        const optionName = order.option_type === 'CE' ? 'Calls' : 'Puts';
+        state.lastVoiceAlert = `Executing Buy. ${order.quantity} Nifty ${optionName} at ${executionPrice.toFixed(2)}.`;
+        state.lastVoiceAlertId = `${correlationId}-BUY`;
       }
 
       state.lockTimestamp = null;
@@ -362,7 +389,7 @@ api.get('/api/status', async (c) => {
 
 /** POST /api/control — Toggle bot status */
 api.post('/api/control', async (c) => {
-  const { action } = await c.req.json<{ action: string }>();
+  const { action, mode } = await c.req.json<{ action: string, mode?: 'LIVE' | 'PAPER' }>();
   const stateRaw = await c.env.TRADING_KV.get(KV_KEYS.BOT_STATE);
   const state: BotState = stateRaw ? JSON.parse(stateRaw) : {
     status: 'STOPPED', lastUpdated: '', activePosition: null, lockTimestamp: null, lastMacdLine: null
@@ -371,13 +398,53 @@ api.post('/api/control', async (c) => {
   if (action === 'START') state.status = 'RUNNING';
   else if (action === 'STOP') state.status = 'STOPPED';
   else if (action === 'EMERGENCY_HALT') state.status = 'EMERGENCY_HALT';
+  else if (action === 'SET_MODE' && mode) state.tradingMode = mode;
   else return c.json({ error: 'Invalid action' }, 400);
 
   state.lastUpdated = new Date().toISOString();
   await c.env.TRADING_KV.put(KV_KEYS.BOT_STATE, JSON.stringify(state));
 
-  return c.json({ success: true, status: state.status });
+  return c.json({ success: true, status: state.status, mode: state.tradingMode });
 });
+/** 
+ * POST /api/position/sl-override 
+ * Accepts manual drag-and-drop Stop Loss updates from the UI 
+ */
+api.post('/api/position/sl-override', dashboardAuth, async (c) => {
+  const { type, price } = await c.req.json<{ type: 'HARD' | 'TRAILING', price: number }>();
+  
+  const stateRaw = await c.env.TRADING_KV.get(KV_KEYS.BOT_STATE);
+  if (!stateRaw) return c.json({ error: 'No bot state found' }, 404);
+  
+  const state: BotState = JSON.parse(stateRaw);
+  
+  if (!state.activePosition) {
+    return c.json({ error: 'No active position to modify' }, 400);
+  }
+
+  // Cap the precision to 2 decimal places (standard tick size)
+  const formattedPrice = Math.round(price * 20) / 20;
+
+  if (type === 'HARD') {
+    state.activePosition.manualHardSL = formattedPrice;
+  } else if (type === 'TRAILING') {
+    state.activePosition.manualTrailingSL = formattedPrice;
+  }
+
+  state.lastUpdated = new Date().toISOString();
+  state.lastVoiceAlert = `Manual override accepted. Dragged ${type} Stop Loss to ${formattedPrice.toFixed(2)}.`;
+  state.lastVoiceAlertId = `manual-override-${Date.now()}`;
+  await c.env.TRADING_KV.put(KV_KEYS.BOT_STATE, JSON.stringify(state));
+
+  // Log an audit trail entry so you know a human touched it
+  await c.env.TRADING_DB.prepare(
+    `INSERT INTO system_telemetry (nifty_spot, atm_strike, macd_line, prev_macd_line, signal_generated, bot_status, log_message) 
+     VALUES (0, 0, 0, 0, 'NONE', ?, ?)`
+  ).bind(state.status, `MANUAL OVERRIDE: 🖐️ Dragged ${type} SL to ₹${formattedPrice.toFixed(2)}`).run();
+
+  return c.json({ success: true, newPrice: formattedPrice });
+});
+
 
 /** POST /api/manual-entry — Forces a manual trade entry bypassing MACD */
 api.post('/api/manual-entry', dashboardAuth, async (c) => {
@@ -479,35 +546,46 @@ api.post('/api/manual-entry', dashboardAuth, async (c) => {
       createdAt: new Date().toISOString(),
     };
 
-    // Push to KV for immediate local daemon pickup
-    await addPendingOrder(c.env.TRADING_KV, order);
+    const isPaperMode = state.tradingMode === 'PAPER';
 
-    // Log intent to D1 Database
-    await c.env.TRADING_DB.prepare(
-      `INSERT INTO order_ledger (order_id, correlation_id, instrument_token, trading_symbol, option_type, strike_price, transaction_type, quantity, lots, order_price, order_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(order.orderId, correlationId, order.instrumentToken, order.tradingSymbol, direction, strike, 'BUY', quantity, lots, premium, 'PENDING').run();
+    if (isPaperMode) {
+      await executePaperTrade(c.env, order, premium);
+      
+      await c.env.TRADING_DB.prepare(
+        `INSERT INTO system_telemetry (nifty_spot, atm_strike, macd_line, prev_macd_line, signal_generated, bot_status, log_message)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(spotPrice, strike, 0, 0, 'NONE', state.status, `[PAPER MODE] MANUAL OVERRIDE: ⚡ Forced Entry -> ${(targetOption as any).tradingSymbol} × ${lots} lots`).run();
+    } else {
+      // Push to KV for immediate local daemon pickup
+      await addPendingOrder(c.env.TRADING_KV, order);
 
-    // Update Bot State & Lock
-    state.lockTimestamp = Date.now();
-    state.activePosition = {
-      correlationId,
-      optionType: direction,
-      instrumentToken: (targetOption as any).instrumentKey,
-      tradingSymbol: (targetOption as any).tradingSymbol,
-      strikePrice: strike,
-      entryPrice: premium,
-      quantity,
-      lots,
-      enteredAt: new Date().toISOString(),
-    };
-    await c.env.TRADING_KV.put(KV_KEYS.BOT_STATE, JSON.stringify(state));
+      // Log intent to D1 Database
+      await c.env.TRADING_DB.prepare(
+        `INSERT INTO order_ledger (order_id, correlation_id, instrument_token, trading_symbol, option_type, strike_price, transaction_type, quantity, lots, order_price, order_status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(order.orderId, correlationId, order.instrumentToken, order.tradingSymbol, direction, strike, 'BUY', quantity, lots, premium, 'PENDING').run();
 
-    // Write a bright entry to the Execution Logs
-    await c.env.TRADING_DB.prepare(
-      `INSERT INTO system_telemetry (nifty_spot, atm_strike, macd_line, prev_macd_line, signal_generated, bot_status, log_message)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).bind(spotPrice, strike, 0, 0, 'NONE', state.status, `MANUAL OVERRIDE: ⚡ Forced Entry -> ${(targetOption as any).tradingSymbol} × ${lots} lots`).run();
+      // Update Bot State & Lock
+      state.lockTimestamp = Date.now();
+      state.activePosition = {
+        correlationId,
+        optionType: direction,
+        instrumentToken: (targetOption as any).instrumentKey,
+        tradingSymbol: (targetOption as any).tradingSymbol,
+        strikePrice: strike,
+        entryPrice: premium,
+        quantity,
+        lots,
+        enteredAt: new Date().toISOString(),
+      };
+      await c.env.TRADING_KV.put(KV_KEYS.BOT_STATE, JSON.stringify(state));
+
+      // Write a bright entry to the Execution Logs
+      await c.env.TRADING_DB.prepare(
+        `INSERT INTO system_telemetry (nifty_spot, atm_strike, macd_line, prev_macd_line, signal_generated, bot_status, log_message)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(spotPrice, strike, 0, 0, 'NONE', state.status, `MANUAL OVERRIDE: ⚡ Forced Entry -> ${(targetOption as any).tradingSymbol} × ${lots} lots`).run();
+    }
 
     return c.json({ success: true });
   } catch (error: any) {
@@ -524,6 +602,7 @@ api.post('/api/emergency-squareoff', async (c) => {
   const state: BotState = JSON.parse(stateRaw);
   state.status = 'EMERGENCY_HALT';
 
+  const isPaperMode = state.tradingMode === 'PAPER';
   const positionsToClear = [state.activePosition, state.activeHedgePosition].filter(Boolean);
 
   for (const pos of positionsToClear) {
@@ -544,11 +623,34 @@ api.post('/api/emergency-squareoff', async (c) => {
         createdAt: new Date().toISOString(),
       };
 
-      await addPendingOrder(c.env.TRADING_KV, sellOrder);
-      await c.env.TRADING_DB.prepare(
-        `INSERT INTO order_ledger (order_id, correlation_id, instrument_token, trading_symbol, option_type, strike_price, transaction_type, quantity, lots, order_price, order_status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(sellOrder.orderId, correlationId, sellOrder.instrumentToken, sellOrder.tradingSymbol, sellOrder.optionType, sellOrder.strikePrice, 'SELL', sellOrder.quantity, sellOrder.lots, 0, 'PENDING').run();
+      if (isPaperMode) {
+        // Fetch last price or use entry price as fallback
+        let currentLtpToUse = 0;
+        const accessToken = await c.env.TRADING_KV.get(KV_KEYS.UPSTOX_ACCESS_TOKEN);
+        if (accessToken) {
+          try {
+            const ltpData = await getLTP(accessToken, [pos.instrumentToken]);
+            currentLtpToUse = ltpData[pos.instrumentToken] || pos.entryPrice || 0;
+          } catch (e) {
+            currentLtpToUse = pos.entryPrice || 0;
+          }
+        } else {
+          currentLtpToUse = pos.entryPrice || 0;
+        }
+
+        await executePaperTrade(c.env, sellOrder, currentLtpToUse);
+
+        await c.env.TRADING_DB.prepare(
+          `INSERT INTO system_telemetry (nifty_spot, atm_strike, macd_line, prev_macd_line, signal_generated, bot_status, log_message)
+           VALUES (0, 0, 0, 0, 'NONE', ?, ?)`
+        ).bind(state.status, `[PAPER MODE] EMERGENCY HALT: Square off ${pos.tradingSymbol} @ ₹${currentLtpToUse.toFixed(2)}`).run();
+      } else {
+        await addPendingOrder(c.env.TRADING_KV, sellOrder);
+        await c.env.TRADING_DB.prepare(
+          `INSERT INTO order_ledger (order_id, correlation_id, instrument_token, trading_symbol, option_type, strike_price, transaction_type, quantity, lots, order_price, order_status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(sellOrder.orderId, correlationId, sellOrder.instrumentToken, sellOrder.tradingSymbol, sellOrder.optionType, sellOrder.strikePrice, 'SELL', sellOrder.quantity, sellOrder.lots, 0, 'PENDING').run();
+      }
     }
   }
 
@@ -574,6 +676,21 @@ api.get('/api/orders', async (c) => {
     `SELECT * FROM order_ledger WHERE date(created_at) = ? ORDER BY created_at DESC`
   ).bind(today).all();
   return c.json({ data: rows.results || [] });
+});
+
+/** POST /api/orders/journal - Update tags and notes for a specific trade */
+api.post('/api/orders/journal', dashboardAuth, async (c) => {
+  const { correlationId, tags, notes } = await c.req.json<{ correlationId: string, tags: string, notes: string }>();
+  
+  if (!correlationId) return c.json({ error: 'Missing correlation ID' }, 400);
+
+  await c.env.TRADING_DB.prepare(
+    `UPDATE order_ledger 
+     SET tags = ?, notes = ?, updated_at = datetime('now') 
+     WHERE correlation_id = ?`
+  ).bind(tags, notes, correlationId).run();
+
+  return c.json({ success: true });
 });
 
 /** GET /api/trigger-cron — Manually trigger cron (DEBUG) */
@@ -894,6 +1011,106 @@ api.get('/api/analytics/time-of-day', dashboardAuth, async (c) => {
     // Fallback if table does not exist or errors out
     return c.json({ data: [] });
   }
+});
+
+api.get('/api/analytics/ratios', dashboardAuth, async (c) => {
+  // 1. Fetch Daily Realized PnL
+  const query = `
+    SELECT 
+      date(updated_at) as trade_date,
+      SUM(pnl) as daily_pnl
+    FROM order_ledger 
+    WHERE pnl IS NOT NULL AND pnl != 0
+    GROUP BY trade_date
+    ORDER BY trade_date ASC
+  `;
+  
+  try {
+    const rows = await c.env.TRADING_DB.prepare(query).all();
+    const dailyPnL = (rows.results || []).map((r: any) => parseFloat(r.daily_pnl) || 0);
+
+    if (dailyPnL.length === 0) {
+      return c.json({ sharpe: "0.00", sortino: "0.00", calmar: "0.00" });
+    }
+
+    const n = dailyPnL.length;
+    const meanPnL = dailyPnL.reduce((a, b) => a + b, 0) / n;
+
+    // 2. Standard Deviation (Sharpe Risk)
+    const variance = dailyPnL.reduce((a, b) => a + Math.pow(b - meanPnL, 2), 0) / n;
+    const stdDev = Math.sqrt(variance);
+
+    // 3. Downside Deviation (Sortino Risk)
+    // MAR (Minimum Acceptable Return) is assumed to be 0 for absolute PnL tracking
+    const downsideVariance = dailyPnL.reduce((a, b) => {
+      return b < 0 ? a + Math.pow(b, 2) : a;
+    }, 0) / n;
+    const downsideStdDev = Math.sqrt(downsideVariance);
+
+    // 4. Maximum Drawdown (Calmar Risk)
+    let cumulative = 0;
+    let peak = 0;
+    let maxDrawdown = 0;
+    
+    for (const pnl of dailyPnL) {
+      cumulative += pnl;
+      if (cumulative > peak) peak = cumulative;
+      const drawdown = peak - cumulative;
+      if (drawdown > maxDrawdown) maxDrawdown = drawdown;
+    }
+
+    // 5. Annualization Multipliers (252 trading days in a year)
+    const annualFactor = Math.sqrt(252);
+    const annualizedReturn = meanPnL * 252;
+
+    // 6. Calculate Ratios
+    const sharpe = stdDev === 0 ? 0 : (meanPnL / stdDev) * annualFactor;
+    const sortino = downsideStdDev === 0 ? 0 : (meanPnL / downsideStdDev) * annualFactor;
+    const calmar = maxDrawdown === 0 ? 0 : (annualizedReturn / maxDrawdown);
+
+    return c.json({
+      sharpe: sharpe.toFixed(2),
+      sortino: sortino.toFixed(2),
+      calmar: calmar.toFixed(2)
+    });
+    
+  } catch (error) {
+    console.error("Ratio calculation failed:", error);
+    return c.json({ sharpe: "0.00", sortino: "0.00", calmar: "0.00" });
+  }
+});
+
+api.get('/api/analytics/monte-carlo-stats', dashboardAuth, async (c) => {
+  // Fetch all historical closed trades
+  const rows = await c.env.TRADING_DB.prepare(
+    `SELECT pnl FROM order_ledger WHERE pnl IS NOT NULL AND pnl != 0`
+  ).all();
+
+  const trades = (rows.results || []).map((r: any) => parseFloat(r.pnl));
+  if (trades.length < 10) {
+    return c.json({ error: 'Need at least 10 trades to generate a reliable statistical baseline' }, 400);
+  }
+
+  const wins = trades.filter(t => t > 0);
+  const losses = trades.filter(t => t < 0);
+
+  const winRate = wins.length / trades.length;
+  
+  const avgWin = wins.length > 0 ? wins.reduce((a, b) => a + b, 0) / wins.length : 0;
+  const avgLoss = losses.length > 0 ? losses.reduce((a, b) => a + b, 0) / losses.length : 0;
+
+  // Calculate Variance / Standard Deviation to inject real-world randomness into the simulation
+  const winVariance = wins.reduce((a, b) => a + Math.pow(b - avgWin, 2), 0) / (wins.length || 1);
+  const lossVariance = losses.reduce((a, b) => a + Math.pow(b - avgLoss, 2), 0) / (losses.length || 1);
+
+  return c.json({
+    winRate,
+    avgWin,
+    avgLoss,
+    winStdDev: Math.sqrt(winVariance),
+    lossStdDev: Math.sqrt(lossVariance),
+    totalTrades: trades.length
+  });
 });
 
 export default api;

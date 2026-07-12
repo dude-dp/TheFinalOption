@@ -44,7 +44,137 @@
   let tvChart = null;
   let candleSeries = null;
   let macdSeries = null;
+  let signalSeries = null;
+  let histogramSeries = null;
   let currentStatus = 'STOPPED';
+
+  let hardSLLine = null;
+  let trailingSLLine = null;
+  let isDraggingLine = null; // 'HARD' or 'TRAILING'
+  let currentHardSLPrice = 0;
+  let currentTrailingSLPrice = 0;
+
+  let celebratedTradeId = null;
+
+  let isVoiceEnabled = false;
+  let lastSpokenAlertId = null;
+  let currentMode = 'PAPER';
+
+  function speakMarketAlert(text) {
+    if (!isVoiceEnabled || !window.speechSynthesis) return;
+
+    if (window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel();
+    }
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.1; 
+    utterance.pitch = 1.0; 
+    
+    const voices = window.speechSynthesis.getVoices();
+    const preferredVoice = voices.find(v => v.name.includes('Google US English') || v.lang === 'en-US');
+    if (preferredVoice) utterance.voice = preferredVoice;
+
+    window.speechSynthesis.speak(utterance);
+  }
+
+  function fireProfitConfetti(profitPct) {
+    const duration = 3000;
+    const end = Date.now() + duration;
+    const colors = ['#00e676', '#ffea00', '#ffffff'];
+
+    (function frame() {
+      window.confetti({
+        particleCount: 5,
+        angle: 60,
+        spread: 55,
+        origin: { x: 0, y: 0.8 },
+        colors: colors
+      });
+      window.confetti({
+        particleCount: 5,
+        angle: 120,
+        spread: 55,
+        origin: { x: 1, y: 0.8 },
+        colors: colors
+      });
+
+      if (Date.now() < end) {
+        requestAnimationFrame(frame);
+      }
+    }());
+    
+    window.addLog(`🎉 MASSIVE WIN: +${profitPct.toFixed(2)}% ROI 🎉`, 'success');
+  }
+
+  function setupDragAndDropSL(container) {
+    // MOUSE DOWN: Detect if cursor is near a Stop Loss line
+    container.addEventListener('mousedown', (e) => {
+      if (!candleSeries || (!hardSLLine && !trailingSLLine)) return;
+      
+      const rect = container.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      
+      const hardSLY = currentHardSLPrice ? candleSeries.priceToCoordinate(currentHardSLPrice) : -999;
+      const trailingSLY = currentTrailingSLPrice ? candleSeries.priceToCoordinate(currentTrailingSLPrice) : -999;
+
+      // 15-pixel grab radius
+      if (Math.abs(y - hardSLY) < 15) {
+        isDraggingLine = 'HARD';
+        tvChart.applyOptions({ handleScroll: false, handleScale: false }); // Lock chart panning
+        hardSLLine.applyOptions({ color: '#ffea00', lineStyle: 0 }); // Turn solid yellow while dragging
+      } else if (Math.abs(y - trailingSLY) < 15) {
+        isDraggingLine = 'TRAILING';
+        tvChart.applyOptions({ handleScroll: false, handleScale: false });
+        trailingSLLine.applyOptions({ color: '#ffea00', lineStyle: 0 });
+      }
+    });
+
+    // MOUSE MOVE: Move the line with the cursor
+    container.addEventListener('mousemove', (e) => {
+      if (!isDraggingLine) return;
+      
+      const rect = container.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      const newPrice = candleSeries.coordinateToPrice(y);
+
+      if (isDraggingLine === 'HARD' && hardSLLine) {
+        currentHardSLPrice = newPrice;
+        hardSLLine.applyOptions({ price: newPrice });
+      } else if (isDraggingLine === 'TRAILING' && trailingSLLine) {
+        currentTrailingSLPrice = newPrice;
+        trailingSLLine.applyOptions({ price: newPrice });
+      }
+    });
+
+    // MOUSE UP: Drop the line and fire the API request
+    container.addEventListener('mouseup', async () => {
+      if (isDraggingLine) {
+        const finalPrice = isDraggingLine === 'HARD' ? currentHardSLPrice : currentTrailingSLPrice;
+        const typeStr = isDraggingLine;
+        
+        // Reset State
+        isDraggingLine = null;
+        tvChart.applyOptions({ handleScroll: true, handleScale: true }); // Unlock panning
+        
+        // Revert styles
+        if (hardSLLine) hardSLLine.applyOptions({ color: '#ff1744', lineStyle: 2 });
+        if (trailingSLLine) trailingSLLine.applyOptions({ color: '#ff9800', lineStyle: 2 });
+
+        try {
+          await fetch('/api/position/sl-override', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: typeStr, price: finalPrice })
+          });
+          
+          window.addLog(`Successfully locked new ${typeStr} Stop Loss at ₹${finalPrice.toFixed(2)}`, 'success');
+        } catch (err) {
+          console.error('Failed to save manual SL:', err);
+        }
+      }
+    });
+  }
 
   function initTradingViewChart() {
     const container = document.getElementById('tv-chart-container');
@@ -80,6 +210,7 @@
         borderColor: 'rgba(255, 255, 255, 0.1)',
         timeVisible: true,
         secondsVisible: false,
+        fixLeftEdge: true,
         tickMarkFormatter: (time, tickMarkType, locale) => {
           const date = new Date(time * 1000);
           const timeStr = date.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
@@ -113,9 +244,31 @@
       priceScaleId: 'left', // Render on left scale to avoid squishing the price candles
     });
 
+    signalSeries = tvChart.addLineSeries({
+      color: '#FF6D00',
+      lineWidth: 2,
+      crosshairMarkerVisible: false,
+      priceScaleId: 'left',
+    });
+
+    histogramSeries = tvChart.addHistogramSeries({
+      color: '#26a69a',
+      priceScaleId: 'left',
+    });
+
     tvChart.priceScale('left').applyOptions({
-      visible: true,
-      borderColor: 'rgba(255, 255, 255, 0.1)',
+      visible: false, // Hidden so it doesn't take up empty canvas space on the left, but still scales MACD independently
+      scaleMargins: {
+        top: 0.8, // MACD occupies the bottom 20% of the chart
+        bottom: 0,
+      },
+    });
+
+    tvChart.priceScale('right').applyOptions({
+      scaleMargins: {
+        top: 0.05,
+        bottom: 0.25, // Candles occupy the top 75% of the chart, leaving space for MACD
+      },
     });
 
     // 3. Make the chart responsive to window resizing
@@ -124,15 +277,15 @@
       const newRect = entries[0].contentRect;
       tvChart.applyOptions({ height: newRect.height, width: newRect.width });
     }).observe(container);
+
+    setupDragAndDropSL(container);
   }
 
-  function loadHistoricalCandles(historicalData, macdData) {
-    if (candleSeries && historicalData) {
-      candleSeries.setData(historicalData);
-    }
-    if (macdSeries && macdData) {
-      macdSeries.setData(macdData);
-    }
+  function loadHistoricalCandles(historicalData, macdData, signalData, histogramData) {
+    if (candleSeries && historicalData) candleSeries.setData(historicalData);
+    if (macdSeries && macdData) macdSeries.setData(macdData);
+    if (signalSeries && signalData) signalSeries.setData(signalData);
+    if (histogramSeries && histogramData) histogramSeries.setData(histogramData);
   }
 
   function updateLiveChart(latestTick) {
@@ -280,6 +433,7 @@
         fetchChartData(),
         fetchTelemetry(),
         fetchOrders(),
+        fetchQuantMetrics(),
       ]);
     } catch (e) {
       console.error('Poll error:', e);
@@ -294,7 +448,42 @@
     // Heartbeat pulse
     pulseHeartbeat();
 
+    // Gamification Confetti Trigger
+    if (data.lastProfitableTradeId && data.lastProfitableTradeId !== celebratedTradeId) {
+      if (celebratedTradeId !== null) {
+        fireProfitConfetti(data.lastProfitPct || 0);
+      }
+      celebratedTradeId = data.lastProfitableTradeId;
+    }
+
+    // Voice Alert Trigger
+    if (data.lastVoiceAlertId && data.lastVoiceAlertId !== lastSpokenAlertId) {
+      if (lastSpokenAlertId !== null) {
+        speakMarketAlert(data.lastVoiceAlert);
+      }
+      lastSpokenAlertId = data.lastVoiceAlertId;
+    }
+
     currentStatus = data.status;
+    currentMode = data.tradingMode || 'PAPER';
+
+    // Update Mode indicator/badge in UI
+    const modeText = document.getElementById('mode-text');
+    const modeIcon = document.getElementById('mode-icon');
+    const positionModeBadge = document.getElementById('position-mode-badge');
+    
+    if (modeText) modeText.textContent = `Mode: ${currentMode}`;
+    if (modeIcon) modeIcon.textContent = currentMode === 'LIVE' ? '💰' : '🧪';
+    if (positionModeBadge) {
+      positionModeBadge.textContent = currentMode;
+      if (currentMode === 'LIVE') {
+        positionModeBadge.style.color = 'var(--accent-buy)';
+        positionModeBadge.style.borderColor = 'rgba(16, 185, 129, 0.2)';
+      } else {
+        positionModeBadge.style.color = 'var(--text-secondary)';
+        positionModeBadge.style.borderColor = 'var(--border-color)';
+      }
+    }
 
     // Status badge text & Radar ping
     const statusText = document.getElementById('status-text');
@@ -439,6 +628,49 @@
 
     lastActivePosition = data.activePosition;
     lastActiveHedgePosition = data.activeHedgePosition;
+
+    if (data.activePosition && candleSeries) {
+      const pos = data.activePosition;
+      const calculatedHardSL = pos.entryPrice * 0.94; // Fallback if no ATR is present
+      const calculatedTSL = (pos.highestPrice || pos.entryPrice) * 0.96; 
+      
+      const targetHardSL = pos.manualHardSL || calculatedHardSL;
+      const targetTSL = pos.manualTrailingSL || calculatedTSL;
+
+      if (!isDraggingLine) {
+        currentHardSLPrice = targetHardSL;
+        currentTrailingSLPrice = targetTSL;
+
+        if (hardSLLine) {
+          hardSLLine.applyOptions({ price: targetHardSL });
+        } else {
+          hardSLLine = candleSeries.createPriceLine({
+            price: targetHardSL,
+            color: '#ff1744',
+            lineWidth: 2,
+            lineStyle: window.LightweightCharts.LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: 'HARD SL',
+          });
+        }
+
+        if (trailingSLLine) {
+          trailingSLLine.applyOptions({ price: targetTSL });
+        } else {
+          trailingSLLine = candleSeries.createPriceLine({
+            price: targetTSL,
+            color: '#ff9800', 
+            lineWidth: 2,
+            lineStyle: window.LightweightCharts.LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: 'TSL',
+          });
+        }
+      }
+    } else {
+      if (hardSLLine && candleSeries) { candleSeries.removePriceLine(hardSLLine); hardSLLine = null; }
+      if (trailingSLLine && candleSeries) { candleSeries.removePriceLine(trailingSLLine); trailingSLLine = null; }
+    }
   }
 
   // ==================== CHART DATA ====================
@@ -481,15 +713,43 @@
       // Sort strictly ascending
       historicalData.sort((a, b) => a.time - b.time);
       
-      let macdData = [];
-      if (data.macd && data.macd.length > 0) {
-        macdData = data.macd.map(m => ({
-          time: Math.floor(new Date(m.timestamp).getTime() / 1000),
-          value: m.value
-        })).sort((a, b) => a.time - b.time);
+      // Calculate full MACD locally for the chart
+      const closePrices = historicalData.map(d => d.close);
+      
+      function calcEMA(data, period) {
+        const k = 2 / (period + 1);
+        let ema = data[0];
+        const res = [ema];
+        for (let i = 1; i < data.length; i++) {
+          ema = (data[i] - ema) * k + ema;
+          res.push(ema);
+        }
+        return res;
+      }
+      
+      const fastEma = calcEMA(closePrices, 12);
+      const slowEma = calcEMA(closePrices, 26);
+      const macdValues = [];
+      for(let i=0; i<closePrices.length; i++) macdValues.push(fastEma[i] - slowEma[i]);
+      const signalValues = calcEMA(macdValues, 9);
+      
+      const macdData = [];
+      const signalData = [];
+      const histogramData = [];
+      
+      for(let i=0; i<historicalData.length; i++) {
+        const time = historicalData[i].time;
+        const hist = macdValues[i] - signalValues[i];
+        macdData.push({ time, value: macdValues[i] });
+        signalData.push({ time, value: signalValues[i] });
+        histogramData.push({
+          time,
+          value: hist,
+          color: hist >= 0 ? 'rgba(38, 166, 154, 0.5)' : 'rgba(255, 82, 82, 0.5)'
+        });
       }
 
-      loadHistoricalCandles(historicalData, macdData);
+      loadHistoricalCandles(historicalData, macdData, signalData, histogramData);
       renderTVMarkers();
     }
   }
@@ -615,9 +875,16 @@
         ? `data-tooltip="${escapeHtml(o.status_message)}"`
         : '';
 
-      return `<tr>
+      let tagsHtml = '';
+      if (o.tags) {
+        tagsHtml = `<div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:4px;">` + 
+          o.tags.split(',').map(tag => `<span style="font-size:10px; background:rgba(255,255,255,0.06); border:1px solid var(--border-color); padding:1px 4px; border-radius:4px; color:var(--text-secondary); font-family:var(--font-sans);">${tag.trim()}</span>`).join('') + 
+          `</div>`;
+      }
+
+      return `<tr onclick="openJournalModal('${o.correlation_id}')" style="cursor:pointer;">
         <td data-label="Time"     style="font-family:var(--font-mono);color:var(--text-muted);">${time}</td>
-        <td data-label="Contract" style="font-weight:600;">${o.trading_symbol || '--'}</td>
+        <td data-label="Contract" style="font-weight:600;">${o.trading_symbol || '--'}${tagsHtml}</td>
         <td data-label="Type"     style="color:${typeColor};font-weight:bold;">${o.transaction_type} ${o.option_type}</td>
         <td data-label="Qty">${o.lots || 0} (${o.quantity || 0})</td>
         <td data-label="Price"    style="font-family:var(--font-mono);">₹${(o.execution_price || o.order_price || 0).toFixed(2)}</td>
@@ -748,6 +1015,106 @@
 
     if (btnManualCE) btnManualCE.addEventListener('click', () => handleManualEntry('CE'));
     if (btnManualPE) btnManualPE.addEventListener('click', () => handleManualEntry('PE'));
+
+    // 4. Voice Telemetry Toggle
+    const voiceBtn = document.getElementById('voice-toggle');
+    const voiceIcon = document.getElementById('voice-icon');
+    const voiceText = document.getElementById('voice-text');
+
+    if (voiceBtn) {
+      voiceBtn.addEventListener('click', () => {
+        isVoiceEnabled = !isVoiceEnabled;
+        if (isVoiceEnabled) {
+          if (voiceIcon) voiceIcon.innerText = '🔊';
+          if (voiceText) {
+            voiceText.innerText = 'Voice: On';
+            voiceText.style.color = 'var(--accent-success)';
+          }
+          voiceBtn.style.borderColor = 'var(--accent-success)';
+          speakMarketAlert("Audio telemetry armed.");
+        } else {
+          if (voiceIcon) voiceIcon.innerText = '🔇';
+          if (voiceText) {
+            voiceText.innerText = 'Voice: Off';
+            voiceText.style.color = '';
+          }
+          voiceBtn.style.borderColor = '';
+          if (window.speechSynthesis) window.speechSynthesis.cancel();
+        }
+      });
+    }
+
+    // 5. Trading Mode Toggle
+    const modeBtn = document.getElementById('mode-toggle');
+    if (modeBtn) {
+      modeBtn.addEventListener('click', async () => {
+        const nextMode = currentMode === 'LIVE' ? 'PAPER' : 'LIVE';
+        if (!confirm(`Switch to ${nextMode} trading mode?\n(Live mode will route orders to real account, Paper mode executes virtual orders)`)) return;
+
+        try {
+          const res = await fetch('/api/control', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'SET_MODE', mode: nextMode })
+          });
+          const data = await res.json();
+          if (data.success) {
+            currentMode = nextMode;
+            showToast(`Switched to ${nextMode} trading mode.`);
+            fetchStatus();
+          } else {
+            showToast('Failed to switch trading mode.');
+          }
+        } catch (e) {
+          showToast('Network error toggling mode.');
+        }
+      });
+    }
+  }
+
+  // ==================== QUANT RATIOS ====================
+  async function fetchQuantMetrics() {
+    try {
+      const res = await fetch('/api/analytics/ratios');
+      const data = await res.json();
+      
+      updateMetricUI('sharpe', parseFloat(data.sharpe), { poor: 1.0, good: 1.5, elite: 2.0 });
+      updateMetricUI('sortino', parseFloat(data.sortino), { poor: 1.5, good: 2.0, elite: 3.0 });
+      updateMetricUI('calmar', parseFloat(data.calmar), { poor: 1.5, good: 3.0, elite: 5.0 });
+      
+    } catch (err) {
+      console.error("Failed to fetch quant metrics", err);
+    }
+  }
+
+  function updateMetricUI(id, value, thresholds) {
+    const valueEl = document.getElementById(`metric-${id}`);
+    const badgeEl = document.getElementById(`badge-${id}`);
+    if (!valueEl || !badgeEl) return;
+
+    valueEl.innerText = value.toFixed(2);
+
+    if (value >= thresholds.elite) {
+      badgeEl.innerText = 'ELITE';
+      badgeEl.style.background = 'rgba(168, 85, 247, 0.2)';
+      badgeEl.style.color = 'rgb(216, 180, 254)';
+    } else if (value >= thresholds.good) {
+      badgeEl.innerText = 'GOOD';
+      badgeEl.style.background = 'rgba(34, 197, 94, 0.2)';
+      badgeEl.style.color = 'rgb(187, 247, 208)';
+    } else if (value >= thresholds.poor) {
+      badgeEl.innerText = 'ACCEPTABLE';
+      badgeEl.style.background = 'rgba(234, 179, 8, 0.2)';
+      badgeEl.style.color = 'rgb(254, 240, 138)';
+    } else if (value > 0) {
+      badgeEl.innerText = 'SUB-PAR';
+      badgeEl.style.background = 'rgba(239, 68, 68, 0.2)';
+      badgeEl.style.color = 'rgb(254, 202, 202)';
+    } else {
+      badgeEl.innerText = 'NEGATIVE';
+      badgeEl.style.background = 'rgba(255, 255, 255, 0.05)';
+      badgeEl.style.color = 'var(--text-secondary)';
+    }
   }
 
   // ==================== MOBILE NAV ====================
@@ -1152,5 +1519,78 @@
       });
     }
   }
+
+  // ==================== TRADE JOURNAL ====================
+  let currentJournalCorrelationId = null;
+
+  window.openJournalModal = function(correlationId) {
+    currentJournalCorrelationId = correlationId;
+    const order = allOrders.find(o => o.correlation_id === correlationId);
+    
+    const tradeIdEl = document.getElementById('journal-trade-id');
+    const tagsEl = document.getElementById('journal-tags');
+    const notesEl = document.getElementById('journal-notes');
+    const modalEl = document.getElementById('journal-modal');
+
+    if (tradeIdEl) tradeIdEl.innerText = `ID: ${correlationId}`;
+    if (tagsEl) tagsEl.value = order && order.tags ? order.tags : '';
+    if (notesEl) notesEl.value = order && order.notes ? order.notes : '';
+    
+    if (modalEl) modalEl.classList.add('active');
+  };
+
+  window.closeJournalModal = function() {
+    const modalEl = document.getElementById('journal-modal');
+    if (modalEl) modalEl.classList.remove('active');
+    currentJournalCorrelationId = null;
+  };
+
+  window.saveTradeJournal = async function() {
+    if (!currentJournalCorrelationId) return;
+    
+    const tagsVal = document.getElementById('journal-tags').value;
+    const notesVal = document.getElementById('journal-notes').value;
+    const btn = document.getElementById('save-journal-btn');
+    
+    if (btn) {
+      btn.innerText = "Saving...";
+      btn.disabled = true;
+    }
+
+    try {
+      const res = await fetch('/api/orders/journal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          correlationId: currentJournalCorrelationId, 
+          tags: tagsVal, 
+          notes: notesVal 
+        })
+      });
+      
+      const data = await res.json();
+      if (data.success) {
+        // Update local cache so we don't have to refresh the page
+        const order = allOrders.find(o => o.correlation_id === currentJournalCorrelationId);
+        if (order) {
+          order.tags = tagsVal;
+          order.notes = notesVal;
+        }
+        
+        window.closeJournalModal();
+        fetchOrders(); // Re-render orders table to show the new tags immediately
+      } else {
+        showToast('Failed to save journal');
+      }
+    } catch (err) {
+      console.error("Failed to save journal:", err);
+      showToast('Network error saving journal');
+    } finally {
+      if (btn) {
+        btn.innerText = "Save Journal";
+        btn.disabled = false;
+      }
+    }
+  };
 
 })();

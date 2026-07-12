@@ -27,6 +27,7 @@ export type BotStatus = 'RUNNING' | 'STOPPED' | 'EMERGENCY_HALT' | 'SYSTEM_HALT'
 
 export interface BotState {
   status: BotStatus;
+  tradingMode?: 'LIVE' | 'PAPER';
   lastUpdated: string;
   activePosition: ActivePosition | null;
   activeHedgePosition?: ActivePosition | null;
@@ -37,6 +38,10 @@ export interface BotState {
     reqPerMinute: number;
     lastUpdated: number;
   };
+  lastProfitableTradeId?: string;
+  lastProfitPct?: number;
+  lastVoiceAlert?: string;
+  lastVoiceAlertId?: string;
 }
 
 export interface ActivePosition {
@@ -54,6 +59,10 @@ export interface ActivePosition {
   scaleOutDone?: boolean;
   entryAtr?: number;
   isStraddleLeg?: boolean;
+  
+  // NEW: Manual Risk Overrides
+  manualHardSL?: number;
+  manualTrailingSL?: number;
 }
 
 // --- KV Key Constants ---

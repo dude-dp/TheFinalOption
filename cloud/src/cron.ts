@@ -16,6 +16,7 @@ import { calculateADX } from './lib/adx';
 import { calculateATR } from './lib/atr';
 import { calculateVWAP } from './lib/vwap';
 import { calculatePCR } from './lib/pcr';
+import { executePaperTrade } from './lib/paper';
 
 // --- Config Loader ---
 
@@ -266,7 +267,7 @@ export async function handleScheduled(env: Env): Promise<void> {
             // Free-Ride Scale Out
             if ((maxProfitPct >= 33.0 || (pos.highestPrice - entry) >= (2.5 * atrPremiumPoints)) && !pos.scaleOutDone && pos.lots > 1) {
               const lotsToSell = Math.floor(pos.lots / 2);
-              await dispatchSquareOff(env, state, accessToken, config, lotsToSell, pos); // Passed targetPos
+              await dispatchSquareOff(env, state, accessToken, config, lotsToSell, pos, currentLTP); // Passed targetPos
               pos.lots -= lotsToSell;
               pos.quantity -= (lotsToSell * config.niftyLotSize);
               pos.scaleOutDone = true;
@@ -282,12 +283,19 @@ export async function handleScheduled(env: Env): Promise<void> {
               if (h3 < 0 && h2 < 0 && h1 < 0 && h3 < h2 && h2 < h1) isMomentumDecaying = true;
             }
 
-            const hardSLPrice = entry - (1.5 * atrPremiumPoints);
-            let activeTSLPrice = pos.highestPrice - (1.5 * atrPremiumPoints);
+            const hardSLBase = entry - (1.5 * atrPremiumPoints);
+            let activeTSLBase = pos.highestPrice - (1.5 * atrPremiumPoints);
             
             if (isMomentumDecaying && (currentLTP - entry) > (0.5 * atrPremiumPoints)) {
-              activeTSLPrice = Math.max(activeTSLPrice, currentLTP - (0.5 * atrPremiumPoints)); 
+              activeTSLBase = Math.max(activeTSLBase, currentLTP - (0.5 * atrPremiumPoints)); 
             }
+
+            // ==========================================
+            // MANUAL OVERRIDE INJECTION
+            // ==========================================
+            // If a human dragged the line, use that exact price. Otherwise, use the ATR engine.
+            const hardSLPrice = pos.manualHardSL || hardSLBase;
+            const activeTSLPrice = pos.manualTrailingSL || activeTSLBase;
 
             const isHardSLHit = currentLTP <= hardSLPrice && pos.highestPrice === entry;
             const isTrailingSLHit = currentLTP <= activeTSLPrice && !isHardSLHit;
@@ -297,7 +305,7 @@ export async function handleScheduled(env: Env): Promise<void> {
               await logTelemetry(env.TRADING_DB, spotPrice, pos.strikePrice, currentMacd, prevMacd, 'NONE', state.status, `EXIT: ${exitReason} (${pos.optionType}). LTP: ₹${currentLTP}, TSL Line: ₹${activeTSLPrice.toFixed(2)}`);
               await notifyDiscord(env.DISCORD_WEBHOOK_URL, `🛡️ **STOP LOSS: ${exitReason}**\nContract: \`${pos.tradingSymbol}\`\nLTP: ₹${currentLTP}`);
 
-              await dispatchSquareOff(env, state, accessToken, config, undefined, pos); // Passed targetPos
+              await dispatchSquareOff(env, state, accessToken, config, undefined, pos, currentLTP); // Passed targetPos
               state.lockTimestamp = Date.now();
               await saveBotState(env.TRADING_KV, state);
               break; // Stop loop to only dispatch one order per cron tick (prevents Upstox rate limits)
@@ -392,8 +400,6 @@ export async function handleScheduled(env: Env): Promise<void> {
         return;
       }
 
-      const msDispatched = Date.now();
-
       // -- DISPATCH LEG 1 (CE) --
       const ceCorrId = generateCorrelationId();
       const ceQty = ceLots * config.niftyLotSize;
@@ -402,14 +408,6 @@ export async function handleScheduled(env: Env): Promise<void> {
         tradingSymbol: (targetCE as any).tradingSymbol, optionType: 'CE', strikePrice: ceStrike,
         transactionType: 'BUY', quantity: ceQty, lots: ceLots, orderPrice: Math.round(((targetCE as any).ltp * 1.01) * 20) / 20,
         status: 'PENDING', createdAt: new Date().toISOString()
-      };
-      await addPendingOrder(env.TRADING_KV, ceOrder);
-      await env.TRADING_DB.prepare(`INSERT INTO order_ledger (order_id, correlation_id, instrument_token, trading_symbol, option_type, strike_price, transaction_type, quantity, lots, order_price, order_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(ceOrder.orderId, ceCorrId, ceOrder.instrumentToken, ceOrder.tradingSymbol, 'CE', ceStrike, 'BUY', ceQty, ceLots, (targetCE as any).ltp, 'PENDING').run();
-      
-      state.activePosition = {
-        correlationId: ceCorrId, optionType: 'CE', instrumentToken: (targetCE as any).instrumentKey,
-        tradingSymbol: (targetCE as any).tradingSymbol, strikePrice: ceStrike, entryPrice: (targetCE as any).ltp, highestPrice: (targetCE as any).ltp,
-        quantity: ceQty, lots: ceLots, enteredAt: new Date().toISOString(), entryAtr: currentAtr, isStraddleLeg: true
       };
 
       // -- DISPATCH LEG 2 (PE) --
@@ -421,20 +419,57 @@ export async function handleScheduled(env: Env): Promise<void> {
         transactionType: 'BUY', quantity: peQty, lots: peLots, orderPrice: Math.round(((targetPE as any).ltp * 1.01) * 20) / 20,
         status: 'PENDING', createdAt: new Date().toISOString()
       };
-      await addPendingOrder(env.TRADING_KV, peOrder);
-      await env.TRADING_DB.prepare(`INSERT INTO order_ledger (order_id, correlation_id, instrument_token, trading_symbol, option_type, strike_price, transaction_type, quantity, lots, order_price, order_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(peOrder.orderId, peCorrId, peOrder.instrumentToken, peOrder.tradingSymbol, 'PE', peStrike, 'BUY', peQty, peLots, (targetPE as any).ltp, 'PENDING').run();
 
-      state.activeHedgePosition = {
-        correlationId: peCorrId, optionType: 'PE', instrumentToken: (targetPE as any).instrumentKey,
-        tradingSymbol: (targetPE as any).tradingSymbol, strikePrice: peStrike, entryPrice: (targetPE as any).ltp, highestPrice: (targetPE as any).ltp,
-        quantity: peQty, lots: peLots, enteredAt: new Date().toISOString(), entryAtr: currentAtr, isStraddleLeg: true
-      };
+      const isPaperMode = state.tradingMode === 'PAPER';
 
-      state.lockTimestamp = Date.now();
-      await saveBotState(env.TRADING_KV, state);
-      
-      await notifyDiscord(env.DISCORD_WEBHOOK_URL, `🦔 **STRADDLE EXECUTED (Choppy Market)**\nLeg 1: CE @ ₹${(targetCE as any).ltp}\nLeg 2: PE @ ₹${(targetPE as any).ltp}`);
-      await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, signal, state.status, `STRADDLE EXECUTED: Bought ATM CE & PE.`);
+      if (isPaperMode) {
+        // ==========================================
+        // PAPER TRADING VIRTUAL STRADDLE EXECUTION
+        // ==========================================
+        await executePaperTrade(env, ceOrder, (targetCE as any).ltp);
+        await executePaperTrade(env, peOrder, (targetPE as any).ltp);
+
+        // Fetch back the newly written activePosition and activeHedgePosition, add straddle specific fields
+        const stateRaw = await env.TRADING_KV.get(KV_KEYS.BOT_STATE);
+        if (stateRaw) {
+          const updatedState = JSON.parse(stateRaw);
+          if (updatedState.activePosition) updatedState.activePosition.isStraddleLeg = true;
+          if (updatedState.activeHedgePosition) updatedState.activeHedgePosition.isStraddleLeg = true;
+          updatedState.lockTimestamp = Date.now();
+          await saveBotState(env.TRADING_KV, updatedState);
+        }
+
+        await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, signal, state.status, 
+          `[PAPER MODE] Virtual Straddle Fill -> CE @ ₹${(targetCE as any).ltp} & PE @ ₹${(targetPE as any).ltp}`
+        );
+      } else {
+        // ==========================================
+        // LIVE TRADING REAL STRADDLE EXECUTION
+        // ==========================================
+        await addPendingOrder(env.TRADING_KV, ceOrder);
+        await env.TRADING_DB.prepare(`INSERT INTO order_ledger (order_id, correlation_id, instrument_token, trading_symbol, option_type, strike_price, transaction_type, quantity, lots, order_price, order_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(ceOrder.orderId, ceCorrId, ceOrder.instrumentToken, ceOrder.tradingSymbol, 'CE', ceStrike, 'BUY', ceQty, ceLots, (targetCE as any).ltp, 'PENDING').run();
+        
+        state.activePosition = {
+          correlationId: ceCorrId, optionType: 'CE', instrumentToken: (targetCE as any).instrumentKey,
+          tradingSymbol: (targetCE as any).tradingSymbol, strikePrice: ceStrike, entryPrice: (targetCE as any).ltp, highestPrice: (targetCE as any).ltp,
+          quantity: ceQty, lots: ceLots, enteredAt: new Date().toISOString(), entryAtr: currentAtr, isStraddleLeg: true
+        };
+
+        await addPendingOrder(env.TRADING_KV, peOrder);
+        await env.TRADING_DB.prepare(`INSERT INTO order_ledger (order_id, correlation_id, instrument_token, trading_symbol, option_type, strike_price, transaction_type, quantity, lots, order_price, order_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(peOrder.orderId, peCorrId, peOrder.instrumentToken, peOrder.tradingSymbol, 'PE', peStrike, 'BUY', peQty, peLots, (targetPE as any).ltp, 'PENDING').run();
+
+        state.activeHedgePosition = {
+          correlationId: peCorrId, optionType: 'PE', instrumentToken: (targetPE as any).instrumentKey,
+          tradingSymbol: (targetPE as any).tradingSymbol, strikePrice: peStrike, entryPrice: (targetPE as any).ltp, highestPrice: (targetPE as any).ltp,
+          quantity: peQty, lots: peLots, enteredAt: new Date().toISOString(), entryAtr: currentAtr, isStraddleLeg: true
+        };
+
+        state.lockTimestamp = Date.now();
+        await saveBotState(env.TRADING_KV, state);
+        
+        await notifyDiscord(env.DISCORD_WEBHOOK_URL, `🦔 **STRADDLE EXECUTED (Choppy Market)**\nLeg 1: CE @ ₹${(targetCE as any).ltp}\nLeg 2: PE @ ₹${(targetPE as any).ltp}`);
+        await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, signal, state.status, `STRADDLE EXECUTED: Bought ATM CE & PE.`);
+      }
       
       return; // Critical: Stop here so we don't also execute a normal directional trade.
     }
@@ -633,40 +668,56 @@ export async function handleScheduled(env: Env): Promise<void> {
       createdAt: new Date().toISOString(),
     };
 
-    // Write to KV for local daemon polling
-    await addPendingOrder(env.TRADING_KV, order);
+    const isPaperMode = state.tradingMode === 'PAPER';
 
-    // Log to D1
-    await env.TRADING_DB.prepare(
-      `INSERT INTO order_ledger (order_id, correlation_id, instrument_token, trading_symbol, option_type, strike_price, transaction_type, quantity, lots, order_price, order_status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(order.orderId, correlationId, order.instrumentToken, order.tradingSymbol, optionType, strike, 'BUY', quantity, lots, premium, 'PENDING').run();
+    if (isPaperMode) {
+      // ==========================================
+      // PAPER TRADING VIRTUAL EXECUTION
+      // ==========================================
+      await executePaperTrade(env, order, premium);
+      
+      await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, signal, state.status, 
+        `[PAPER MODE] Virtual Fill -> ${signal} → ${targetOption.tradingSymbol} × ${lots} lots @ ₹${premium}`
+      );
+    } else {
+      // ==========================================
+      // LIVE TRADING REAL EXECUTION
+      // ==========================================
+      // Write to KV for local daemon polling
+      await addPendingOrder(env.TRADING_KV, order);
 
-    // Update bot state with new position intent
-    state.activePosition = {
-      correlationId,
-      optionType: optionType as any,
-      instrumentToken: targetOption.instrumentKey,
-      tradingSymbol: targetOption.tradingSymbol,
-      strikePrice: strike,
-      entryPrice: premium,
-      highestPrice: premium,
-      quantity,
-      lots,
-      enteredAt: new Date().toISOString(),
-      entryAtr: currentAtr,
-    };
-    state.lastMacdLine = currentMacd;
-    state.lockTimestamp = null;
-    await saveBotState(env.TRADING_KV, state);
+      // Log to D1
+      await env.TRADING_DB.prepare(
+        `INSERT INTO order_ledger (order_id, correlation_id, instrument_token, trading_symbol, option_type, strike_price, transaction_type, quantity, lots, order_price, order_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(order.orderId, correlationId, order.instrumentToken, order.tradingSymbol, optionType, strike, 'BUY', quantity, lots, premium, 'PENDING').run();
 
-    await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, signal, state.status,
-      `SIGNAL: ${signal} → ${targetOption.tradingSymbol} × ${lots} lots @ ₹${premium}`);
+      // Update bot state with new position intent
+      state.activePosition = {
+        correlationId,
+        optionType: optionType as any,
+        instrumentToken: targetOption.instrumentKey,
+        tradingSymbol: targetOption.tradingSymbol,
+        strikePrice: strike,
+        entryPrice: premium,
+        highestPrice: premium,
+        quantity,
+        lots,
+        enteredAt: new Date().toISOString(),
+        entryAtr: currentAtr,
+      };
+      state.lastMacdLine = currentMacd;
+      state.lockTimestamp = null;
+      await saveBotState(env.TRADING_KV, state);
 
-    await notifyDiscord(
-      env.DISCORD_WEBHOOK_URL,
-      `🟢 **NEW ENTRY EXECUTED**\nSignal: **${signal}**\nContract: \`${targetOption.tradingSymbol}\`\nLots: **${lots}**\nEst. Premium: ₹${premium}\nBuffered Limit: ₹${bufferedPrice}`
-    );
+      await logTelemetry(env.TRADING_DB, spotPrice, atmStrike, currentMacd, prevMacd, signal, state.status,
+        `SIGNAL: ${signal} → ${targetOption.tradingSymbol} × ${lots} lots @ ₹${premium}`);
+
+      await notifyDiscord(
+        env.DISCORD_WEBHOOK_URL,
+        `🟢 **NEW ENTRY EXECUTED**\nSignal: **${signal}**\nContract: \`${targetOption.tradingSymbol}\`\nLots: **${lots}**\nEst. Premium: ₹${premium}\nBuffered Limit: ₹${bufferedPrice}`
+      );
+    }
 
   } catch (error: any) {
     // Ensure lock is released on error
@@ -683,7 +734,7 @@ export async function handleScheduled(env: Env): Promise<void> {
 
 // --- Square Off Helper ---
 
-async function dispatchSquareOff(env: Env, state: BotState, token: string, config: BotConfig, lotsToSell?: number, targetPos?: ActivePosition): Promise<void> {
+async function dispatchSquareOff(env: Env, state: BotState, token: string, config: BotConfig, lotsToSell?: number, targetPos?: ActivePosition, currentLtp?: number): Promise<void> {
   const pos = targetPos || state.activePosition;
   if (!pos) return;
   const correlationId = lotsToSell !== undefined ? `SCAL-${generateCorrelationId()}` : generateCorrelationId();
@@ -705,6 +756,26 @@ async function dispatchSquareOff(env: Env, state: BotState, token: string, confi
     status: 'PENDING',
     createdAt: new Date().toISOString(),
   };
+
+  const isPaperMode = state.tradingMode === 'PAPER';
+  if (isPaperMode) {
+    let currentLtpToUse = currentLtp;
+    if (!currentLtpToUse) {
+      try {
+        const ltpData = await getLTP(token, [pos.instrumentToken]);
+        currentLtpToUse = ltpData[pos.instrumentToken] || 0;
+      } catch (e) {
+        currentLtpToUse = 0;
+      }
+    }
+
+    await executePaperTrade(env, sellOrder, currentLtpToUse);
+
+    await logTelemetry(env.TRADING_DB, 0, 0, 0, 0, 'NONE', state.status, 
+      `[PAPER MODE] Virtual Square-Off -> ${pos.tradingSymbol} (${lots} lots) @ ₹${currentLtpToUse.toFixed(2)}`
+    );
+    return;
+  }
 
   await addPendingOrder(env.TRADING_KV, sellOrder);
 
