@@ -30,60 +30,105 @@ function logToBackfill(message: string) {
   fs.appendFileSync(path.join(logDir, 'backfill.log'), formattedMessage, 'utf-8');
 }
 
-// Simulated or Actual Upstox Fetcher
-// Make sure to import your actual brokerAdapter or Upstox API client here
+// 1. Live Upstox API Fetcher
 async function fetchUpstoxHistoricalData(dateStr: string) {
-  // TODO: Replace this mock with your actual Upstox API call for 1-minute historical candles
-  // return await brokerAdapter.getHistoricalCandles(instrumentToken, dateStr, dateStr);
+  // Upstox API requires URL-encoded instrument keys. 'NSE_INDEX|Nifty 50' is the standard key for the NIFTY Spot.
+  const instrumentKey = encodeURIComponent('NSE_INDEX|Nifty 50');
+  const interval = '1minute';
   
-  return [
-    { timestamp_instrument: `${dateStr}T09:15:00Z_NIFTY`, open: 24000, high: 24050, low: 23980, close: 24020, volume: 1500 },
-    // ... more candles
-  ];
+  // Historical API Endpoint: /historical-candle/{instrumentKey}/{interval}/{to_date}/{from_date}
+  const url = `https://api.upstox.com/v2/historical-candle/${instrumentKey}/${interval}/${dateStr}/${dateStr}`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        // Ensure you have UPSTOX_ACCESS_TOKEN or UPSTOX_TOKEN in your .env
+        'Authorization': `Bearer ${process.env.UPSTOX_ACCESS_TOKEN || process.env.UPSTOX_TOKEN || ''}` 
+      }
+    });
+
+    if (!response.ok) {
+      logToBackfill(`HTTP Error ${response.status} fetching data for ${dateStr}`);
+      return [];
+    }
+
+    const json = await response.json() as any;
+
+    // Upstox returns success but might have null data on weekends/holidays
+    if (json.status !== 'success' || !json.data || !json.data.candles) {
+      return []; 
+    }
+
+    // Upstox format: [ timestamp, open, high, low, close, volume, open_interest ]
+    const formattedCandles = json.data.candles.map((candleData: any[]) => {
+      const timestamp = candleData[0]; // e.g., "2026-07-13T09:15:00+05:30"
+      return {
+        timestamp: new Date(timestamp).toISOString(), // Format to ISO to match nifty_candles schema
+        open: parseFloat(candleData[1]),
+        high: parseFloat(candleData[2]),
+        low: parseFloat(candleData[3]),
+        close: parseFloat(candleData[4]),
+        volume: parseInt(candleData[5], 10)
+      };
+    });
+
+    // Upstox returns candles in descending order (newest first). 
+    // We reverse it so it goes chronologically (09:15 AM -> 03:30 PM).
+    return formattedCandles.reverse();
+
+  } catch (error: any) {
+    logToBackfill(`Network Error fetching Upstox data for ${dateStr}: ${error.message}`);
+    return [];
+  }
 }
 
+// 2. Updated Execution Engine (Using 'nifty_candles' table)
 async function runHistoricalBackfill(days: number) {
   try {
     logToBackfill(`STARTING BACKFILL: Initiating historical sync for the past ${days} days.`);
-
-    // 1. Calculate historical date ranges
+    
     for (let i = days; i >= 0; i--) {
       const targetDate = new Date();
       targetDate.setDate(targetDate.getDate() - i);
+      
+      // Format as YYYY-MM-DD for Upstox API
       const dateStr = targetDate.toISOString().split('T')[0];
-
-      logToBackfill(`PROCESSING: Fetching historical NIFTY options data from Upstox for date: ${dateStr}`);
-
-      // 1. Fetch the actual data
+      
+      logToBackfill(`PROCESSING: Fetching historical NIFTY Spot data from Upstox for date: ${dateStr}`);
+      
       const candles = await fetchUpstoxHistoricalData(dateStr);
       
       if (!candles || candles.length === 0) {
-        logToBackfill(`WARN: No candles retrieved for ${dateStr}. Skipping insertion.`);
+        logToBackfill(`WARN: 0 candles retrieved for ${dateStr}. (Likely a weekend or market holiday). Skipping.`);
         continue;
       }
 
-      logToBackfill(`INGESTION: Retrieved ${candles.length} candles for ${dateStr}. Streaming directly to Supabase...`);
-
+      logToBackfill(`INGESTION: Retrieved ${candles.length} real 1-min candles for ${dateStr}. Streaming to Supabase 'nifty_candles'...`);
+      
       if (!supabase) {
         logToBackfill(`WARNING: Supabase keys missing. Cannot write to database.`);
         continue;
       }
 
-      // 2. ACTIVE SUPABASE INSERTION (Uncommented)
       const { error } = await supabase
-        .from('historical_candles')
+        .from('nifty_candles')
         .upsert(candles, { 
-          onConflict: 'timestamp_instrument',
-          ignoreDuplicates: false // Updates existing records if they overlap
+          onConflict: 'timestamp',
+          ignoreDuplicates: false 
         });
       
       if (error) {
-        throw new Error(`Supabase Insert Failed: ${error.message} (Details: ${error.details})`);
+        throw new Error(`Supabase Insert Failed: ${error.message}`);
       }
-
-      logToBackfill(`SUCCESS: Successfully committed session records to Supabase for ${dateStr}.`);
+      
+      logToBackfill(`SUCCESS: Successfully committed ${candles.length} session records to Supabase for ${dateStr}.`);
+      
+      // Artificial delay of 500ms between daily API calls to avoid hitting Upstox rate limits
+      await new Promise(resolve => setTimeout(resolve, 500)); 
     }
-
+    
     logToBackfill(`COMPLETED: Full backfill migration sequence finished cleanly.`);
   } catch (error: any) {
     logToBackfill(`FATAL ERROR DURING BACKFILL: ${error.message || error}`);
