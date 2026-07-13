@@ -91,108 +91,106 @@ api.get('/api/ws', async (c) => {
  * Receives daemon's RSS memory, checks watchdog, returns any PENDING orders.
  */
 api.post('/api/poll', async (c) => {
-  const body = await c.req.json<{
-    secret: string;
-    memoryRss?: number;
-    memoryHeapUsed?: number;
-    rateMetrics?: { reqPerSecond: number; reqPerMinute: number };
-  }>();
-
-  // 1. Authenticate the payload
-  const expectedSecret = c.env.POLL_SECRET;
-  if (!body.secret || body.secret !== expectedSecret) {
-    return c.json({ error: 'Unauthorized' }, 401);
-  }
-
-  const kv = c.env.TRADING_KV;
-
-  // 2. Fetch the active state of the bot
-  const stateRaw = await kv.get(KV_KEYS.BOT_STATE);
-  if (!stateRaw) return c.json({ error: 'Bot state not found' }, 404);
-  const state: BotState = JSON.parse(stateRaw);
-
-  // Update live rate metrics from the daemon
-  if (body.rateMetrics) {
-    // 🚨 RACE CONDITION FIX: Fetch the absolute latest state again right before writing
-    // This ensures we don't accidentally overwrite a "RUNNING" status that the UI just set.
-    const latestStateRaw = await kv.get(KV_KEYS.BOT_STATE);
-    const latestState: BotState = latestStateRaw ? JSON.parse(latestStateRaw) : state;
-
-    latestState.daemonMetrics = {
-      reqPerSecond: body.rateMetrics.reqPerSecond,
-      reqPerMinute: body.rateMetrics.reqPerMinute,
-      lastUpdated: Date.now()
-    };
+  try {
+    const body = await c.req.json<{ 
+      secret: string; 
+      memoryRss?: number; 
+      memoryHeapUsed?: number;
+      rateMetrics?: { reqPerSecond: number; reqPerMinute: number };
+    }>();
     
-    await kv.put(KV_KEYS.BOT_STATE, JSON.stringify(latestState));
-    // 🚨 UPDATE THE ACTUAL HEARTBEAT KEY THE CRON JOB CHECKS
-    await kv.put('daemon_last_heartbeat', Date.now().toString());
-  }
+    if (body.secret !== c.env.POLL_SECRET) return c.json({ error: 'Unauthorized' }, 401);
 
-  let triggerWatchdogRestart = false;
-  const MEMORY_LIMIT_BYTES = 500 * 1024 * 1024; // Exactly 500 MB
+    const kv = c.env.TRADING_KV;
+    // Initialize Supabase client
+    const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY);
 
-  // 3. Evaluate Memory Limits & Position Safeties
-  if (body.memoryRss && body.memoryRss > MEMORY_LIMIT_BYTES) {
-    // CRITICAL SAFETY CHECK: Verify no directional or straddle positions are open
-    const hasNoActivePositions = !state.activePosition && !state.activeHedgePosition;
+    const stateRaw = await kv.get(KV_KEYS.BOT_STATE);
+    if (!stateRaw) return c.json({ error: 'Bot state not found' }, 404);
+    const state: BotState = JSON.parse(stateRaw);
 
-    if (hasNoActivePositions) {
-      triggerWatchdogRestart = true;
-
-      // Log an audit trail entry into the D1 Telemetry Table for system tracking
-      const currentMemoryMB = (body.memoryRss / 1024 / 1024).toFixed(1);
-      await c.env.TRADING_DB.prepare(
-        `INSERT INTO system_telemetry (nifty_spot, atm_strike, macd_line, prev_macd_line, signal_generated, bot_status, log_message) 
-         VALUES (0, 0, 0, 0, 'NONE', ?, ?)`
-      ).bind(
-        state.status || 'STOPPED',
-        `WATCHDOG: Triggering daemon restart. RSS: ${currentMemoryMB}MB exceeds 500MB threshold. Position state clear.`
-      ).run();
+    // 1. Update KV Heartbeat Metrics (Race Condition Safe)
+    if (body.rateMetrics) {
+      const latestStateRaw = await kv.get(KV_KEYS.BOT_STATE);
+      const latestState: BotState = latestStateRaw ? JSON.parse(latestStateRaw) : state;
+      
+      latestState.daemonMetrics = {
+        reqPerSecond: body.rateMetrics.reqPerSecond,
+        reqPerMinute: body.rateMetrics.reqPerMinute,
+        lastUpdated: Date.now()
+      };
+      await kv.put(KV_KEYS.BOT_STATE, JSON.stringify(latestState));
+      await kv.put('daemon_last_heartbeat', Date.now().toString());
     }
-  }
 
-  // 4. Process pending orders if we are NOT restarting
-  const orders: OrderPayload[] = [];
-  let accessToken = null;
+    // 2. Watchdog Memory Check (Writes to Supabase)
+    let triggerWatchdogRestart = false;
+    const MEMORY_LIMIT_BYTES = 500 * 1024 * 1024; // 500 MB limit
 
-  if (!triggerWatchdogRestart) {
-    // Get pending orders array from KV
-    const rawPending = await kv.get(KV_KEYS.PENDING_ORDERS);
-    const pendingList: OrderPayload[] = rawPending ? JSON.parse(rawPending) : [];
-    const remainingList: OrderPayload[] = [];
-    let changed = false;
-
-    for (const order of pendingList) {
-      if (order.status === 'PENDING') {
-        orders.push(order);
-        // Mark as DISPATCHED to prevent duplicate pickup
-        order.status = 'DISPATCHED';
-        changed = true;
-        // Update D1
-        await c.env.TRADING_DB.prepare(
-          `UPDATE order_ledger SET order_status = 'DISPATCHED', updated_at = datetime('now') WHERE correlation_id = ?`
-        ).bind(order.correlationId).run();
+    if (body.memoryRss && body.memoryRss > MEMORY_LIMIT_BYTES) {
+      const hasNoActivePositions = !state.activePosition && !state.activeHedgePosition;
+      if (hasNoActivePositions) {
+        triggerWatchdogRestart = true;
+        const currentMemoryMB = (body.memoryRss / 1024 / 1024).toFixed(1);
+        
+        // Supabase Insert instead of D1
+        await supabase.from('system_telemetry').insert({
+          nifty_spot: 0,
+          atm_strike: 0,
+          macd_line: 0,
+          prev_macd_line: 0,
+          signal_generated: 'NONE',
+          bot_status: state.status || 'STOPPED',
+          log_message: `WATCHDOG: Triggering daemon restart. RSS: ${currentMemoryMB}MB exceeds threshold.`
+        });
       }
-      remainingList.push(order);
     }
 
-    if (changed) {
-      await kv.put(KV_KEYS.PENDING_ORDERS, JSON.stringify(remainingList));
+    // 3. Pending Order Processing (Updates Supabase)
+    const orders: OrderPayload[] = [];
+    let accessToken = null;
+    
+    if (!triggerWatchdogRestart) {
+      const rawPending = await kv.get(KV_KEYS.PENDING_ORDERS);
+      const pendingList: OrderPayload[] = rawPending ? JSON.parse(rawPending) : [];
+      const remainingList: OrderPayload[] = [];
+      let changed = false;
+
+      for (const order of pendingList) {
+        if (order.status === 'PENDING') {
+          orders.push(order);
+          order.status = 'DISPATCHED';
+          changed = true;
+          
+          // Supabase Update instead of D1
+          await supabase
+            .from('order_ledger')
+            .update({ 
+              order_status: 'DISPATCHED', 
+              updated_at: new Date().toISOString() 
+            })
+            .eq('correlation_id', order.correlationId);
+        }
+        remainingList.push(order);
+      }
+
+      if (changed) {
+        await kv.put(KV_KEYS.PENDING_ORDERS, JSON.stringify(remainingList));
+      }
+      accessToken = await kv.get(KV_KEYS.UPSTOX_ACCESS_TOKEN);
     }
 
-    // Get access token for daemon to use
-    accessToken = await kv.get(KV_KEYS.UPSTOX_ACCESS_TOKEN);
+    return c.json({
+      success: true,
+      shouldRestart: triggerWatchdogRestart,
+      hasOrders: orders.length > 0,
+      orders,
+      accessToken,
+      botStatus: state.status || 'STOPPED',
+    });
+  } catch (err: any) {
+    return c.json({ error: 'Crash in /api/poll', details: err.message, stack: err.stack }, 500);
   }
-
-  return c.json({
-    success: true,
-    shouldRestart: triggerWatchdogRestart,
-    hasOrders: orders.length > 0,
-    orders,
-    accessToken,
-    botStatus: state.status || 'STOPPED',
-  });
 });
 
 /**
