@@ -7,7 +7,7 @@ import { logInfo, logWarn, logError, logTrade } from './logger.js';
 import { StateEngine } from './state-engine.js';
 import { brokerAdapter } from './broker-adapter.js';
 import { ApiTracker, tracker } from './tracker.js';
-import { executeEmergencyMarketExit } from './iceberg.js';
+
 import { liquidityScanner } from './liquidity.js';
 import type { MarketDepth } from './ws-client.js';
 import { activeWsClient } from './index.js'; // 🟢 NEW IMPORT
@@ -316,57 +316,51 @@ export async function executeOrderStealth(order: any, upstoxToken: string) {
   };
 }
 
-// --- Circuit Breaker Actions ---
+// --- 🟢 NEW: 100% Native Circuit Breaker Action ---
 
-export async function executeMarketExitAll(workerUrl: string, secret: string) {
-  try {
-    logInfo('🚨 Triggering emergency market square-off via Cloudflare...');
-    const res = await fetch(`${workerUrl}/api/emergency-squareoff`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Basic ' + Buffer.from('vdineshprabu:Healthywealth007#').toString('base64')
-      },
-      body: JSON.stringify({ secret }) // Depending on auth
-    });
-    
-    if (res.ok) {
-      logInfo('✅ Emergency square-off dispatched to queue.');
-    } else {
-      const err = await res.text();
-      logError(`❌ Emergency square-off failed: ${err}`);
-    }
-  } catch (err: any) {
-    logError(`❌ Emergency square-off network error: ${err.message}`);
+export async function executeEmergencyMarketExit() {
+  logInfo('🚨 [EXECUTOR] Initiating Native Emergency Market Square-Off...');
+  if (!StateEngine.activeToken) {
+    logError('❌ [EXECUTOR] Cannot exit market: No active token.');
+    return;
   }
-}
-
-export async function haltTradingSession(workerUrl: string, secret: string, reason: string) {
+  
   try {
-    logInfo(`🚨 Halting Trading Session: ${reason}`);
-    await fetch(`${workerUrl}/api/control`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Poll-Secret': secret
-      },
-      body: JSON.stringify({ action: 'EMERGENCY_HALT', reason })
-    });
+    const positions = await brokerAdapter.getOpenPositions();
+    const activePositions = positions.filter((p: any) => p.netQuantity !== 0);
+
+    if (activePositions.length === 0) {
+      logInfo('✅ [EXECUTOR] No open positions to square off.');
+      return;
+    }
+
+    for (const pos of activePositions) {
+      const transactionType = pos.netQuantity > 0 ? 'SELL' : 'BUY';
+      const orderPayload = {
+        correlationId: `EXIT-${Date.now()}`,
+        instrumentToken: pos.instrumentToken,
+        tradingSymbol: pos.tradingSymbol,
+        transactionType: transactionType,
+        lots: Math.abs(pos.netQuantity) / 25,
+        quantity: Math.abs(pos.netQuantity),
+        orderPrice: 0, // MARKET order for guaranteed ruthless exit
+      };
+      
+      logInfo(`[EXECUTOR] Squaring off ${pos.tradingSymbol} (${pos.netQuantity} qty)...`);
+      await executeOrderStealth(orderPayload, StateEngine.activeToken);
+    }
+    logInfo('✅ [EXECUTOR] Native Emergency Square-Off Complete.');
   } catch (err: any) {
-    logError(`❌ Failed to halt trading session: ${err.message}`);
+    logError(`❌ [EXECUTOR] Critical failure during market exit: ${err.message}`);
   }
 }
 
 export class ExecutionEngine {
   private readonly MAX_ACCEPTABLE_SLIPPAGE_POINTS = 2.0;
-
-  // Static delta floor kept for candle-close MACD confirmation (entry filter)
   private readonly MIN_REQUIRED_DELTA = 30;
-
-  // 🚨 DYNAMIC TAPE READING THRESHOLDS (X-Ray Matrix)
-  private readonly MIN_TICK_VOLUME = 200;           // Ignore noise in first few seconds of a candle
-  private readonly ABSOLUTE_DELTA_FLOOR = 120;      // Hard minimum net tick imbalance
-  private readonly RELATIVE_DELTA_DOMINANCE = 0.35; // 35% of all ticks must be one-sided
+  private readonly MIN_TICK_VOLUME = 200;           
+  private readonly ABSOLUTE_DELTA_FLOOR = 120;      
+  private readonly RELATIVE_DELTA_DOMINANCE = 0.35; 
   private isExecutingTapeExit = false;
 
   constructor() {
@@ -375,7 +369,6 @@ export class ExecutionEngine {
 
   private async evaluateCircuitBreakers(): Promise<boolean> {
     const state = tracker.getState();
-
     if (state.isHalted) return false;
 
     if (state.dailyRealizedPnL >= state.hardCeiling) {
@@ -392,7 +385,6 @@ export class ExecutionEngine {
         return false;
       }
     }
-
     return true; 
   }
 
@@ -407,215 +399,148 @@ export class ExecutionEngine {
     }
   }
 
-  /**
-   * 🔬 X-RAY VISION: Runs on every single WebSocket tick if a position is open.
-   * Calculates institutional exhaustion dynamically based on real-time volume.
-   * A static threshold would fire on noise — this one adapts to the candle's actual energy.
-   */
   public async monitorLiveOrderFlow(liveDelta: number, liveVolume: number, currentLtp: number): Promise<void> {
-    const state = tracker.getState();
-
-    // Derive option type from the instrument token (Upstox tokens end in 'CE' or 'PE')
     const token = tracker.activePositionToken;
+    if (!token) return;
+
     const isLong  = token.endsWith('CE') || token.includes('CE-');
     const isShort = token.endsWith('PE') || token.includes('PE-');
 
-    // Skip if: no active position, already in exit, or candle has too few ticks to be reliable
     if (tracker.activePositionQty === 0 || this.isExecutingTapeExit || liveVolume < this.MIN_TICK_VOLUME) return;
 
-    // Dynamic threshold: the greater of the hard floor OR 35% of live candle volume
-    const dynamicThreshold = Math.max(
-      this.ABSOLUTE_DELTA_FLOOR,
-      liveVolume * this.RELATIVE_DELTA_DOMINANCE
-    );
+    const dynamicThreshold = Math.max(this.ABSOLUTE_DELTA_FLOOR, liveVolume * this.RELATIVE_DELTA_DOMINANCE);
 
-    if (isLong) {
-      // 📉 LONG EXHAUSTION: Holding CE. Look for massive sudden SELLING pressure.
-      if (liveDelta <= -dynamicThreshold) {
-        logWarn(
-          `[TAPE EXIT] 🚨 Institutional SELLING Wall Detected! ` +
-          `Live Volume: ${liveVolume} | Live Delta: ${liveDelta} (Threshold: -${dynamicThreshold.toFixed(0)}). ` +
-          `Front-running the dump!`
-        );
-        await this.executeOrderFlowExit('CE Tape Exhaustion / Absorption Trap');
-      }
-    } else if (isShort) {
-      // 📈 SHORT EXHAUSTION: Holding PE. Look for massive sudden BUYING pressure.
-      if (liveDelta >= dynamicThreshold) {
-        logWarn(
-          `[TAPE EXIT] 🚨 Institutional BUYING Wall Detected! ` +
-          `Live Volume: ${liveVolume} | Live Delta: ${liveDelta} (Threshold: +${dynamicThreshold.toFixed(0)}). ` +
-          `Front-running the short squeeze!`
-        );
-        await this.executeOrderFlowExit('PE Tape Exhaustion / Squeeze');
-      }
+    if (isLong && liveDelta <= -dynamicThreshold) {
+      logWarn(`[TAPE EXIT] 🚨 Institutional SELLING Wall Detected! Front-running the dump!`);
+      await this.executeOrderFlowExit('CE Tape Exhaustion / Absorption Trap');
+    } else if (isShort && liveDelta >= dynamicThreshold) {
+      logWarn(`[TAPE EXIT] 🚨 Institutional BUYING Wall Detected! Front-running the short squeeze!`);
+      await this.executeOrderFlowExit('PE Tape Exhaustion / Squeeze');
     }
   }
 
-  /**
-   * Bypasses standard trailing stops — executes a ruthless MARKET exit instantly.
-   */
   private async executeOrderFlowExit(reason: string): Promise<void> {
     this.isExecutingTapeExit = true;
     try {
       logInfo(`[EXECUTOR] Executing high-speed Tape Exit. Reason: ${reason}`);
       await executeEmergencyMarketExit();
-      logInfo('[EXECUTOR] Tape Exit confirmed. Capital secured before chart breakdown.');
+      logInfo('[EXECUTOR] Tape Exit confirmed. Capital secured.');
     } catch (error) {
       logError(`[EXECUTOR] Failure during Tape Exit: ${error}`);
     } finally {
-      // Reset the lock after 5s buffer to prevent duplicate orders if exit had a hiccup
       setTimeout(() => { this.isExecutingTapeExit = false; }, 5000);
     }
   }
 
-  /**
-   * Master Entry Gatekeeper - Now upgraded with Institutional Order Flow (Delta)
-   */
-  public async evaluateAndExecuteTrade(
-    signal: string,
-    targetQuantity: number,
-    ltp: number,
-    depth: MarketDepth,
-    crossoverDelta: number // 🚀 Incoming Delta from WS Client
-  ): Promise<void> {
-    
-    // 1. Check macro structural safety (Capital Preservation)
+  public async evaluateAndExecuteTrade(signal: string, targetQuantity: number, ltp: number, depth: MarketDepth, crossoverDelta: number): Promise<void> {
     const isSafeToTrade = await this.evaluateCircuitBreakers();
-    if (!isSafeToTrade) return;
+    if (!isSafeToTrade || !signal.startsWith('BUY')) return;
 
-    if (!signal.startsWith('BUY')) return;
-
-    // Reset tape exit lock — a new MACD signal means a new trade opportunity
     this.isExecutingTapeExit = false;
 
-    logInfo(`[EXECUTOR] ${signal} signal generated. Evaluating Order Flow Convergence...`);
-
-    // ========================================================================
-    // 2. ORDER FLOW CONVERGENCE CHECK (Institutional Trap Evasion)
-    // ========================================================================
-    if (signal === 'BUY_CE') {
-      // MACD says UP, but Delta must confirm aggressive institutional BUYING
-      if (crossoverDelta < this.MIN_REQUIRED_DELTA) {
-        logWarn(
-          `[TAPE ABORT] False Breakout Trap! MACD fired BUY_CE, but order flow delta is weak/negative (${crossoverDelta}). ` +
-          `Smart money is absorbing the buying pressure. Trade aborted.`
-        );
-        return;
-      }
-    } else if (signal === 'BUY_PE') {
-      // MACD says DOWN, but Delta must confirm aggressive institutional SELLING
-      if (crossoverDelta > -this.MIN_REQUIRED_DELTA) {
-        logWarn(
-          `[TAPE ABORT] False Breakout Trap! MACD fired BUY_PE, but order flow delta is weak/positive (${crossoverDelta}). ` +
-          `Smart money is absorbing the selling pressure. Trade aborted.`
-        );
-        return;
-      }
-    }
-
-    logInfo(`[EXECUTOR] 🎯 Order Flow Confirmed! Institutional Delta: ${crossoverDelta}. X-Raying liquidity...`);
-
-    // 3. X-Ray the Order Book (Pre-Trade Slippage Abort)
-    const metrics = liquidityScanner.scanOrderBook('BUY', targetQuantity, ltp, depth);
-
-    if (!metrics.isLiquiditySufficient) {
-      logWarn(`[LIQUIDITY ABORT] Insufficient market depth. Trade aborted.`);
-      return; 
-    }
-
-    if (metrics.slippagePoints > this.MAX_ACCEPTABLE_SLIPPAGE_POINTS) {
-      logWarn(`[LIQUIDITY ABORT] Expected slippage (₹${metrics.slippagePoints.toFixed(2)}) exceeds max limit. Trade aborted.`);
+    if (signal === 'BUY_CE' && crossoverDelta < this.MIN_REQUIRED_DELTA) {
+      logWarn(`[TAPE ABORT] False Breakout Trap! Weak Delta (${crossoverDelta}). Trade aborted.`);
+      return;
+    } else if (signal === 'BUY_PE' && crossoverDelta > -this.MIN_REQUIRED_DELTA) {
+      logWarn(`[TAPE ABORT] False Breakout Trap! Weak Delta (${crossoverDelta}). Trade aborted.`);
       return;
     }
 
-    // 4. Execution Clearance Granted
-    logInfo(`[EXECUTOR] ✅ Verified WAP at ₹${metrics.expectedExecutionPrice.toFixed(2)}. Executing Native Stealth Order...`);
-    // Pass the real LTP down to the executor
+    const metrics = liquidityScanner.scanOrderBook('BUY', targetQuantity, ltp, depth);
+    if (!metrics.isLiquiditySufficient || metrics.slippagePoints > this.MAX_ACCEPTABLE_SLIPPAGE_POINTS) {
+      logWarn(`[LIQUIDITY ABORT] Slippage/Depth exceeds safety limits. Trade aborted.`);
+      return;
+    }
+
+    logInfo(`[EXECUTOR] ✅ Verified WAP at ₹${metrics.expectedExecutionPrice.toFixed(2)}. Executing...`);
     await this.executeNativeTrade(signal as 'BUY_CE' | 'BUY_PE', targetQuantity, metrics.expectedExecutionPrice, ltp); 
   }
 
   private async executeNativeTrade(signal: 'BUY_CE' | 'BUY_PE', quantity: number, limitPrice: number, liveLtp: number) {
     if (!StateEngine.activeToken) {
-       logError('[EXECUTOR] Cannot execute trade: No active Upstox token in StateEngine.');
+       logError('[EXECUTOR] Cannot execute trade: No active token.');
        return;
     }
 
-    const direction = signal === 'BUY_CE' ? 'CE' : 'PE';
-    // 🟢 FIXED: Uses the exact live Nifty price to calculate the ATM strike
-    const spotPrice = liveLtp || tracker.liveSpotPrice; 
-    if (!spotPrice || spotPrice === 0) {
-      logError('[EXECUTOR] CRITICAL: Spot price is 0. Aborting trade to prevent invalid strike selection.');
-      return;
-    }
+    // 🟢 FIXED: Wrapped the entire external API execution flow in a Try/Catch to prevent PM2 Crash
+    try {
+      const direction = signal === 'BUY_CE' ? 'CE' : 'PE';
+      const spotPrice = liveLtp || tracker.liveSpotPrice; 
+      if (!spotPrice || spotPrice === 0) {
+        logError('[EXECUTOR] CRITICAL: Spot price is 0. Aborting trade.');
+        return;
+      }
 
-    const atmStrike = Math.round(spotPrice / 50) * 50;
+      const atmStrike = Math.round(spotPrice / 50) * 50;
 
-    await brokerAdapter.getFundsAndMargin(true);
-    const instrumentToken = await brokerAdapter.getAtmOptionToken(atmStrike, direction);
+      await brokerAdapter.getFundsAndMargin(true);
+      const instrumentToken = await brokerAdapter.getAtmOptionToken(atmStrike, direction);
 
-    const orderPayload = {
-        correlationId: `AUTO-${Date.now()}`,
-        instrumentToken: instrumentToken,
-        tradingSymbol: `NIFTY_${atmStrike}_${direction}`,
-        transactionType: 'BUY',
-        lots: Math.floor(quantity / 25), 
-        quantity: quantity,
-        orderPrice: limitPrice,
-    };
+      const orderPayload = {
+          correlationId: `AUTO-${Date.now()}`,
+          instrumentToken: instrumentToken,
+          tradingSymbol: `NIFTY_${atmStrike}_${direction}`,
+          transactionType: 'BUY',
+          lots: Math.floor(quantity / 25), 
+          quantity: quantity,
+          orderPrice: limitPrice,
+      };
 
-    const res = await executeOrderStealth(orderPayload, StateEngine.activeToken);
-    
-    // 🟢 FIXED: Forcefully update memory so dashboard and circuit breakers activate instantly
-    if (res.success || res.filledLots > 0) {
-       tracker.setActivePosition(instrumentToken, res.filledLots * 25, limitPrice);
-       if (activeWsClient) activeWsClient.subscribe(instrumentToken);
+      const res = await executeOrderStealth(orderPayload, StateEngine.activeToken);
+      
+      if (res.success || res.filledLots > 0) {
+         tracker.setActivePosition(instrumentToken, res.filledLots * 25, limitPrice);
+         if (activeWsClient) activeWsClient.subscribe(instrumentToken);
+      }
+    } catch (err: any) {
+      logError(`[EXECUTOR] Execution halted due to network/API exception: ${err.message}`);
     }
   }
 
   public async takeManualPosition(direction: 'CE' | 'PE') {
     if (!StateEngine.activeToken) return;
     
-    // 🟢 FIXED: Reads exact live price from the WS feed
-    const spotPrice = tracker.liveSpotPrice;
-    if (spotPrice === 0) {
-       logError('[EXECUTOR] Cannot execute manual trade: Waiting for live WS feed...');
-       return;
-    }
-    
-    const atmStrike = Math.round(spotPrice / 50) * 50;
-    
-    const marginData = await brokerAdapter.getFundsAndMargin(true);
-    const availableMargin = marginData.available_margin || 0;
-    
-    const maxMarginPerLot = 4000; 
-    let lotsToBuy = Math.floor((availableMargin * 0.9) / maxMarginPerLot);
-    if (lotsToBuy < 1) lotsToBuy = 1; 
-    if (lotsToBuy > 36) lotsToBuy = 36; 
-    
-    const quantity = lotsToBuy * 25;
-    
-    logInfo(`[EXECUTOR] ATM Strike: ${atmStrike}. Firing ${lotsToBuy} lots.`);
+    // 🟢 FIXED: Wrapped in Try/Catch
+    try {
+      const spotPrice = tracker.liveSpotPrice;
+      if (spotPrice === 0) {
+         logError('[EXECUTOR] Cannot execute manual trade: Waiting for live WS feed...');
+         return;
+      }
+      
+      const atmStrike = Math.round(spotPrice / 50) * 50;
+      
+      const marginData = await brokerAdapter.getFundsAndMargin(true);
+      const availableMargin = marginData.available_margin || 0;
+      
+      const maxMarginPerLot = 4000; 
+      let lotsToBuy = Math.floor((availableMargin * 0.9) / maxMarginPerLot);
+      if (lotsToBuy < 1) lotsToBuy = 1; 
+      if (lotsToBuy > 36) lotsToBuy = 36; 
+      
+      const quantity = lotsToBuy * 25;
+      logInfo(`[EXECUTOR] ATM Strike: ${atmStrike}. Firing ${lotsToBuy} lots.`);
 
-    const instrumentToken = await brokerAdapter.getAtmOptionToken(atmStrike, direction);
+      const instrumentToken = await brokerAdapter.getAtmOptionToken(atmStrike, direction);
 
-    const orderPayload = {
-        correlationId: `MANUAL-${Date.now()}`,
-        instrumentToken: instrumentToken,
-        tradingSymbol: `NIFTY_${atmStrike}_${direction}`,
-        transactionType: 'BUY',
-        lots: lotsToBuy,
-        quantity: quantity,
-        orderPrice: 0, 
-    };
+      const orderPayload = {
+          correlationId: `MANUAL-${Date.now()}`,
+          instrumentToken: instrumentToken,
+          tradingSymbol: `NIFTY_${atmStrike}_${direction}`,
+          transactionType: 'BUY',
+          lots: lotsToBuy,
+          quantity: quantity,
+          orderPrice: 0, 
+      };
 
-    const res = await executeOrderStealth(orderPayload, StateEngine.activeToken);
-    
-    // 🟢 FIXED: Makes manual trades immediately visible and tracked
-    if (res.success || res.filledLots > 0) {
-       // Using spotPrice as a temporary placeholder entry until BrokerAdapter reconciles exact fill price 3s later
-       tracker.setActivePosition(instrumentToken, res.filledLots * 25, spotPrice); 
-       if (activeWsClient) activeWsClient.subscribe(instrumentToken);
+      const res = await executeOrderStealth(orderPayload, StateEngine.activeToken);
+      
+      if (res.success || res.filledLots > 0) {
+         tracker.setActivePosition(instrumentToken, res.filledLots * 25, spotPrice); 
+         if (activeWsClient) activeWsClient.subscribe(instrumentToken);
+      }
+    } catch (err: any) {
+      logError(`[EXECUTOR] Manual execution failed: ${err.message}`);
     }
   }
 }

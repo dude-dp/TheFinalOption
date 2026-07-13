@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { logInfo, logError } from './logger.js';
 import { brokerAdapter } from './broker-adapter.js';
 import { executor } from './executor.js';
-import { executeEmergencyMarketExit } from './iceberg.js';
+import { executeEmergencyMarketExit } from './executor.js';
 import { tracker } from './tracker.js';
 
 const supabase = createClient(

@@ -11,7 +11,7 @@ import './server.js';
 import { executor } from './executor.js';
 import { DataEngine } from './data-engine.js';
 import { StateEngine } from './state-engine.js';
-import { executeEmergencyMarketExit } from './iceberg.js';
+import { executeEmergencyMarketExit } from './executor.js';
 import { tracker } from './tracker.js';
 import { UpstoxWSClient } from './ws-client.js';
 import { brokerAdapter } from './broker-adapter.js';
@@ -112,7 +112,7 @@ async function bootstrapEngine() {
       await executor.evaluateAndExecuteTrade(
         signalPayload.signal,
         CONFIG.defaultTradeQty,
-        signalPayload.close,
+        signalPayload.spotPrice, // 🟢 FIXED: Changed from .close to .spotPrice
         signalPayload.depth,
         signalPayload.crossoverDelta || 50
       );

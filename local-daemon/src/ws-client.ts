@@ -13,7 +13,7 @@ import { DataEngine } from './data-engine.js';
 // 🟢 FIXED: Native ESM Import for MACD (No more require() crashes)
 import { getLatestMACDValues } from './lib/macd.js';
 // 🟢 FIXED: Import the native EC2 market exit capability
-import { executeEmergencyMarketExit } from './iceberg.js';
+import { executeEmergencyMarketExit } from './executor.js';
 
 export interface OrderBookLevel {
   price: number;
