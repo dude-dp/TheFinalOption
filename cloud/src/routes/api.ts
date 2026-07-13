@@ -827,7 +827,7 @@ api.get('/api/chart-data', dashboardAuth, async (c) => {
   const { data: candles, error: candleError } = await supabase
     .from('nifty_candles')
     .select('*')
-    .order('timestamp', { ascending: false })
+    .order('timestamp_instrument', { ascending: false })
     .limit(300);
 
   if (candleError) {
@@ -835,14 +835,18 @@ api.get('/api/chart-data', dashboardAuth, async (c) => {
   }
 
   // Supabase returns descending to get the newest, but the chart needs them ascending
-  const spots = candles ? candles.reverse().map(row => ({
-    time: Math.floor(new Date(row.timestamp).getTime() / 1000),
-    open: Number(row.open),
-    high: Number(row.high),
-    low: Number(row.low),
-    close: Number(row.close),
-    value: Number(row.volume)
-  })) : [];
+  const spots = candles ? candles.reverse().map(row => {
+    // Split by '_' to isolate the valid ISO string: "2026-07-13T09:15:00+05:30"
+    const validIsoDate = row.timestamp_instrument ? row.timestamp_instrument.split('_')[0] : row.timestamp;
+    return {
+      time: Math.floor(new Date(validIsoDate).getTime() / 1000),
+      open: Number(row.open),
+      high: Number(row.high),
+      low: Number(row.low),
+      close: Number(row.close),
+      value: Number(row.volume)
+    };
+  }) : [];
 
   // Fetch MACD telemetry for the dashboard signals
   const { data: macdData, error: macdError } = await supabase

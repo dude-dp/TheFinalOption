@@ -15,13 +15,13 @@ export class DataEngine {
   public static async recordLiveCandle(candle: { timestamp: string, open: number, high: number, low: number, close: number, volume: number }) {
     try {
       const { error } = await supabase.from('nifty_candles').upsert({
-        timestamp: new Date(candle.timestamp).toISOString(),
+        timestamp_instrument: `${candle.timestamp}_NIFTY`,
         open: candle.open,
         high: candle.high,
         low: candle.low,
         close: candle.close,
         volume: candle.volume
-      }, { onConflict: 'timestamp' });
+      }, { onConflict: 'timestamp_instrument' });
 
       if (error) throw error;
       // Silently succeed for live data to keep logs clean
@@ -40,8 +40,8 @@ export class DataEngine {
       // 1. Find the exact timestamp of the last recorded candle in Supabase
       const { data, error } = await supabase
         .from('nifty_candles')
-        .select('timestamp')
-        .order('timestamp', { ascending: false })
+        .select('timestamp_instrument')
+        .order('timestamp_instrument', { ascending: false })
         .limit(1);
 
       if (error) throw error;
@@ -50,7 +50,8 @@ export class DataEngine {
       lastDate.setDate(lastDate.getDate() - 3); // Default to checking the last 3 days if DB is completely empty
 
       if (data && data.length > 0) {
-        const lastTimestampStr = data[0].timestamp;
+        // Extract the ISO string from the composite key (e.g., "2026-07-13T09:15:00+05:30_NIFTY")
+        const lastTimestampStr = data[0].timestamp_instrument.split('_')[0];
         lastDate = new Date(lastTimestampStr);
         logInfo(`[DATA-ENGINE] Last recorded candle found at: ${lastTimestampStr}`);
       } else {
@@ -94,7 +95,7 @@ export class DataEngine {
       if (json.status !== 'success' || !json.data || !json.data.candles) return;
 
       const candles = json.data.candles.map((c: any[]) => ({
-        timestamp: new Date(c[0]).toISOString(),
+        timestamp_instrument: `${c[0]}_NIFTY`,
         open: parseFloat(c[1]),
         high: parseFloat(c[2]),
         low: parseFloat(c[3]),
@@ -106,7 +107,7 @@ export class DataEngine {
 
       const { error } = await supabase
         .from('nifty_candles')
-        .upsert(candles.reverse(), { onConflict: 'timestamp', ignoreDuplicates: true });
+        .upsert(candles.reverse(), { onConflict: 'timestamp_instrument', ignoreDuplicates: true });
 
       if (error) throw error;
       
