@@ -543,152 +543,28 @@ api.post('/api/position/sl-override', dashboardAuth, async (c) => {
 });
 
 
-/** POST /api/manual-entry — Forces a manual trade entry bypassing MACD */
-api.post('/api/manual-entry', dashboardAuth, async (c) => {
-  try {
-    const { direction } = await c.req.json<{ direction: 'CE' | 'PE' }>();
-    if (direction !== 'CE' && direction !== 'PE') return c.json({ error: 'Invalid direction' }, 400);
+/** POST /api/manual-trade — Queue manual commands to EC2 */
+api.post('/api/manual-trade', dashboardAuth, async (c) => {
+  const { action, direction } = await c.req.json<{ action: string, direction?: 'CE' | 'PE' }>();
+  
+  const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY as string);
 
-    const stateRaw = await c.env.TRADING_KV.get(KV_KEYS.BOT_STATE);
-    const state: BotState = stateRaw ? JSON.parse(stateRaw) : null;
-    if (!state) return c.json({ error: 'Bot state not initialized' }, 500);
+  // 1. Act as a dumb terminal: just write the user's intent to the queue
+  const { data, error } = await supabase.from('pending_commands').insert([{
+    action: action,             // e.g., 'MANUAL_BUY'
+    direction: direction,       // e.g., 'CE'
+    status: 'PENDING'
+  }]).select('id').single();
 
-    // Safety Gates
-    if (state.activePosition) return c.json({ error: 'Position already active. Square off first.' }, 400);
-    if (state.lockTimestamp) return c.json({ error: 'System is currently locked processing another order.' }, 400);
-
-    const accessToken = await getUpstoxAccessToken(c);
-    if (!accessToken) return c.json({ error: 'No active Upstox access token.' }, 400);
-
-    // 1. Get the latest Spot Price from our database telemetry
-    const lastTelemetry = await c.env.TRADING_DB.prepare(
-      'SELECT nifty_spot FROM system_telemetry ORDER BY id DESC LIMIT 1'
-    ).first();
-
-    let spotPrice = (lastTelemetry?.nifty_spot as number) || 0;
-
-    // Fallback: If telemetry is empty, fetch the live spot from Upstox candles
-    if (!spotPrice) {
-      const candles = await fetchNiftyCandles(accessToken, getTodayDateStr());
-      if (candles.length > 0) spotPrice = candles[candles.length - 1].close;
-    }
-    if (!spotPrice) return c.json({ error: 'Could not determine current NIFTY Spot price' }, 500);
-
-    // 2. Load the dynamic configuration
-    const configRows = await c.env.TRADING_DB.prepare('SELECT config_key, config_value FROM bot_configuration').all();
-    const configMap: Record<string, string> = {};
-    for (const r of configRows.results || []) configMap[(r as any).config_key] = (r as any).config_value;
-
-    const maxRiskPct = parseFloat(configMap['max_risk_pct'] || '100');
-    const niftyLotSize = parseInt(configMap['nifty_lot_size'] || '65', 10);
-    const rolloverOnExpiry = configMap['rollover_on_expiry'] === 'true';
-    const strikeInterval = parseInt(configMap['strike_interval'] || '50', 10);
-
-    // 3. Apply Cascading Strike Logic (ATM -> OTM1 -> OTM2 -> OTM3 -> OTM4)
-    const rollover = shouldRollExpiry(new Date(), rolloverOnExpiry);
-    const expiry = getNearestWeeklyExpiry(new Date(), rollover);
-    const preferredStrikes = getPreferredStrikes(spotPrice, direction, strikeInterval, 4);
-
-    const chain = await getOptionChain(accessToken, expiry);
-    const candidateOptions = preferredStrikes.map(strike =>
-      chain.find(e => e.strikePrice === strike && e.optionType === direction)
-    ).filter(Boolean);
-
-    if (candidateOptions.length === 0) return c.json({ error: `No options found for expiry ${expiry}` }, 404);
-
-    const candidateKeys = candidateOptions.map((opt: any) => opt.instrumentKey);
-    const ltpMap = await getLTP(accessToken, candidateKeys);
-    const funds = await getFundsAndMargin(accessToken);
-
-    let targetOption = null;
-    let lots = 0;
-    let premium = 0;
-    let strike = 0;
-
-    for (const opt of candidateOptions) {
-      const currentPremium = (ltpMap as any)[(opt as any).instrumentKey]?.last_price || ltpMap[(opt as any).instrumentKey] || (opt as any).ltp;
-      if (currentPremium <= 0) continue;
-
-      const calcLots = calculateLots(funds.availableMargin, currentPremium, niftyLotSize, maxRiskPct);
-      if (calcLots > 0) {
-        targetOption = opt;
-        lots = calcLots;
-        premium = currentPremium;
-        strike = (opt as any).strikePrice;
-        break;
-      }
-    }
-
-    if (!targetOption || lots === 0) {
-      return c.json({ error: `Insufficient margin (₹${funds.availableMargin.toFixed(2)}) for ATM and all 4 OTM levels.` }, 400);
-    }
-
-    // 4. Dispatch the Order
-    const quantity = lotsToQuantity(lots, niftyLotSize);
-    const correlationId = generateCorrelationId();
-    const bufferedPrice = Math.round((premium * 1.01) * 20) / 20;
-
-    const order: OrderPayload = {
-      orderId: crypto.randomUUID(),
-      correlationId,
-      instrumentToken: (targetOption as any).instrumentKey,
-      tradingSymbol: (targetOption as any).tradingSymbol,
-      optionType: direction,
-      strikePrice: strike,
-      transactionType: 'BUY',
-      quantity,
-      lots,
-      orderPrice: bufferedPrice,
-      status: 'PENDING',
-      createdAt: new Date().toISOString(),
-    };
-
-    const isPaperMode = state.tradingMode === 'PAPER';
-
-    if (isPaperMode) {
-      await executePaperTrade(c.env, order, premium);
-
-      await c.env.TRADING_DB.prepare(
-        `INSERT INTO system_telemetry (nifty_spot, atm_strike, macd_line, prev_macd_line, signal_generated, bot_status, log_message)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).bind(spotPrice, strike, 0, 0, 'NONE', state.status, `[PAPER MODE] MANUAL OVERRIDE: ⚡ Forced Entry -> ${(targetOption as any).tradingSymbol} × ${lots} lots`).run();
-    } else {
-      // Push to KV for immediate local daemon pickup
-      await addPendingOrder(c.env.TRADING_KV, order);
-
-      // Log intent to D1 Database
-      await c.env.TRADING_DB.prepare(
-        `INSERT INTO order_ledger (order_id, correlation_id, instrument_token, trading_symbol, option_type, strike_price, transaction_type, quantity, lots, order_price, order_status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(order.orderId, correlationId, order.instrumentToken, order.tradingSymbol, direction, strike, 'BUY', quantity, lots, premium, 'PENDING').run();
-
-      // Update Bot State & Lock
-      state.lockTimestamp = Date.now();
-      state.activePosition = {
-        correlationId,
-        optionType: direction,
-        instrumentToken: (targetOption as any).instrumentKey,
-        tradingSymbol: (targetOption as any).tradingSymbol,
-        strikePrice: strike,
-        entryPrice: premium,
-        quantity,
-        lots,
-        enteredAt: new Date().toISOString(),
-      };
-      await c.env.TRADING_KV.put(KV_KEYS.BOT_STATE, JSON.stringify(state));
-
-      // Write a bright entry to the Execution Logs
-      await c.env.TRADING_DB.prepare(
-        `INSERT INTO system_telemetry (nifty_spot, atm_strike, macd_line, prev_macd_line, signal_generated, bot_status, log_message)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).bind(spotPrice, strike, 0, 0, 'NONE', state.status, `MANUAL OVERRIDE: ⚡ Forced Entry -> ${(targetOption as any).tradingSymbol} × ${lots} lots`).run();
-    }
-
-    return c.json({ success: true });
-  } catch (error: any) {
-    console.error('Manual entry error:', error);
-    return c.json({ error: error.message || 'Manual entry failed' }, 500);
+  if (error) {
+    return c.json({ error: `Command queue failed: ${error.message}` }, 500);
   }
+
+  return c.json({ 
+    success: true, 
+    message: `Command queued successfully.`,
+    commandId: data.id 
+  });
 });
 
 /** POST /api/emergency-squareoff */

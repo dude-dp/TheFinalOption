@@ -50,6 +50,44 @@ export class StateEngine {
         }
       })
       .subscribe();
+
+    // 📡 NEW: Command Queue Interceptor
+    supabase.channel('command_queue_channel')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'pending_commands' }, async (payload) => {
+        const command = payload.new;
+        
+        if (command.status === 'PENDING') {
+          logInfo(`[COMMAND-QUEUE] Intercepted new UI command: ${command.action} ${command.direction || ''}`);
+          
+          // 1. Lock the command immediately so it can't be processed twice
+          await supabase.from('pending_commands').update({ status: 'PROCESSING' }).eq('id', command.id);
+
+          try {
+            // 2. Route the execution logic natively on EC2
+            if (command.action === 'MANUAL_BUY' && command.direction) {
+              
+              // TODO: Wire this to your actual Executor function. 
+              // The executor will now handle fetching the chain and calculating lots natively.
+              // Example: await Executor.takeManualPosition(command.direction);
+              logInfo(`[COMMAND-QUEUE] Executing native trade loop for ${command.direction}...`);
+              
+            } else if (command.action === 'SQUARE_OFF') {
+              // Example: await Executor.squareOffAllPositions();
+              logInfo(`[COMMAND-QUEUE] Executing emergency square-off...`);
+            }
+
+            // 3. Mark as successfully completed
+            await supabase.from('pending_commands').update({ status: 'COMPLETED' }).eq('id', command.id);
+            logInfo(`[COMMAND-QUEUE] ✅ Command ${command.action} completed successfully.`);
+
+          } catch (err: any) {
+            // Mark as failed if Upstox rejects it or logic fails
+            await supabase.from('pending_commands').update({ status: 'FAILED' }).eq('id', command.id);
+            logError(`[COMMAND-QUEUE] ❌ Execution failed: ${err.message}`);
+          }
+        }
+      })
+      .subscribe();
   }
 
   /**

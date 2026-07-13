@@ -569,3 +569,26 @@ export class ExecutionEngine {
 }
 
 export const executor = new ExecutionEngine();
+
+export class Executor {
+  public static async takeManualPosition(direction: 'CE' | 'PE') {
+    // 1. Fetch Option Chain natively using your broker adapter
+    const ltp = (global as any).currentActiveLTP; // Grab live Spot price from your tracker
+    const optionChain = await (global as any).brokerAdapter.getOptionChain(ltp);
+    
+    // 2. Select the ATM Strike
+    const targetStrike = direction === 'CE' ? optionChain.atmCE : optionChain.atmPE;
+    
+    // 3. Calculate Lots dynamically based on max risk config
+    const marginRes = await (global as any).brokerAdapter.getFundsAndMargin();
+    const lotsToBuy = (global as any).calculateDynamicLots(marginRes.available, targetStrike.price);
+    
+    // 4. Execute the trade using your Iceberg slicing logic
+    await (global as any).iceberg.execute({
+      instrumentKey: targetStrike.instrumentKey,
+      quantity: lotsToBuy * 25, // Nifty lot size
+      transactionType: 'BUY',
+      orderType: 'LIMIT'
+    });
+  }
+}
