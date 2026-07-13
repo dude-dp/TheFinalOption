@@ -124,6 +124,8 @@ api.post('/api/poll', async (c) => {
     };
     
     await kv.put(KV_KEYS.BOT_STATE, JSON.stringify(latestState));
+    // 🚨 UPDATE THE ACTUAL HEARTBEAT KEY THE CRON JOB CHECKS
+    await kv.put('daemon_last_heartbeat', Date.now().toString());
   }
 
   let triggerWatchdogRestart = false;
