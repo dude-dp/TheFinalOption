@@ -629,7 +629,8 @@ function startHealthServer(): void {
 
   serve({
     fetch: app.fetch,
-    port: CONFIG.healthPort
+    port: CONFIG.healthPort,
+    hostname: '0.0.0.0'
   }, (info) => {
     logInfo(`🏥 EC2 Dashboard & Health server running at http://0.0.0.0:${info.port}`);
   });

@@ -25,4 +25,4 @@ pm2 delete all && pm2 start ecosystem.config.cjs
 
 ## watch logs
 
-http://<YOUR_ELASTIC_IP>:3847/admin/logs
+http://13.205.66.82:3847/admin/logs
