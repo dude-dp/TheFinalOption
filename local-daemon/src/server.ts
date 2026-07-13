@@ -30,7 +30,18 @@ function logToBackfill(message: string) {
   fs.appendFileSync(path.join(logDir, 'backfill.log'), formattedMessage, 'utf-8');
 }
 
-// Simulated Async Backfill Execution Engine
+// Simulated or Actual Upstox Fetcher
+// Make sure to import your actual brokerAdapter or Upstox API client here
+async function fetchUpstoxHistoricalData(dateStr: string) {
+  // TODO: Replace this mock with your actual Upstox API call for 1-minute historical candles
+  // return await brokerAdapter.getHistoricalCandles(instrumentToken, dateStr, dateStr);
+  
+  return [
+    { timestamp_instrument: `${dateStr}T09:15:00Z_NIFTY`, open: 24000, high: 24050, low: 23980, close: 24020, volume: 1500 },
+    // ... more candles
+  ];
+}
+
 async function runHistoricalBackfill(days: number) {
   try {
     logToBackfill(`STARTING BACKFILL: Initiating historical sync for the past ${days} days.`);
@@ -43,25 +54,32 @@ async function runHistoricalBackfill(days: number) {
 
       logToBackfill(`PROCESSING: Fetching historical NIFTY options data from Upstox for date: ${dateStr}`);
 
-      // TODO: Replace with your exact Upstox historical API call logic
-      // const candles = await fetchUpstoxHistoricalData(targetDate);
-      const mockCandlesCount = 375; // Typical 1-minute candles in a trading session
+      // 1. Fetch the actual data
+      const candles = await fetchUpstoxHistoricalData(dateStr);
+      
+      if (!candles || candles.length === 0) {
+        logToBackfill(`WARN: No candles retrieved for ${dateStr}. Skipping insertion.`);
+        continue;
+      }
 
-      logToBackfill(`INGESTION: Retrieved ${mockCandlesCount} candles for ${dateStr}. Streaming directly to Supabase...`);
+      logToBackfill(`INGESTION: Retrieved ${candles.length} candles for ${dateStr}. Streaming directly to Supabase...`);
 
       if (!supabase) {
         logToBackfill(`WARNING: Supabase keys missing. Cannot write to database.`);
         continue;
       }
 
-      // 2. Stream directly to Supabase PostgreSQL target table
-      /*
+      // 2. ACTIVE SUPABASE INSERTION (Uncommented)
       const { error } = await supabase
-        .from('nifty_candles')
-        .upsert(candles, { onConflict: 'timestamp' });
+        .from('historical_candles')
+        .upsert(candles, { 
+          onConflict: 'timestamp_instrument',
+          ignoreDuplicates: false // Updates existing records if they overlap
+        });
       
-      if (error) throw error;
-      */
+      if (error) {
+        throw new Error(`Supabase Insert Failed: ${error.message} (Details: ${error.details})`);
+      }
 
       logToBackfill(`SUCCESS: Successfully committed session records to Supabase for ${dateStr}.`);
     }
