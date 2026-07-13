@@ -15,6 +15,7 @@ import { logInfo, logWarn, logError, logTrade } from './logger.js';
 import './server.js';
 import { executeOrder, executeOrderStealth } from './executor.js';
 import { DataEngine } from './data-engine.js';
+import { StateEngine } from './state-engine.js';
 import { executeEmergencyMarketExit } from './iceberg.js';
 import { ApiTracker, tracker } from './tracker.js';
 import { UpstoxWSClient } from './ws-client.js';
@@ -226,38 +227,23 @@ async function bootstrapEngine() {
     process.exit(1);
   }
 
-  // Retrieve token dynamically if not in .env
-  let activeToken = CONFIG.upstoxToken;
-  if (!activeToken) {
-    logInfo('No UPSTOX_TOKEN in .env. Bootstrapping token from Cloudflare...');
-    try {
-      const res = await fetch(`${CONFIG.workerUrl}/api/poll`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ secret: CONFIG.pollSecret })
-      });
+  // 1. Initialize Realtime Engine (Replaces HTTP Polling)
+  let activeToken: string = '';
+  await StateEngine.initialize(async (newToken) => {
+    activeToken = newToken;
+    brokerAdapter.initialize(newToken);
+    await DataEngine.autoRecoverGaps(newToken);
+  });
 
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status} ${res.statusText}`);
-      }
-
-      const data: any = await res.json();
-      if (data && data.accessToken) {
-        activeToken = data.accessToken;
-      } else {
-        throw new Error('No accessToken returned from Cloudflare');
-      }
-    } catch (err: any) {
-      logError(`Failed to bootstrap access token: ${err.message}`);
-      process.exit(1);
-    }
+  // 2. Gatekeeper: Halt boot sequence until token is provided via UI
+  let waitCount = 0;
+  while (!StateEngine.activeToken) {
+    if (waitCount === 0) logInfo('⏳ Waiting for Upstox Token. Please authenticate via the Cloudflare Dashboard...');
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    waitCount++;
   }
 
-  brokerAdapter.initialize(activeToken);
-
-  // 🩹 Run Auto-Healer immediately after securing the Upstox Token
-  // This guarantees the database is fully patched before the WebSocket starts streaming
-  await DataEngine.autoRecoverGaps(activeToken);
+  activeToken = StateEngine.activeToken;
 
   // ─────────────────────────────────────────────────────────────
   // 🛡️ TASK 4.3: CRASH RECOVERY BOOT SEQUENCE

@@ -1,64 +1,58 @@
-# TheFinalOption: System Architecture
+# ⚡ TheFinalOption: System Architecture
 
 ## Overview
-TheFinalOption is an automated NIFTY Index Options trading bot utilizing a MACD (12, 26) zero-line crossover strategy. Currently, the system operates on a **Hybrid Architecture**, splitting responsibilities between a serverless "Cloud Brain" and a stateful "Local Execution Daemon". 
+TheFinalOption is an automated NIFTY Index Options trading bot utilizing a MACD (12, 26) zero-line crossover strategy. The system is actively transitioning from a serverless-heavy architecture to a highly reliable, stateful **EC2 + Supabase** monolith. 
 
-To reduce dependency on Cloudflare's serverless edge and prevent synchronization/timeout issues, the system is actively migrating toward a consolidated, stateful deployment on AWS EC2.
+The primary goal of this architecture is to strictly isolate responsibilities: **Cloudflare acts exclusively as the UI, Auth, and Control plane**, while **EC2 handles 100% of the exchange interaction, market data, and execution logic**.
 
 ---
 
-## 1. Current Hybrid Baseline
+## 1. Current Architecture (Phase 1 Migration Complete)
 
-### 1.1 Cloud Brain (Cloudflare Edge)
-The control plane and analytical engine, built on Cloudflare Workers and Hono.
+### 1.1 Storage Layer (Supabase PostgreSQL)
+Supabase is now the unified source of truth, completely replacing Cloudflare D1.
+* **`nifty_candles`**: Stores all 1-minute historical and live market data. Autonomously managed by the EC2 Data Engine.
+* **`system_telemetry`**: Logs execution intent, system state, and manual overrides.
+* **`order_ledger`**: Tracks the complete lifecycle of trades and PnL.
+* **`bot_configuration`**: Dynamic settings controlled by the dashboard.
 
-* **Compute (Workers):** * API Gateway (`api.ts`) for frontend dashboard and daemon polling.
-  * Cron triggers (`cron.ts`) operating every minute during IST market hours to evaluate MACD and emit signals.
-* **Storage:**
-  * **D1 (SQLite):** Persistent source of truth. Stores `system_telemetry`, `order_ledger`, `bot_configuration`, and AI `daily_summary`.
-  * **KV:** Ultra-low-latency state management for bot status, ephemeral Upstox tokens, Option Chain caching, and 5-minute TTL pending orders.
-* **Async Processing (Queues):** Fan-out architecture (`ORDER_QUEUE`) handling order state tracking, orphan sweeping, and Dead Letter Queue (DLQ) escalations.
-* **Frontend:** Hono JSX rendering the control dashboard and backtest UIs.
+### 1.2 Data & Execution Engine (AWS EC2 - Node.js Daemon)
+A persistent, PM2-managed Node.js process acting as the system's "Muscle" and "Memory."
+* **Autonomous Data Engine (`data-engine.ts`)**: Self-healing data pipeline. It continuously patches missing historical candles via Upstox API and logs live 1-minute candle closes directly to Supabase.
+* **Upstox WS Client (`ws-client.ts`)**: Maintains a continuous WebSocket connection for real-time tick aggregation.
+* **Stealth Executor (`executor.ts` & `iceberg.ts`)**: Handles automated order slicing, dynamic lot sizing, and limit-order execution.
+* **State Sync (`tracker.ts` & `broker-adapter.ts`)**: Synchronizes realized/unrealized PnL between the exchange and local memory.
 
-### 1.2 Local Muscle (Node.js Execution Daemon)
-A persistent, PM2-managed Node.js process designed for high-speed exchange interaction.
-
-* **Upstox WS Client (`ws-client.ts`):** Maintains a continuous WebSocket connection for 1-minute candle aggregation and real-time Profit/Loss tracking.
-* **Stealth Executor (`executor.ts` & `iceberg.ts`):** Handles automated order slicing, dynamic lot sizing (capped by risk config), and Level 2 Market Depth capture before limit execution.
-* **Circuit Breakers (`index.ts`):** Auto-halts operations after 3 consecutive Upstox API failures or if crash-recovery detects severe mid-session drawdown (Shield Mode).
-* **State Sync (`tracker.ts`):** Synchronizes realized/unrealized PnL between the exchange and the local daemon memory.
+### 1.3 Control Plane & UI (Cloudflare Workers)
+The user-facing edge network. It no longer manages market data fetching.
+* **Authentication**: Manages Upstox OAuth flow (`/api/auth/login`).
+* **Dashboard API**: Serves UI requests by reading directly from Supabase (e.g., `/api/chart-data`, `/api/orders`).
+* **Command Bridge**: Pushes user commands (Start/Stop, Manual Overrides) to EC2 via KV polling (Pending migration).
+* **Cron triggers**: Currently still evaluates MACD signals (Pending migration).
 
 ---
 
 ## 2. Core Workflows (Current State)
 
-### Data & Execution Pipeline
-1. **Ingestion:** The Local Daemon aggregates live tick data into 1-minute candles via Upstox WebSockets.
-2. **Signal Generation:** The Cloud Worker (Cron) or Local Daemon evaluates the MACD (12, 26) against the zero-line.
-3. **Synchronization:** The daemon maintains a dual-link to the Cloud: HTTP Watchdog polling (every 5s) and a Cloud WebSocket (`/api/ws`) for zero-latency execution commands.
-4. **Execution:** Upon signal, the daemon executes "SELL-before-BUY" logic for position reversals, using Stealth Iceberg slicing to mask large orders.
-5. **Confirmation:** Execution success, partial fills, or rejections are pushed back to the Cloud Worker to update the D1 `order_ledger`.
+### Data Pipeline (EC2 -> Supabase -> Cloudflare)
+1. **Ingestion:** EC2 Daemon connects to Upstox and aggregates live ticks into 1-minute candles.
+2. **Persistence:** EC2 Data Engine writes the closed candle directly to Supabase (`nifty_candles`). If the daemon reboots, the Auto-Healer patches missing candles automatically.
+3. **Visualization:** Cloudflare Worker reads `nifty_candles` from Supabase and formats it for the frontend TradingView chart. **Cloudflare never touches the Upstox Data APIs.**
 
 ---
 
-## 3. EC2 Target Architecture (Migration Path)
+## 3. The Roadmap: Full EC2 Independence
 
-The transition to EC2 will eliminate the HTTP polling overhead, Worker CPU time limits, and WebSocket bridging complexities by unifying the Brain and Muscle into a single environment. 
+To eliminate Cloudflare timeouts and network bridging failures, the remaining Upstox interactions in Cloudflare must be migrated to EC2.
 
-### Phase 1: Database Consolidation (Supabase)
-D1 is native to Cloudflare and cannot be accessed locally with zero latency. Given the existing `@supabase/supabase-js` dependencies and API keys already present in the codebase, the storage layer will migrate entirely to **Supabase (PostgreSQL)**.
-* Replace D1 `order_ledger` and `system_telemetry` with Supabase tables.
-* Utilize Supabase Realtime for dashboard UI updates instead of polling Cloudflare endpoints.
+### Phase 2: Migrate the "Brain" (Signal Generation) to EC2
+* **Current:** Cloudflare Cron evaluates the MACD every minute and pushes an order to KV.
+* **Target:** EC2 already aggregates the candles natively. The EC2 daemon will calculate the MACD in its own memory loop, trigger the signal, and execute the order instantly (sub-10ms latency). The Cloudflare Cron will be deleted.
 
-### Phase 2: Unifying Compute (EC2 Monolith)
-* **Single Node Process:** Merge the Hono API, Cron scheduling, and the Upstox execution engine into a single PM2-managed application on EC2.
-* **In-Memory Analytics:** MACD calculation and signal generation will happen directly in the daemon's memory footprint, dropping signal-to-execution latency to sub-10ms.
-* **Network Isolation:** EC2 allows strict Elastic IP whitelisting for Upstox API security, without worrying about Cloudflare IP pool rotations.
+### Phase 3: Replace KV Polling with Supabase Realtime
+* **Current:** EC2 polls Cloudflare `/api/poll` every 1.5s to get the `UPSTOX_ACCESS_TOKEN`, Bot State, and Manual Orders.
+* **Target:** Store the Access Token and Bot State in Supabase. EC2 will use **Supabase Realtime (Postgres LISTEN/NOTIFY)** to instantly receive state changes (e.g., User clicks "Start Bot" or "Manual Buy") without HTTP polling overhead.
 
-### Phase 3: State & Queue Replacement
-* **Drop Cloudflare KV:** Replace KV entirely. Option chain caching and ephemeral Upstox tokens will be stored in a local **Redis** container on the EC2 instance (or ElastiCache), ensuring sub-millisecond read times.
-* **Drop Cloudflare Queues:** Replace the `ORDER_QUEUE` and DLQ mechanisms with **BullMQ** (backed by the local Redis instance) to handle order tracking, orphan sweeping, and retry logic natively within the EC2 environment.
-
-## 4. Security & Failsafes (Preserved in Migration)
-* **Crash Recovery:** Daemon reconstructs open positions, realized PnL, and unrealized PnL directly from Upstox on boot before unpausing trading.
-* **Watchdog Service:** PM2 will handle auto-restarts on the EC2 instance, with a dedicated health endpoint (`/health` on port 3847) monitored by a local script.
+### Phase 4: Shift UI Telemetry (LTP & Margin) to EC2
+* **Current:** Cloudflare calls Upstox `getLTP` and `getFundsAndMargin` when the user opens the dashboard (`/api/status`).
+* **Target:** EC2 will push current margin and active position LTP to a lightweight `live_status` Supabase table every second. Cloudflare will simply read this table to serve the dashboard, dropping Cloudflare's Upstox dependency to 0%.We update the Cloudflare /api/status route to just read that row from Supaba

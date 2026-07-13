@@ -492,19 +492,35 @@ api.post('/api/control', async (c) => {
     status: 'STOPPED', lastUpdated: '', activePosition: null, lockTimestamp: null, lastMacdLine: null
   };
 
-  if (action === 'START') state.status = 'RUNNING';
-  else if (action === 'STOP') state.status = 'STOPPED';
-  else if (action === 'EMERGENCY_HALT') {
+  // 1. Setup Supabase payload
+  const dbUpdate: any = { updated_at: new Date().toISOString() };
+
+  if (action === 'START') {
+    state.status = 'RUNNING';
+    dbUpdate.bot_status = 'RUNNING';
+  } else if (action === 'STOP') {
+    state.status = 'STOPPED';
+    dbUpdate.bot_status = 'STOPPED';
+  } else if (action === 'EMERGENCY_HALT') {
     state.status = 'EMERGENCY_HALT';
+    dbUpdate.bot_status = 'EMERGENCY_HALT';
     if (reason && c.env.DISCORD_WEBHOOK_URL) {
       await notifyDiscord(c.env.DISCORD_WEBHOOK_URL, `✅ **CIRCUIT BREAKER TRIPPED**\n${reason}`);
     }
+  } else if (action === 'SET_MODE' && mode) {
+    state.tradingMode = mode;
+    dbUpdate.trading_mode = mode;
+  } else {
+    return c.json({ error: 'Invalid action' }, 400);
   }
-  else if (action === 'SET_MODE' && mode) state.tradingMode = mode;
-  else return c.json({ error: 'Invalid action' }, 400);
 
   state.lastUpdated = new Date().toISOString();
+  
+  // 2. Dual Write (KV for frontend, Supabase for EC2 backend)
   await c.env.TRADING_KV.put(KV_KEYS.BOT_STATE, JSON.stringify(state));
+  
+  const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY);
+  await supabase.from('system_state').update(dbUpdate).eq('id', 1);
 
   return c.json({ success: true, status: state.status, mode: state.tradingMode });
 });
@@ -1003,9 +1019,17 @@ api.get('/oauth/callback', async (c) => {
       c.env.UPSTOX_REDIRECT_URI
     );
 
+    // 1. Keep KV for now so the UI doesn't break
     await c.env.TRADING_KV.put(KV_KEYS.UPSTOX_ACCESS_TOKEN, accessToken, {
       expirationTtl: expiresIn,
     });
+
+    // 2. NEW: Push token directly to Supabase so EC2 can intercept it instantly
+    const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY);
+    await supabase.from('system_state').update({
+      upstox_access_token: accessToken,
+      updated_at: new Date().toISOString()
+    }).eq('id', 1);
 
     return c.redirect('/');
   } catch (e: any) {
