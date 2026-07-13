@@ -16,6 +16,8 @@ export interface Env {
   UPSTOX_REDIRECT_URI: string;
   POLL_SECRET: string;
   ENVIRONMENT: string;
+  SUPABASE_URL: string;
+  SUPABASE_SERVICE_KEY: string;
   
   // Discord Alerting
   DISCORD_WEBHOOK_URL: string;

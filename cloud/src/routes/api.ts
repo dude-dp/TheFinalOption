@@ -4,6 +4,7 @@
 // ============================================
 
 import { Hono } from 'hono';
+import { createClient } from '@supabase/supabase-js';
 import { basicAuth } from 'hono/basic-auth';
 import type { Env, BotState, ConfirmRequest, OrderPayload, PollResponse } from '../lib/types';
 import { KV_KEYS } from '../lib/types';
@@ -802,24 +803,42 @@ api.get('/api/debug-time', (c) => {
   });
 });
 
+let cachedChartData: any = null;
+let lastChartDataFetch = 0;
+
 /** GET /api/chart-data — NIFTY OHLC Candles + MACD */
 api.get('/api/chart-data', dashboardAuth, async (c) => {
-  // 1. Fetch the most recent 3000 candles (Roughly 8 trading days) from D1.
-  // By ordering DESC and limiting, we ALWAYS get data, even on weekends.
-  const rows = await c.env.TRADING_DB.prepare(
-    `SELECT * FROM nifty_candles ORDER BY timestamp DESC LIMIT 3000`
-  ).all();
+  const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY);
+  
+  // Fetch only the last 300 candles to keep the payload lightning fast
+  const { data: candles, error: candleError } = await supabase
+    .from('nifty_candles')
+    .select('*')
+    .order('timestamp', { ascending: false })
+    .limit(300);
 
-  // Reverse them back to ASC so the chart draws from left to right
-  let spots = rows.results ? rows.results.reverse() : [];
+  if (candleError) {
+    return c.json({ error: candleError.message }, 500);
+  }
 
-  // 2. Fetch MACD telemetry for the dashboard signals
-  const macdRows = await c.env.TRADING_DB.prepare(
-    `SELECT timestamp, nifty_spot, macd_line FROM system_telemetry 
-     ORDER BY timestamp DESC LIMIT 3000`
-  ).all();
+  // Supabase returns descending to get the newest, but the chart needs them ascending
+  const spots = candles ? candles.reverse().map(row => ({
+    time: Math.floor(new Date(row.timestamp).getTime() / 1000),
+    open: Number(row.open),
+    high: Number(row.high),
+    low: Number(row.low),
+    close: Number(row.close),
+    value: Number(row.volume)
+  })) : [];
 
-  const macdResults = macdRows.results ? macdRows.results.reverse() : [];
+  // Fetch MACD telemetry for the dashboard signals
+  const { data: macdData, error: macdError } = await supabase
+    .from('system_telemetry')
+    .select('timestamp, macd_line')
+    .order('timestamp', { ascending: false })
+    .limit(300);
+
+  const macdResults = macdData ? macdData.reverse() : [];
 
   return c.json({
     spots: spots,
@@ -878,25 +897,24 @@ api.post('/api/admin/sync-candle', async (c) => {
     return c.json({ error: 'Unauthorized' }, 401);
   }
 
-  const { timestamp, open, high, low, close, volume } = body.candle;
+  const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY);
   
-  try {
-    await c.env.TRADING_DB.prepare(
-      `INSERT OR IGNORE INTO nifty_candles (timestamp, open, high, low, close, volume) 
-       VALUES (?, ?, ?, ?, ?, ?)`
-    ).bind(
-      new Date(timestamp).toISOString(), 
-      open, 
-      high, 
-      low, 
-      close, 
-      volume || 0
-    ).run();
+  const { error } = await supabase
+    .from('nifty_candles')
+    .upsert({
+      timestamp: new Date(body.candle.timestamp).toISOString(),
+      open: body.candle.open,
+      high: body.candle.high,
+      low: body.candle.low,
+      close: body.candle.close,
+      volume: body.candle.volume || 0
+    }, { onConflict: 'timestamp' });
 
-    return c.json({ success: true });
-  } catch (err: any) {
-    return c.json({ error: err.message }, 500);
+  if (error) {
+    return c.json({ error: error.message }, 500);
   }
+  
+  return c.json({ success: true });
 });
 
 /** GET /api/summary — Daily AI summary */
