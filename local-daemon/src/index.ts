@@ -14,6 +14,7 @@ import * as path from 'node:path';
 import { logInfo, logWarn, logError, logTrade } from './logger.js';
 import './server.js';
 import { executeOrder, executeOrderStealth } from './executor.js';
+import { DataEngine } from './data-engine.js';
 import { executeEmergencyMarketExit } from './iceberg.js';
 import { ApiTracker, tracker } from './tracker.js';
 import { UpstoxWSClient } from './ws-client.js';
@@ -254,6 +255,10 @@ async function bootstrapEngine() {
 
   brokerAdapter.initialize(activeToken);
 
+  // 🩹 Run Auto-Healer immediately after securing the Upstox Token
+  // This guarantees the database is fully patched before the WebSocket starts streaming
+  await DataEngine.autoRecoverGaps(activeToken);
+
   // ─────────────────────────────────────────────────────────────
   // 🛡️ TASK 4.3: CRASH RECOVERY BOOT SEQUENCE
   // Reconstruct reality from the exchange before opening data feed.
@@ -341,6 +346,16 @@ async function bootstrapEngine() {
   const onSignal = async (signalPayload: any) => {
     logInfo(`[SIGNAL] 1-Min Candle Closed. MACD: ${signalPayload.currentMacd.toFixed(2)} | Signal: ${signalPayload.signal}`);
 
+    // 🟢 Write the closed candle to Supabase immediately
+    await DataEngine.recordLiveCandle({
+      timestamp: signalPayload.timestamp,
+      open: signalPayload.open,
+      high: signalPayload.high,
+      low: signalPayload.low,
+      close: signalPayload.close,
+      volume: signalPayload.volume || 0
+    });
+
     try {
       const response = await fetch(`${CONFIG.workerUrl}/api/signal-ingest`, {
         method: 'POST',
@@ -424,6 +439,10 @@ async function bootstrapEngine() {
               if (data && data.accessToken) {
                 activeToken = data.accessToken;
                 brokerAdapter.initialize(activeToken);
+                
+                // 🩹 Trigger a gap recovery when reconnecting after a failure
+                await DataEngine.autoRecoverGaps(activeToken);
+                
                 // Re-instantiate the client with the fresh token
                 wsClient = new UpstoxWSClient(activeToken);
                 (wsClient as any).aggregator.seedHistoricalData(historicalData);

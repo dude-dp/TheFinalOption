@@ -290,18 +290,12 @@ app.get('/', (c) => {
       </header>
 
       <div class="card">
-        <h2>Data Engine & Backfill Migration</h2>
+        <h2>System Telemetry Logs</h2>
         <p style="font-size: 14px; margin-bottom: 20px; color: #b5a4ba;">
-          Triggers Direct Historical Sync via the Whitelisted EC2 Network Pipeline straight into Supabase Tables.
+          Monitor real-time system logs, trade executions, and server diagnostics directly from the EC2 daemon.
         </p>
         
-        <div class="form-group">
-          <label for="backfillDays">Number of Days to Sync</label>
-          <input type="number" id="backfillDays" value="30" min="1" max="365">
-        </div>
-        
-        <button class="btn" onclick="triggerBackfill()">Execute Data Backfill</button>
-        <button class="btn btn-secondary" onclick="openLogModal('backfill')">View Infrastructure Logs</button>
+        <button class="btn" onclick="openLogModal('daemon')">View Live System Logs</button>
       </div>
 
       <div class="modal-overlay" id="logModalOverlay">
