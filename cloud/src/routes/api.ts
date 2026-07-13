@@ -645,10 +645,29 @@ api.post('/api/emergency-squareoff', async (c) => {
 /** GET /api/telemetry — Last N telemetry entries */
 api.get('/api/telemetry', async (c) => {
   const limit = parseInt(c.req.query('limit') || '50', 10);
-  const rows = await c.env.TRADING_DB.prepare(
-    `SELECT * FROM system_telemetry ORDER BY id DESC LIMIT ?`
-  ).bind(Math.min(limit, 200)).all();
-  return c.json({ data: (rows.results || []).reverse() });
+  const safeLimit = Math.min(limit, 200);
+
+  try {
+    const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY as string);
+    
+    // Fetch the latest logs from the Supabase ledger
+    const { data, error } = await supabase
+      .from('system_telemetry')
+      .select('*')
+      .order('id', { ascending: false })
+      .limit(safeLimit);
+
+    if (error) {
+      console.error('[DB ERR] Supabase telemetry fetch failed:', error.message);
+      return c.json({ data: [] });
+    }
+
+    // Dashboard UI expects chronological order to scroll correctly
+    return c.json({ data: (data || []).reverse() });
+  } catch (err: any) {
+    console.error('[API ERR] Telemetry crash:', err.message);
+    return c.json({ data: [] });
+  }
 });
 
 /** GET /api/orders — Order history */
