@@ -827,7 +827,7 @@ api.get('/api/chart-data', dashboardAuth, async (c) => {
   const { data: candles, error: candleError } = await supabase
     .from('nifty_candles')
     .select('*')
-    .order('timestamp_instrument', { ascending: false })
+    .order('timestamp', { ascending: false })
     .limit(300);
 
   if (candleError) {
@@ -836,8 +836,8 @@ api.get('/api/chart-data', dashboardAuth, async (c) => {
 
   // Supabase returns descending to get the newest, but the chart needs them ascending
   const spots = candles ? candles.reverse().map(row => {
-    // Split by '_' to isolate the valid ISO string: "2026-07-13T09:15:00+05:30"
-    const validIsoDate = row.timestamp_instrument ? row.timestamp_instrument.split('_')[0] : row.timestamp;
+    const rawTime = row.timestamp || row.timestamp_instrument || '';
+    const validIsoDate = rawTime.includes('_') ? rawTime.split('_')[0] : rawTime;
     return {
       time: Math.floor(new Date(validIsoDate).getTime() / 1000),
       open: Number(row.open),
@@ -1202,7 +1202,7 @@ api.get('/api/analytics/monte-carlo-stats', dashboardAuth, async (c) => {
 
   const trades = (rows.results || []).map((r: any) => parseFloat(r.pnl));
   if (trades.length < 10) {
-    return c.json({ error: 'Need at least 10 trades to generate a reliable statistical baseline' }, 400);
+    return c.json({ error: 'Need at least 10 trades to generate a reliable statistical baseline' }, 200);
   }
 
   const wins = trades.filter(t => t > 0);

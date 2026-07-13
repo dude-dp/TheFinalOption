@@ -52,7 +52,7 @@
   // Environment variables (set via `wrangler secret put`)
   "vars": {
     "SUPABASE_URL": "https://pwapzcnichfcmghnyxxo.supabase.co",
-    "SUPABASE_SERVICE_KEY": "sb_secret_LRT4kpgY9lZnmMqmrLil2g_yoRGvsy_",
+    "SUPABASE_SERVICE_KEY": "sb_secret_dlH0KM4m9Vptg0ZGk8SSIg_FKVI2Lha",
     "UPSTOX_REDIRECT_URI": "https://thefinaloption.thefinaloptionautomation.workers.dev/oauth/callback",
     "ENVIRONMENT": "production"
   }
