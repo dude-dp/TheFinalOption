@@ -14,8 +14,7 @@ if (!existsSync(LOG_DIR)) {
 }
 
 function getLogFile(): string {
-  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-  return join(LOG_DIR, `daemon-${today}.log`);
+  return join(LOG_DIR, `daemon.log`);
 }
 
 function formatMessage(level: string, message: string): string {
