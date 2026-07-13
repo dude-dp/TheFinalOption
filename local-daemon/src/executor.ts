@@ -4,6 +4,8 @@
 // ============================================
 
 import { logInfo, logWarn, logError, logTrade } from './logger.js';
+import { StateEngine } from './state-engine.js';
+import { brokerAdapter } from './broker-adapter.js';
 import { ApiTracker, tracker } from './tracker.js';
 import { executeEmergencyMarketExit } from './iceberg.js';
 import { liquidityScanner } from './liquidity.js';
@@ -527,68 +529,87 @@ export class ExecutionEngine {
     }
 
     // 4. Execution Clearance Granted
-    logInfo(`[EXECUTOR] ✅ Verified WAP at ₹${metrics.expectedExecutionPrice.toFixed(2)}. Dispatching to cloud...`);
-
-    await this.dispatchToCloud(signal, targetQuantity, metrics.expectedExecutionPrice);
+    logInfo(`[EXECUTOR] ✅ Verified WAP at ₹${metrics.expectedExecutionPrice.toFixed(2)}. Executing Native Stealth Order...`);
+    await this.executeNativeTrade(signal as 'BUY_CE' | 'BUY_PE', targetQuantity, metrics.expectedExecutionPrice);
   }
 
-  private async dispatchToCloud(signal: string, quantity: number, verifiedWap: number): Promise<void> {
-    const workerUrl = process.env.CLOUD_WORKER_URL || '';
-    const pollSecret = process.env.POLL_SECRET || '';
-    if (!workerUrl) {
-      logWarn('[EXECUTOR] CLOUD_WORKER_URL not configured. Cannot dispatch signal.');
-      return;
+  /**
+   * Replaces the old dispatchToCloud logic. 
+   * Executes automated MACD trades instantly via stealth slicing.
+   */
+  private async executeNativeTrade(signal: 'BUY_CE' | 'BUY_PE', quantity: number, limitPrice: number) {
+    if (!StateEngine.activeToken) {
+       logError('[EXECUTOR] Cannot execute trade: No active Upstox token in StateEngine.');
+       return;
     }
-    try {
-      const response = await fetch(`${workerUrl}/api/signal-ingest`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          secret: pollSecret,
-          signal,
-          quantity,
-          executionPrice: verifiedWap,
-          timestamp: new Date().toISOString()
-        })
-      });
-      if (response.ok) {
-        logInfo(`[EXECUTOR] Secured signal ${signal} successfully dispatched to cloud.`);
-      } else {
-        const errText = await response.text();
-        logError(`[EXECUTOR] Failed to dispatch signal to cloud: ${response.status} - ${errText}`);
-      }
-    } catch (err: any) {
-      logError(`[EXECUTOR] Network error dispatching signal to cloud: ${err.message}`);
-    }
+
+    const direction = signal === 'BUY_CE' ? 'CE' : 'PE';
+    const spotPrice = (global as any).currentActiveLTP || 24000;
+    const atmStrike = Math.round(spotPrice / 50) * 50;
+
+    // Force a fresh margin pull before taking an automated position
+    await brokerAdapter.getFundsAndMargin(true);
+
+    // Call the Option Chain logic you implemented in BrokerAdapter
+    const instrumentToken = await brokerAdapter.getAtmOptionToken(atmStrike, direction);
+
+    const orderPayload = {
+        correlationId: `AUTO-${Date.now()}`,
+        instrumentToken: instrumentToken,
+        tradingSymbol: `NIFTY_${atmStrike}_${direction}`,
+        transactionType: 'BUY',
+        lots: Math.floor(quantity / 25), // Nifty lot size is 25
+        quantity: quantity,
+        orderPrice: limitPrice,
+    };
+
+    // Execute via your existing stealth logic
+    await executeOrderStealth(orderPayload, StateEngine.activeToken);
   }
 
-  public async processTick(tickData: any): Promise<void> {
-    const isSafeToTrade = await this.evaluateCircuitBreakers();
-    if (!isSafeToTrade) return;
+  /**
+   * Natively calculates Risk and executes Manual UI Trades.
+   */
+  public async takeManualPosition(direction: 'CE' | 'PE') {
+    if (!StateEngine.activeToken) {
+       logError('[EXECUTOR] Cannot execute manual trade: No active Upstox token.');
+       return;
+    }
+
+    logInfo(`[EXECUTOR] Initiating native manual entry for ${direction}...`);
+    
+    const spotPrice = (global as any).currentActiveLTP || 24000;
+    const atmStrike = Math.round(spotPrice / 50) * 50;
+    
+    // Force a margin refresh to know exact buying power
+    const marginData = await brokerAdapter.getFundsAndMargin(true);
+    const availableMargin = marginData.available_margin || 0;
+    
+    // Dynamic Lot Calculation (Assume ~₹150 premium = ~₹3750 per lot. Max risk set to ₹4000 buffer)
+    const maxMarginPerLot = 4000; 
+    let lotsToBuy = Math.floor((availableMargin * 0.9) / maxMarginPerLot); // Allocate 90% of account
+    
+    if (lotsToBuy < 1) lotsToBuy = 1; // Fallback to 1 lot if account is small
+    if (lotsToBuy > 36) lotsToBuy = 36; // Cap at 36 lots (900 qty) to stay well under exchange freeze limit
+    
+    const quantity = lotsToBuy * 25;
+    
+    logInfo(`[EXECUTOR] ATM Strike: ${atmStrike}. Available Margin: ₹${availableMargin.toFixed(2)}. Firing ${lotsToBuy} lots.`);
+
+    const instrumentToken = await brokerAdapter.getAtmOptionToken(atmStrike, direction);
+
+    const orderPayload = {
+        correlationId: `MANUAL-${Date.now()}`,
+        instrumentToken: instrumentToken,
+        tradingSymbol: `NIFTY_${atmStrike}_${direction}`,
+        transactionType: 'BUY',
+        lots: lotsToBuy,
+        quantity: quantity,
+        orderPrice: 0, // 0 = MARKET ORDER for aggressive manual entries
+    };
+
+    await executeOrderStealth(orderPayload, StateEngine.activeToken);
   }
 }
 
 export const executor = new ExecutionEngine();
-
-export class Executor {
-  public static async takeManualPosition(direction: 'CE' | 'PE') {
-    // 1. Fetch Option Chain natively using your broker adapter
-    const ltp = (global as any).currentActiveLTP; // Grab live Spot price from your tracker
-    const optionChain = await (global as any).brokerAdapter.getOptionChain(ltp);
-    
-    // 2. Select the ATM Strike
-    const targetStrike = direction === 'CE' ? optionChain.atmCE : optionChain.atmPE;
-    
-    // 3. Calculate Lots dynamically based on max risk config
-    const marginRes = await (global as any).brokerAdapter.getFundsAndMargin();
-    const lotsToBuy = (global as any).calculateDynamicLots(marginRes.available, targetStrike.price);
-    
-    // 4. Execute the trade using your Iceberg slicing logic
-    await (global as any).iceberg.execute({
-      instrumentKey: targetStrike.instrumentKey,
-      quantity: lotsToBuy * 25, // Nifty lot size
-      transactionType: 'BUY',
-      orderType: 'LIMIT'
-    });
-  }
-}

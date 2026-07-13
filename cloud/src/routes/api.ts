@@ -425,10 +425,8 @@ api.post('/api/dlq', async (c) => {
 
 /** GET /api/status — Fully consolidated Supabase state query */
 api.get('/api/status', async (c) => {
-  const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY as string);
-  
   try {
-    // Pull the single aggregated dashboard state row
+    const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY as string);
     const { data: sysState, error } = await supabase
       .from('system_state')
       .select('*')
@@ -440,31 +438,29 @@ api.get('/api/status', async (c) => {
     }
 
     const now = Date.now();
-    const heartbeatTime = new Date(sysState.daemon_last_heartbeat).getTime();
-    
-    // If the daemon hasn't written to Supabase in over 10 seconds, mark it offline
-    const daemonAlive = (now - heartbeatTime) < 10000; 
+    const heartbeatTime = new Date(sysState.daemon_last_heartbeat || now).getTime();
+    const daemonAlive = (now - heartbeatTime) < 15000; 
 
-    // Construct the payload matching your existing UI dashboard.js requirements
     return c.json({
-      status: sysState.bot_status,
+      status: sysState.bot_status || 'STOPPED',
       tradingMode: sysState.trading_mode || 'LIVE',
       lastUpdated: sysState.updated_at,
       hasAccessToken: !!sysState.upstox_access_token,
       daemonAlive: daemonAlive,
-      
-      // Dynamic numbers fed natively by the EC2 loop
-      livePnL: Number(sysState.live_pnl),
-      ltp: Number(sysState.active_position_ltp),
-      
-      // Map equity balance object structures directly
+      livePnL: Number(sysState.live_pnl || 0),
+      ltp: Number(sysState.active_position_ltp || 0),
       margin: {
         availableMargin: sysState.account_margin?.available_margin || 0,
         usedMargin: sysState.account_margin?.used_margin || 0,
         payin: sysState.account_margin?.payin || 0
-      }
+      },
+      // 🛡️ MOCKS: Prevents the dashboard.js Fuel Gauge from crashing
+      telemetry: { reqPerMinute: 0, errorRate: 0, avgLatency: 0 },
+      // 🛡️ MOCKS: Prevents position rendering components from throwing null errors
+      activePosition: null,
+      activeHedgePosition: null,
+      lockTimestamp: null
     });
-
   } catch (err: any) {
     return c.json({ error: `Failed to compile UI telemetry: ${err.message}` }, 500);
   }
@@ -543,28 +539,35 @@ api.post('/api/position/sl-override', dashboardAuth, async (c) => {
 });
 
 
-/** POST /api/manual-trade — Queue manual commands to EC2 */
-api.post('/api/manual-trade', dashboardAuth, async (c) => {
-  const { action, direction } = await c.req.json<{ action: string, direction?: 'CE' | 'PE' }>();
-  
-  const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY as string);
+/** POST /api/manual-entry — Queue manual commands to EC2 via Supabase */
+api.post('/api/manual-entry', dashboardAuth, async (c) => {
+  try {
+    const body = await c.req.json();
+    
+    // UI sends { type: "CE" }. We must strictly map this to satisfy the Supabase NOT NULL constraint.
+    const direction = body.type || body.direction || 'CE';
+    const action = body.action || 'MANUAL_BUY'; 
+    
+    const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY as string);
 
-  // 1. Act as a dumb terminal: just write the user's intent to the queue
-  const { data, error } = await supabase.from('pending_commands').insert([{
-    action: action,             // e.g., 'MANUAL_BUY'
-    direction: direction,       // e.g., 'CE'
-    status: 'PENDING'
-  }]).select('id').single();
+    const { data, error } = await supabase.from('pending_commands').insert([{
+      action: action,             
+      direction: direction,       
+      status: 'PENDING'
+    }]).select('id').single();
 
-  if (error) {
-    return c.json({ error: `Command queue failed: ${error.message}` }, 500);
+    if (error) {
+      return c.json({ error: `Command queue failed: ${error.message}` }, 500);
+    }
+
+    return c.json({ 
+      success: true, 
+      message: `Command queued successfully.`,
+      commandId: data.id 
+    });
+  } catch (err: any) {
+    return c.json({ error: `Worker crash: ${err.message}` }, 500);
   }
-
-  return c.json({ 
-    success: true, 
-    message: `Command queued successfully.`,
-    commandId: data.id 
-  });
 });
 
 /** POST /api/emergency-squareoff */

@@ -34,6 +34,118 @@ class BrokerAdapter {
   private readonly AUTH_FAILURE_PAUSE_THRESHOLD = 2; // pause after 2 consecutive 401s
   private syncPaused: boolean = false;
 
+  // --- ADD THESE INSIDE YOUR BrokerAdapter CLASS ---
+  
+  private marginCache: any = { available_margin: 0, used_margin: 0, payin: 0 };
+  private marginLastFetched: number = 0;
+
+  /**
+   * Safe Margin Fetcher: Protects against Upstox 429 Rate Limits.
+   * Serves from cache unless 60 seconds have passed or forceRefresh is true.
+   */
+  public async getFundsAndMargin(forceRefresh = false): Promise<any> {
+    if (!this.apiToken) return this.marginCache;
+    
+    const now = Date.now();
+    if (!forceRefresh && (now - this.marginLastFetched < 60000)) {
+      return this.marginCache; // Serve from cache to protect API limits
+    }
+
+    try {
+      const response = await fetch('https://api.upstox.com/v2/user/get-funds-and-margin?client_id=NSE', {
+        headers: { 'Accept': 'application/json', 'Authorization': `Bearer ${this.apiToken}` }
+      });
+
+      if (response.ok) {
+        const json = await response.json() as any;
+        if (json.status === 'success' && json.data?.equity) {
+          this.marginCache = json.data.equity;
+          this.marginLastFetched = now;
+        }
+      } else if (response.status === 429) {
+        logWarn('[BROKER] 429 Too Many Requests on margin. Serving cached data.');
+      }
+    } catch (error) {
+      logError(`[BROKER] Margin fetch error: ${error}`);
+    }
+    return this.marginCache;
+  }
+
+  /**
+   * Safe expiry calculator ported from old strike.ts logic.
+   * Calculates the target Tuesday expiry and handles same-day rollover.
+   */
+  private getNearestWeeklyExpiry(): string {
+    const date = new Date();
+    const dayOfWeek = date.getDay(); // 0=Sun, 2=Tue
+    
+    // Automatically roll to next week if today is expiry day
+    const rollToNext = (dayOfWeek === 2); 
+    
+    let daysUntilExpiry = (2 - dayOfWeek + 7) % 7;
+
+    if (daysUntilExpiry === 0 && rollToNext) {
+      daysUntilExpiry = 7;
+    } else if (rollToNext) {
+      daysUntilExpiry += 7;
+    }
+
+    date.setDate(date.getDate() + daysUntilExpiry);
+
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+
+    return `${year}-${month}-${day}`;
+  }
+
+  /**
+   * Option Chain Resolver: Finds the exact token for the ATM strike.
+   */
+  public async getAtmOptionToken(strikePrice: number, optionType: 'CE' | 'PE'): Promise<string> {
+    if (!this.apiToken) throw new Error('No Upstox API token available');
+
+    const expiryDate = this.getNearestWeeklyExpiry();
+    const encodedKey = encodeURIComponent('NSE_INDEX|Nifty 50');
+    const url = `https://api.upstox.com/v2/option/chain?instrument_key=${encodedKey}&expiry_date=${expiryDate}`;
+
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${this.apiToken}`,
+          'User-Agent': 'TheFinalOption-Daemon/1.0'
+        }
+      });
+
+      if (!response.ok) {
+        const err = await response.text();
+        throw new Error(`Upstox Option Chain API failed: ${response.status} ${err}`);
+      }
+
+      const json = await response.json() as any;
+      if (!json.data) throw new Error('Invalid option chain data returned.');
+
+      // Find the specific strike price in the array
+      const strikeData = json.data.find((item: any) => item.strike_price === strikePrice);
+
+      if (!strikeData) {
+        throw new Error(`Strike ${strikePrice} not found in the option chain for expiry ${expiryDate}`);
+      }
+
+      if (optionType === 'CE' && strikeData.call_options) {
+        return strikeData.call_options.instrument_key;
+      } else if (optionType === 'PE' && strikeData.put_options) {
+        return strikeData.put_options.instrument_key;
+      }
+
+      throw new Error(`Could not find ${optionType} instrument for strike ${strikePrice}`);
+    } catch (error: any) {
+      logError(`[BROKER] Option Chain fetch error: ${error.message}`);
+      throw error;
+    }
+  }
+
   /**
    * Initializes the adapter with the active Upstox access token
    * and boots up the self-healing background thread.
