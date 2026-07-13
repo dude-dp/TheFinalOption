@@ -3,6 +3,7 @@ import { logInfo, logError } from './logger.js';
 import { brokerAdapter } from './broker-adapter.js';
 import { executor } from './executor.js';
 import { executeEmergencyMarketExit } from './iceberg.js';
+import { tracker } from './tracker.js';
 
 const supabase = createClient(
   process.env.SUPABASE_URL || '',
@@ -97,21 +98,22 @@ export class StateEngine {
         // 🛡️ SAFELY fetch margin using the 60s cache. Will NOT trigger 429s.
         const marginData = await brokerAdapter.getFundsAndMargin();
 
-        const livePnL = (global as any).currentLivePnL || 0.00; 
-        const activeLTP = (global as any).currentActiveLTP || 0.00;
+        // 🟢 FIXED: Pull exact state directly from the local memory tracker
+        const state = tracker.getState();
+        const hasPosition = tracker.activePositionQty !== 0;
 
-        const activePos = (global as any).hasActivePosition ? {
-            tradingSymbol: (global as any).activePositionSymbol || 'NIFTY_OPTIONS',
-            quantity: (global as any).activePositionQty || 0,
-            entryPrice: (global as any).activePositionEntry || 0,
-            optionType: 'CE/PE' // Dynamically set this based on symbol
+        const activePos = hasPosition ? {
+            instrumentToken: tracker.activePositionToken,
+            quantity: tracker.activePositionQty,
+            entryPrice: tracker.activePositionEntry,
+            optionType: tracker.activePositionToken.includes('CE') ? 'CE' : 'PE'
         } : null;
 
         await supabase.from('system_state').update({
-            live_pnl: livePnL,
-            active_position_ltp: activeLTP,
+            live_pnl: state.activeUnrealizedPnL, // Pushes live floating PnL
+            active_position_ltp: 0, // (Handled internally by UnrealizedPnL)
             account_margin: marginData,
-            active_position: activePos, // 🟢 Pushes live trade data to the dashboard
+            active_position: activePos, // Populates the Dashboard Active Trades UI!
             daemon_last_heartbeat: new Date().toISOString()
         }).eq('id', 1);
       } catch (err: any) {
