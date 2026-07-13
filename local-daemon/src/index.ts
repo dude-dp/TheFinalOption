@@ -165,18 +165,23 @@ function connectCloudWS(): void {
 
 // --- WS Engine ---
 /**
- * 🫀 WATCHDOG HEARTBEAT
- * Pings the Cloudflare API every 5 seconds so the dashboard knows the daemon is alive.
- * Prevents the Cloud "Dead Man's Switch" from auto-stopping the bot.
+ * 🫀 WATCHDOG HEARTBEAT (Upgraded)
+ * Pings the Cloudflare API every 5 seconds.
+ * Now features auto-URL cleaning and aggressive error logging.
  */
 function startWatchdogHeartbeat() {
-  const cloudUrl = CONFIG.workerUrl || 'https://thefinaloption.thefinaloptionautomation.workers.dev/';
+  // 1. Auto-clean the URL to prevent `//api/poll` 404 errors
+  let cloudUrl = CONFIG.workerUrl || 'https://thefinaloption.thefinaloptionautomation.workers.dev';
+  if (cloudUrl.endsWith('/')) {
+    cloudUrl = cloudUrl.slice(0, -1); 
+  }
+  
   const secret = CONFIG.pollSecret || '';
 
   setInterval(async () => {
     try {
       const memory = process.memoryUsage();
-
+      
       const response = await fetch(`${cloudUrl}/api/poll`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -184,24 +189,25 @@ function startWatchdogHeartbeat() {
           secret: secret,
           memoryRss: memory.rss,
           memoryHeapUsed: memory.heapUsed,
-          rateMetrics: { reqPerSecond: 1, reqPerMinute: 60 } // Tells UI we are active
+          rateMetrics: { reqPerSecond: 1, reqPerMinute: 60 } 
         })
       });
 
       if (response.ok) {
         const data: any = await response.json();
-
-        // If memory leak detected by cloud, it will request a safe restart
         if (data.shouldRestart) {
           logWarn('[WATCHDOG] Cloud requested a daemon restart. Rebooting safely...');
-          process.exit(1); // PM2 will auto-restart it instantly
+          process.exit(1);
         }
+      } else {
+        // 🚨 THIS IS WHERE WE CATCH THE GHOST
+        const errText = await response.text();
+        logError(`[WATCHDOG] Heartbeat REJECTED! Status: ${response.status} | Reason: ${errText}`);
       }
     } catch (error: any) {
-      // We don't crash here, just log it. The network might just be blipping.
-      logError(`[WATCHDOG] Heartbeat ping failed: ${error.message}`);
+      logError(`[WATCHDOG] Critical Network Failure hitting Cloud API: ${error.message}`);
     }
-  }, 5000); // Sends a pulse every 5 seconds
+  }, 5000); 
 }
 
 async function bootstrapEngine() {

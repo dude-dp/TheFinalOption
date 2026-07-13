@@ -112,12 +112,18 @@ api.post('/api/poll', async (c) => {
 
   // Update live rate metrics from the daemon
   if (body.rateMetrics) {
-    state.daemonMetrics = {
+    // 🚨 RACE CONDITION FIX: Fetch the absolute latest state again right before writing
+    // This ensures we don't accidentally overwrite a "RUNNING" status that the UI just set.
+    const latestStateRaw = await kv.get(KV_KEYS.BOT_STATE);
+    const latestState: BotState = latestStateRaw ? JSON.parse(latestStateRaw) : state;
+
+    latestState.daemonMetrics = {
       reqPerSecond: body.rateMetrics.reqPerSecond,
       reqPerMinute: body.rateMetrics.reqPerMinute,
       lastUpdated: Date.now()
     };
-    await kv.put(KV_KEYS.BOT_STATE, JSON.stringify(state));
+    
+    await kv.put(KV_KEYS.BOT_STATE, JSON.stringify(latestState));
   }
 
   let triggerWatchdogRestart = false;
