@@ -327,7 +327,6 @@ async function bootstrapEngine() {
   // wsClient was initialized above
   // Typecasting access to private property to seed data cleanly in this script
   (wsClient as any).aggregator.seedHistoricalData(historicalData);
-
   // 3. Define the signal callback
   const onSignal = async (signalPayload: any) => {
     logInfo(`[SIGNAL] 1-Min Candle Closed. MACD: ${signalPayload.currentMacd.toFixed(2)} | Signal: ${signalPayload.signal}`);
@@ -341,6 +340,12 @@ async function bootstrapEngine() {
       close: signalPayload.close,
       volume: signalPayload.volume || 0
     });
+
+    // 🛡️ THE GATEKEEPER: Stop processing if the UI says STOPPED
+    if (StateEngine.botStatus !== 'RUNNING') {
+      logInfo(`[GATEKEEPER] Signal generated, but bot is currently ${StateEngine.botStatus}. Ignoring trade.`);
+      return; 
+    }
 
     try {
       const response = await fetch(`${CONFIG.workerUrl}/api/signal-ingest`, {

@@ -103,3 +103,10 @@ Your dashboard is located at your Cloudflare Worker URL (e.g., `https://thefinal
 ### Cloud Configuration (`cloud/wrangler.jsonc`)
 * `crons: ["*/1 3-10 * * 1-5"]`: Controls when the bot evaluates the market. Currently set to every minute from 3:00 to 10:59 UTC, Monday-Friday.
 * `vars.UPSTOX_REDIRECT_URI`: Must exactly match the URL registered in your Upstox Developer Console (ending in `/oauth/callback`).
+
+
+
+
+## start bot manually
+
+curl -X POST -u vdineshprabu:Healthywealth007# -H "Content-Type: application/json" -d '{"action":"START"}' https://thefinaloption.thefinaloptionautomation.workers.dev/api/control

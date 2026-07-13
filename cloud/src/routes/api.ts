@@ -48,6 +48,22 @@ api.use('/api/chart-data', dashboardAuth);
 api.use('/api/summary', dashboardAuth);
 api.use('/api/config', dashboardAuth);
 
+async function getUpstoxAccessToken(c: any): Promise<string | null> {
+  try {
+    const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY);
+    const { data, error } = await supabase
+      .from('system_state')
+      .select('upstox_access_token')
+      .eq('id', 1)
+      .single();
+    if (error || !data) return null;
+    return data.upstox_access_token;
+  } catch (err) {
+    console.error('[DB ERR] Failed to fetch upstox access token from Supabase:', err);
+    return null;
+  }
+}
+
 // =====================
 // DAEMON ENDPOINTS
 // =====================
@@ -192,7 +208,7 @@ api.post('/api/poll', async (c) => {
           console.error('[KV WARN] Rate limit hit on PENDING_ORDERS put:', kvErr.message);
         }
       }
-      accessToken = await kv.get(KV_KEYS.UPSTOX_ACCESS_TOKEN);
+      accessToken = await getUpstoxAccessToken(c);
     }
 
     return c.json({
@@ -225,7 +241,7 @@ api.post('/api/sweep-orphans', async (c) => {
      AND upstox_order_id != ''`
   ).all();
 
-  const accessToken = await c.env.TRADING_KV.get(KV_KEYS.UPSTOX_ACCESS_TOKEN);
+  const accessToken = await getUpstoxAccessToken(c);
 
   return c.json({
     hasOrphans: (rows.results && rows.results.length > 0),
@@ -372,7 +388,11 @@ api.post('/api/heartbeat', async (c) => {
   const body = await c.req.json<{ secret: string }>();
   if (body.secret !== c.env.POLL_SECRET) return c.json({ error: 'Unauthorized' }, 401);
 
-  await c.env.TRADING_KV.put('daemon_last_heartbeat', Date.now().toString());
+  try {
+    await c.env.TRADING_KV.put('daemon_last_heartbeat', Date.now().toString());
+  } catch (kvErr: any) {
+    console.error('[KV WARN] Rate limit hit on daemon_last_heartbeat put:', kvErr.message);
+  }
   return c.json({ success: true });
 });
 
@@ -409,7 +429,7 @@ api.get('/api/status', async (c) => {
   const state: BotState = stateRaw ? JSON.parse(stateRaw) : {
     status: 'STOPPED', lastUpdated: '', activePosition: null, lockTimestamp: null, lastMacdLine: null
   };
-  const accessToken = await c.env.TRADING_KV.get(KV_KEYS.UPSTOX_ACCESS_TOKEN);
+  const accessToken = await getUpstoxAccessToken(c);
   const hasToken = !!accessToken;
 
   // Fetch cached margin
@@ -516,11 +536,21 @@ api.post('/api/control', async (c) => {
 
   state.lastUpdated = new Date().toISOString();
   
-  // 2. Dual Write (KV for frontend, Supabase for EC2 backend)
-  await c.env.TRADING_KV.put(KV_KEYS.BOT_STATE, JSON.stringify(state));
+  try {
+    await c.env.TRADING_KV.put(KV_KEYS.BOT_STATE, JSON.stringify(state));
+  } catch (kvErr: any) {
+    console.error('[KV WARN] Rate limit hit on BOT_STATE put:', kvErr.message);
+  }
   
-  const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY);
-  await supabase.from('system_state').update(dbUpdate).eq('id', 1);
+  try {
+    const serviceKey = c.env.SUPABASE_SERVICE_ROLE_KEY || c.env.SUPABASE_SERVICE_KEY;
+    const supabase = createClient(c.env.SUPABASE_URL, serviceKey);
+    
+    const { error } = await supabase.from('system_state').update(dbUpdate).eq('id', 1);
+    if (error) console.error("Supabase State Update Failed:", error.message);
+  } catch (err: any) {
+    console.error("Critical Error updating Supabase from Cloudflare:", err.message);
+  }
 
   return c.json({ success: true, status: state.status, mode: state.tradingMode });
 });
@@ -578,7 +608,7 @@ api.post('/api/manual-entry', dashboardAuth, async (c) => {
     if (state.activePosition) return c.json({ error: 'Position already active. Square off first.' }, 400);
     if (state.lockTimestamp) return c.json({ error: 'System is currently locked processing another order.' }, 400);
 
-    const accessToken = await c.env.TRADING_KV.get(KV_KEYS.UPSTOX_ACCESS_TOKEN);
+    const accessToken = await getUpstoxAccessToken(c);
     if (!accessToken) return c.json({ error: 'No active Upstox access token.' }, 400);
 
     // 1. Get the latest Spot Price from our database telemetry
@@ -744,7 +774,7 @@ api.post('/api/emergency-squareoff', async (c) => {
       if (isPaperMode) {
         // Fetch last price or use entry price as fallback
         let currentLtpToUse = 0;
-        const accessToken = await c.env.TRADING_KV.get(KV_KEYS.UPSTOX_ACCESS_TOKEN);
+        const accessToken = await getUpstoxAccessToken(c);
         if (accessToken) {
           try {
             const ltpData = await getLTP(accessToken, [pos.instrumentToken]);
@@ -884,7 +914,7 @@ api.get('/api/chart-data', dashboardAuth, async (c) => {
  * WAF-Bypass: Uses the Intraday endpoint instead of historical date ranges.
  */
 api.post('/api/admin/backfill', dashboardAuth, async (c) => {
-  const accessToken = await c.env.TRADING_KV.get(KV_KEYS.UPSTOX_ACCESS_TOKEN);
+  const accessToken = await getUpstoxAccessToken(c);
   if (!accessToken) return c.json({ error: 'No Upstox token found. Please login first.' }, 401);
 
   try {
@@ -1019,12 +1049,7 @@ api.get('/oauth/callback', async (c) => {
       c.env.UPSTOX_REDIRECT_URI
     );
 
-    // 1. Keep KV for now so the UI doesn't break
-    await c.env.TRADING_KV.put(KV_KEYS.UPSTOX_ACCESS_TOKEN, accessToken, {
-      expirationTtl: expiresIn,
-    });
-
-    // 2. NEW: Push token directly to Supabase so EC2 can intercept it instantly
+    // 2. Push token directly to Supabase so EC2 can intercept it instantly
     const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY);
     await supabase.from('system_state').update({
       upstox_access_token: accessToken,
