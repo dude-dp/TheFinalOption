@@ -102,15 +102,10 @@ async function bootstrapEngine() {
   const onSignal = async (signalPayload: any) => {
     logInfo(`[SIGNAL] Candle Closed. MACD: ${signalPayload.currentMacd.toFixed(2)} | Signal: ${signalPayload.signal}`);
 
-    await DataEngine.recordLiveCandle({
-      timestamp: signalPayload.timestamp,
-      open: signalPayload.open,
-      high: signalPayload.high,
-      low: signalPayload.low,
-      close: signalPayload.close,
-      volume: signalPayload.volume || 0
-    });
+    // 🗑️ DELETED the duplicate DataEngine.recordLiveCandle here.
+    // ws-client.ts natively handles pushing the candle to Supabase!
 
+    // Gatekeeper: Block trades if UI is stopped
     if (StateEngine.botStatus !== 'RUNNING') return;
 
     if (signalPayload.signal.startsWith('BUY')) {

@@ -168,8 +168,18 @@ export class UpstoxWSClient {
     });
 
     this.ws.on('close', () => {
-      console.log('🔴 WS Closed. Reconnecting in 5s...');
-      setTimeout(() => this.connect(onSignal), 5000);
+      console.log('🔴 WS Closed. Entering auto-reconnect sequence...');
+      
+      const attemptReconnect = async () => {
+        try {
+          await this.connect(onSignal);
+        } catch (err: any) {
+          console.error(`🔴 Reconnect failed: ${err.message}. Retrying in 15s...`);
+          setTimeout(attemptReconnect, 15000); // Bulletproof infinite retry loop
+        }
+      };
+      
+      setTimeout(attemptReconnect, 5000);
     });
   }
 
