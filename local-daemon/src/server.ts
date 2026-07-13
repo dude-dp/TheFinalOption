@@ -10,7 +10,9 @@ const app = new Hono();
 // Initialize Supabase Client using your environment configurations
 const supabaseUrl = process.env.SUPABASE_URL || '';
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseKey);
+const supabase = (supabaseUrl && supabaseKey) 
+  ? createClient(supabaseUrl, supabaseKey) 
+  : null;
 
 // Guard dashboard access securely
 app.use('/*', basicAuth({
@@ -45,6 +47,11 @@ async function runHistoricalBackfill(days: number) {
       const mockCandlesCount = 375; // Typical 1-minute candles in a trading session
       
       logToBackfill(`INGESTION: Retrieved ${mockCandlesCount} candles for ${dateStr}. Streaming directly to Supabase...`);
+      
+      if (!supabase) {
+        logToBackfill(`WARNING: Supabase keys missing. Cannot write to database.`);
+        continue;
+      }
       
       // 2. Stream directly to Supabase PostgreSQL target table
       /*
