@@ -730,13 +730,20 @@
     const data = await res.json();
     
     if (data.spots && data.spots.length > 0) {
-      const historicalData = data.spots.map(spot => ({
-        time: Math.floor(new Date(spot.timestamp).getTime() / 1000),
-        open: spot.open,
-        high: spot.high,
-        low: spot.low,
-        close: spot.close
-      }));
+      const historicalData = data.spots.map(spot => {
+        let uTime = spot.time;
+        if (!uTime && spot.timestamp) {
+          const parsed = new Date(spot.timestamp).getTime();
+          if (!isNaN(parsed)) uTime = Math.floor(parsed / 1000);
+        }
+        return {
+          time: uTime,
+          open: spot.open,
+          high: spot.high,
+          low: spot.low,
+          close: spot.close
+        };
+      });
       // Sort strictly ascending
       historicalData.sort((a, b) => a.time - b.time);
       

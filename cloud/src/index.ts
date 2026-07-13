@@ -24,6 +24,9 @@ app.route('/', dashboardRoutes);
 // NEW: Backtest UI Page
 app.get('/backtest', (c) => c.html(BacktestPage()));
 
+// Handle favicon.ico to prevent 404 console warnings
+app.get('/favicon.ico', (c) => c.body(null, 204));
+
 // API routes
 app.route('/', apiRoutes);
 

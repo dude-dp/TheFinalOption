@@ -840,6 +840,7 @@ api.get('/api/chart-data', dashboardAuth, async (c) => {
     const validIsoDate = rawTime.includes('_') ? rawTime.split('_')[0] : rawTime;
     return {
       time: Math.floor(new Date(validIsoDate).getTime() / 1000),
+      timestamp: validIsoDate,
       open: Number(row.open),
       high: Number(row.high),
       low: Number(row.low),
