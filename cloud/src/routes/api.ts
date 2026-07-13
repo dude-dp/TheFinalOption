@@ -423,55 +423,51 @@ api.post('/api/dlq', async (c) => {
 // DASHBOARD ENDPOINTS
 // =====================
 
-/** GET /api/status — Bot state + active position + margin */
+/** GET /api/status — Fully consolidated Supabase state query */
 api.get('/api/status', async (c) => {
-  // FIXED: Using c.env.SUPABASE_SERVICE_KEY
   const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY as string);
   
-  // 1. Fetch State ONLY from Supabase (The Single Source of Truth)
-  let sysState = null;
   try {
-    const { data, error } = await supabase.from('system_state').select('*').eq('id', 1).single();
-    if (error) console.error("Supabase State Error:", error.message);
-    sysState = data;
-  } catch (e) {
-    console.error("Critical Supabase connection failure in /api/status");
+    // Pull the single aggregated dashboard state row
+    const { data: sysState, error } = await supabase
+      .from('system_state')
+      .select('*')
+      .eq('id', 1)
+      .single();
+
+    if (error || !sysState) {
+      return c.json({ error: error?.message || 'State record unallocated.' }, 500);
+    }
+
+    const now = Date.now();
+    const heartbeatTime = new Date(sysState.daemon_last_heartbeat).getTime();
+    
+    // If the daemon hasn't written to Supabase in over 10 seconds, mark it offline
+    const daemonAlive = (now - heartbeatTime) < 10000; 
+
+    // Construct the payload matching your existing UI dashboard.js requirements
+    return c.json({
+      status: sysState.bot_status,
+      tradingMode: sysState.trading_mode || 'LIVE',
+      lastUpdated: sysState.updated_at,
+      hasAccessToken: !!sysState.upstox_access_token,
+      daemonAlive: daemonAlive,
+      
+      // Dynamic numbers fed natively by the EC2 loop
+      livePnL: Number(sysState.live_pnl),
+      ltp: Number(sysState.active_position_ltp),
+      
+      // Map equity balance object structures directly
+      margin: {
+        availableMargin: sysState.account_margin?.available_margin || 0,
+        usedMargin: sysState.account_margin?.used_margin || 0,
+        payin: sysState.account_margin?.payin || 0
+      }
+    });
+
+  } catch (err: any) {
+    return c.json({ error: `Failed to compile UI telemetry: ${err.message}` }, 500);
   }
-
-  // 2. Fetch Active Positions from KV 
-  const stateRaw = await c.env.TRADING_KV.get(KV_KEYS.BOT_STATE);
-  const kvState = stateRaw ? JSON.parse(stateRaw) : {};
-  const accessToken = await c.env.TRADING_KV.get(KV_KEYS.UPSTOX_ACCESS_TOKEN);
-  const hasToken = !!accessToken;
-
-  // 3. Merge them to feed the dashboard
-  const state = {
-    status: sysState?.bot_status || 'STOPPED',
-    tradingMode: sysState?.trading_mode || 'LIVE',
-    lastUpdated: sysState?.updated_at || '',
-    activePosition: kvState.activePosition || null,
-    activeHedgePosition: kvState.activeHedgePosition || null,
-    lockTimestamp: kvState.lockTimestamp || null,
-  };
-
-  // Fetch cached margin
-  let marginRaw = await c.env.TRADING_KV.get(KV_KEYS.ACCOUNT_MARGIN);
-  let margin = marginRaw ? JSON.parse(marginRaw) : null;
-  const now = Date.now();
-  const CACHE_TTL_MS = 5 * 60 * 1000;
-  if (hasToken && (!margin || !margin.timestamp || (now - margin.timestamp > CACHE_TTL_MS))) {
-    try {
-      const funds = await getFundsAndMargin(accessToken);
-      const marginData = { ...funds, timestamp: now };
-      await c.env.TRADING_KV.put(KV_KEYS.ACCOUNT_MARGIN, JSON.stringify(marginData));
-      margin = marginData;
-    } catch (e) {}
-  }
-  
-  const lastHeartbeat = await c.env.TRADING_KV.get('daemon_last_heartbeat');
-  const daemonAlive = lastHeartbeat ? (now - parseInt(lastHeartbeat)) < 3 * 60 * 1000 : false;
-
-  return c.json({ ...state, hasAccessToken: hasToken, margin, daemonAlive });
 });
 
 /** POST /api/control — Toggle bot status */
