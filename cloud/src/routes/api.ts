@@ -455,7 +455,8 @@ api.get('/api/status', async (c) => {
         payin: sysState.account_margin?.payin || 0
       },
       // 🛡️ MOCKS: Prevents the dashboard.js Fuel Gauge from crashing
-      telemetry: { reqPerMinute: 0, errorRate: 0, avgLatency: 0 },
+      // 🛡️ FIXED: Renamed to 'daemonMetrics' to match exactly what dashboard.js expects
+      daemonMetrics: { reqPerMinute: 0, errorRate: 0, avgLatency: 0 },
       // 🛡️ MOCKS: Prevents position rendering components from throwing null errors
       activePosition: null,
       activeHedgePosition: null,
