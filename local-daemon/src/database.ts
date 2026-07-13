@@ -4,11 +4,11 @@ import { createClient } from '@supabase/supabase-js';
 import { logger } from './logger';
 
 const supabaseUrl = process.env.SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_SERVICE_KEY || '';
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '';
 
 // 🛡️ THE FIX: Only initialize the client if the keys actually exist!
-export const supabase = (supabaseUrl && supabaseKey) 
-  ? createClient(supabaseUrl, supabaseKey) 
+export const supabase = (supabaseUrl && supabaseKey)
+  ? createClient(supabaseUrl, supabaseKey)
   : null;
 
 if (!supabase) {
@@ -20,10 +20,10 @@ if (!supabase) {
  */
 export async function syncCandleToDatabase(candle: any, retries = 3): Promise<void> {
   logger.info(`[DB] Attempting to sync closed candle at ${new Date(candle.timestamp).toISOString()}`);
-  
+
   if (!supabase) {
     logger.warn('[DB] 🚨 Aborting sync: Supabase engine is not initialized (missing keys).');
-    return; 
+    return;
   }
 
   for (let i = 0; i < retries; i++) {
@@ -40,7 +40,7 @@ export async function syncCandleToDatabase(candle: any, retries = 3): Promise<vo
         }, { onConflict: 'timestamp' });
 
       if (error) throw error;
-      return; 
+      return;
     } catch (error: any) {
       if (i === retries - 1) {
         logger.error(`[DB] Failed to sync live candle to Supabase after ${retries} attempts: ${error.message}`);
