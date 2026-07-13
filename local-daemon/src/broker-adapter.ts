@@ -19,6 +19,7 @@ export interface UpstoxPosition {
   netQuantity: number;
   realizedPnL: number;
   unrealizedPnL: number;
+  averagePrice: number;
   product: string;
 }
 
@@ -177,6 +178,14 @@ class BrokerAdapter {
       tracker.setRealizedPnL(totalRealized);
       tracker.updateUnrealizedPnL(totalUnrealized);
 
+      // 🟢 NEW: Ensure local memory matches Upstox EXACTLY
+      const activePos = positions.find(p => p.netQuantity !== 0);
+      if (activePos) {
+        tracker.setActivePosition(activePos.instrumentToken, activePos.netQuantity, activePos.averagePrice || 0);
+      } else {
+        tracker.clearActivePosition();
+      }
+
       // 2. Logging deep reconciliation events (Only log if things change to prevent spam)
       // logInfo(`[BROKER-SYNC] State Reconciled. Realized: ₹${totalRealized}, Unrealized: ₹${totalUnrealized}`);
 
@@ -230,6 +239,7 @@ class BrokerAdapter {
         netQuantity: parseInt(pos.quantity) || 0,
         realizedPnL: parseFloat(pos.realised) || 0,
         unrealizedPnL: parseFloat(pos.unrealised) || 0,
+        averagePrice: parseFloat(pos.average_price || pos.buy_price) || 0, // 🟢 ADD THIS
         product: pos.product
       }));
 

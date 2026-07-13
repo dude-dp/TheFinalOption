@@ -6,7 +6,7 @@ import { TickArchiver } from './archiver';
 import { tracker } from './tracker';
 import { varianceEngine } from './variance.js';
 import { executor } from './executor.js';
-import { syncCandleToDatabase } from './database';
+import { DataEngine } from './data-engine.js';
 
 // Import local MACD if available or mock it for compilation
 let calculateMACD: any = null;
@@ -121,6 +121,7 @@ export class UpstoxWSClient {
             };
 
             this.latestDepth = depth;
+            tracker.setSpotPrice(tick.ltp); // 🟢 NEW: Feed Live Nifty Price to Executor!
 
             // 1. Measure Kinetic Velocity
             const volatilityState = varianceEngine.evaluateVelocity(tick.timestamp);
@@ -141,8 +142,8 @@ export class UpstoxWSClient {
             if (closedCandles && closedCandles.length > 0) {
               const latestClosedCandle = closedCandles[closedCandles.length - 1];
               
-              // 🚀 Direct Database Injection (Bypasses Cloudflare API entirely)
-              syncCandleToDatabase(latestClosedCandle);
+              // 🟢 FIXED: Use DataEngine to prevent double-database writes
+              DataEngine.recordLiveCandle(latestClosedCandle);
 
               // Standard MACD signal generation
               this.evaluateAndPushSignal(closedCandles, onSignal);

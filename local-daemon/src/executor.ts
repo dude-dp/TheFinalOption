@@ -10,6 +10,7 @@ import { ApiTracker, tracker } from './tracker.js';
 import { executeEmergencyMarketExit } from './iceberg.js';
 import { liquidityScanner } from './liquidity.js';
 import type { MarketDepth } from './ws-client.js';
+import { activeWsClient } from './index.js'; // 🟢 NEW IMPORT
 
 const HFT_URL = 'https://api-hft.upstox.com';
 const API_URL = 'https://api.upstox.com';
@@ -530,27 +531,27 @@ export class ExecutionEngine {
 
     // 4. Execution Clearance Granted
     logInfo(`[EXECUTOR] ✅ Verified WAP at ₹${metrics.expectedExecutionPrice.toFixed(2)}. Executing Native Stealth Order...`);
-    await this.executeNativeTrade(signal as 'BUY_CE' | 'BUY_PE', targetQuantity, metrics.expectedExecutionPrice);
+    // Pass the real LTP down to the executor
+    await this.executeNativeTrade(signal as 'BUY_CE' | 'BUY_PE', targetQuantity, metrics.expectedExecutionPrice, ltp); 
   }
 
-  /**
-   * Replaces the old dispatchToCloud logic. 
-   * Executes automated MACD trades instantly via stealth slicing.
-   */
-  private async executeNativeTrade(signal: 'BUY_CE' | 'BUY_PE', quantity: number, limitPrice: number) {
+  private async executeNativeTrade(signal: 'BUY_CE' | 'BUY_PE', quantity: number, limitPrice: number, liveLtp: number) {
     if (!StateEngine.activeToken) {
        logError('[EXECUTOR] Cannot execute trade: No active Upstox token in StateEngine.');
        return;
     }
 
     const direction = signal === 'BUY_CE' ? 'CE' : 'PE';
-    const spotPrice = (global as any).currentActiveLTP || 24000;
+    // 🟢 FIXED: Uses the exact live Nifty price to calculate the ATM strike
+    const spotPrice = liveLtp || tracker.liveSpotPrice; 
+    if (!spotPrice || spotPrice === 0) {
+      logError('[EXECUTOR] CRITICAL: Spot price is 0. Aborting trade to prevent invalid strike selection.');
+      return;
+    }
+
     const atmStrike = Math.round(spotPrice / 50) * 50;
 
-    // Force a fresh margin pull before taking an automated position
     await brokerAdapter.getFundsAndMargin(true);
-
-    // Call the Option Chain logic you implemented in BrokerAdapter
     const instrumentToken = await brokerAdapter.getAtmOptionToken(atmStrike, direction);
 
     const orderPayload = {
@@ -558,43 +559,43 @@ export class ExecutionEngine {
         instrumentToken: instrumentToken,
         tradingSymbol: `NIFTY_${atmStrike}_${direction}`,
         transactionType: 'BUY',
-        lots: Math.floor(quantity / 25), // Nifty lot size is 25
+        lots: Math.floor(quantity / 25), 
         quantity: quantity,
         orderPrice: limitPrice,
     };
 
-    // Execute via your existing stealth logic
-    await executeOrderStealth(orderPayload, StateEngine.activeToken);
+    const res = await executeOrderStealth(orderPayload, StateEngine.activeToken);
+    
+    // 🟢 FIXED: Forcefully update memory so dashboard and circuit breakers activate instantly
+    if (res.success || res.filledLots > 0) {
+       tracker.setActivePosition(instrumentToken, res.filledLots * 25, limitPrice);
+       if (activeWsClient) activeWsClient.subscribe(instrumentToken);
+    }
   }
 
-  /**
-   * Natively calculates Risk and executes Manual UI Trades.
-   */
   public async takeManualPosition(direction: 'CE' | 'PE') {
-    if (!StateEngine.activeToken) {
-       logError('[EXECUTOR] Cannot execute manual trade: No active Upstox token.');
+    if (!StateEngine.activeToken) return;
+    
+    // 🟢 FIXED: Reads exact live price from the WS feed
+    const spotPrice = tracker.liveSpotPrice;
+    if (spotPrice === 0) {
+       logError('[EXECUTOR] Cannot execute manual trade: Waiting for live WS feed...');
        return;
     }
-
-    logInfo(`[EXECUTOR] Initiating native manual entry for ${direction}...`);
     
-    const spotPrice = (global as any).currentActiveLTP || 24000;
     const atmStrike = Math.round(spotPrice / 50) * 50;
     
-    // Force a margin refresh to know exact buying power
     const marginData = await brokerAdapter.getFundsAndMargin(true);
     const availableMargin = marginData.available_margin || 0;
     
-    // Dynamic Lot Calculation (Assume ~₹150 premium = ~₹3750 per lot. Max risk set to ₹4000 buffer)
     const maxMarginPerLot = 4000; 
-    let lotsToBuy = Math.floor((availableMargin * 0.9) / maxMarginPerLot); // Allocate 90% of account
-    
-    if (lotsToBuy < 1) lotsToBuy = 1; // Fallback to 1 lot if account is small
-    if (lotsToBuy > 36) lotsToBuy = 36; // Cap at 36 lots (900 qty) to stay well under exchange freeze limit
+    let lotsToBuy = Math.floor((availableMargin * 0.9) / maxMarginPerLot);
+    if (lotsToBuy < 1) lotsToBuy = 1; 
+    if (lotsToBuy > 36) lotsToBuy = 36; 
     
     const quantity = lotsToBuy * 25;
     
-    logInfo(`[EXECUTOR] ATM Strike: ${atmStrike}. Available Margin: ₹${availableMargin.toFixed(2)}. Firing ${lotsToBuy} lots.`);
+    logInfo(`[EXECUTOR] ATM Strike: ${atmStrike}. Firing ${lotsToBuy} lots.`);
 
     const instrumentToken = await brokerAdapter.getAtmOptionToken(atmStrike, direction);
 
@@ -605,10 +606,17 @@ export class ExecutionEngine {
         transactionType: 'BUY',
         lots: lotsToBuy,
         quantity: quantity,
-        orderPrice: 0, // 0 = MARKET ORDER for aggressive manual entries
+        orderPrice: 0, 
     };
 
-    await executeOrderStealth(orderPayload, StateEngine.activeToken);
+    const res = await executeOrderStealth(orderPayload, StateEngine.activeToken);
+    
+    // 🟢 FIXED: Makes manual trades immediately visible and tracked
+    if (res.success || res.filledLots > 0) {
+       // Using spotPrice as a temporary placeholder entry until BrokerAdapter reconciles exact fill price 3s later
+       tracker.setActivePosition(instrumentToken, res.filledLots * 25, spotPrice); 
+       if (activeWsClient) activeWsClient.subscribe(instrumentToken);
+    }
   }
 }
 

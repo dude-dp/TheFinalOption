@@ -16,6 +16,8 @@ import { tracker } from './tracker.js';
 import { UpstoxWSClient } from './ws-client.js';
 import { brokerAdapter } from './broker-adapter.js';
 
+export let activeWsClient: UpstoxWSClient | null = null;
+
 process.on('uncaughtException', (err) => logError(`[FATAL] Uncaught Exception: ${err.message}\n${err.stack}`));
 process.on('unhandledRejection', (reason, promise) => logError(`[FATAL] Unhandled Rejection at: ${promise}, reason: ${reason}`));
 
@@ -92,7 +94,8 @@ async function bootstrapEngine() {
   }
 
   // 4. Start WebSocket Engine
-  let wsClient = new UpstoxWSClient(activeToken);
+  activeWsClient = new UpstoxWSClient(activeToken);
+  let wsClient = activeWsClient;
   const historicalData = await getHistoricalCandles();
   (wsClient as any).aggregator.seedHistoricalData(historicalData);
 

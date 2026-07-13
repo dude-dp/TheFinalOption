@@ -54,6 +54,13 @@ class PortfolioTracker {
   public activePositionQty: number = 0;
   public activePositionEntry: number = 0;
 
+  // 🟢 NEW: Live Nifty Price tracker
+  public liveSpotPrice: number = 0;
+  
+  public setSpotPrice(price: number): void {
+    this.liveSpotPrice = price;
+  }
+
   /**
    * Initializes or reconciles the daily structural boundaries.
    * Should be invoked at 09:15 AM IST or immediately upon daemon boot sequence.
