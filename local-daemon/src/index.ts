@@ -9,6 +9,11 @@ import { setDefaultResultOrder } from 'node:dns';
 setDefaultResultOrder('ipv4first');
 
 import { createServer } from 'node:http';
+import { serve } from '@hono/node-server';
+import { Hono } from 'hono';
+import { basicAuth } from 'hono/basic-auth';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { logInfo, logWarn, logError, logTrade } from './logger.js';
 import { executeOrder, executeOrderStealth } from './executor.js';
 import { executeEmergencyMarketExit } from './iceberg.js';
@@ -543,23 +548,90 @@ async function confirmOrder(result: any): Promise<void> {
 
 // --- Health Check Server ---
 function startHealthServer(): void {
-  const server = createServer((req, res) => {
-    if (req.url === '/health') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        status: 'healthy',
-        uptime: process.uptime(),
-        ordersExecuted: totalOrdersExecuted,
-        circuitBreakerTripped: orderCircuitBreaker.tripped
-      }));
-    } else {
-      res.writeHead(404);
-      res.end();
-    }
+  const app = new Hono();
+
+  // Secure the endpoint so only you can read the logs
+  app.use('/admin/*', basicAuth({
+    username: 'dp',
+    password: process.env.POLL_SECRET || 'Healthywealth007' 
+  }));
+
+  app.get('/health', (c) => {
+    return c.json({
+      status: 'healthy',
+      uptime: process.uptime(),
+      ordersExecuted: totalOrdersExecuted,
+      circuitBreakerTripped: orderCircuitBreaker.tripped
+    });
   });
 
-  server.listen(CONFIG.healthPort, '0.0.0.0', () => {
-    logInfo(`🏥 Health check server listening on port ${CONFIG.healthPort}`);
+  app.get('/admin/logs', (c) => {
+    const logPath = path.resolve(process.cwd(), 'logs/daemon-out.log');
+    
+    let logContent = 'Log file not found.';
+    if (fs.existsSync(logPath)) {
+      try {
+        const stats = fs.statSync(logPath);
+        const MAX_BYTES = 1000000; // 1MB max
+        if (stats.size > MAX_BYTES) {
+          const buffer = Buffer.alloc(MAX_BYTES);
+          const fd = fs.openSync(logPath, 'r');
+          fs.readSync(fd, buffer, 0, MAX_BYTES, stats.size - MAX_BYTES);
+          fs.closeSync(fd);
+          logContent = "...(truncated)...\n" + buffer.toString('utf-8');
+        } else {
+          logContent = fs.readFileSync(logPath, 'utf-8');
+        }
+        
+        // Try parsing JSON if log_type is json
+        const lines = logContent.split('\n').filter(Boolean);
+        logContent = lines.map(line => {
+          try {
+            const parsed = JSON.parse(line);
+            return parsed.message ? parsed.message : line;
+          } catch(e) {
+            return line;
+          }
+        }).join('');
+      } catch (e: any) {
+        logContent = "Error reading logs: " + e.message;
+      }
+    }
+
+    return c.html(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>TheFinalOption - EC2 Live Logs</title>
+          <style>
+            body { 
+              background-color: #301934; 
+              color: #00FF41; 
+              font-family: monospace; 
+              padding: 20px;
+            }
+            pre {
+              white-space: pre-wrap;
+              word-wrap: break-word;
+            }
+          </style>
+          <script>
+            setInterval(() => window.location.reload(), 5000);
+          </script>
+        </head>
+        <body>
+          <h2>EC2 System Telemetry & Logs</h2>
+          <pre>${logContent}</pre>
+        </body>
+      </html>
+    `);
+  });
+
+  serve({
+    fetch: app.fetch,
+    port: CONFIG.healthPort
+  }, (info) => {
+    logInfo(`🏥 EC2 Dashboard & Health server running at http://0.0.0.0:${info.port}`);
   });
 }
 

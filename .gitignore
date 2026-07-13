@@ -4,6 +4,7 @@ build/
 .wrangler/
 .env
 .env.*
+aws/.secret
 !.env.example
 npm-debug.log*
 yarn-debug.log*

@@ -12,8 +12,10 @@
     "build": "tsc"
   },
   "dependencies": {
+    "@hono/node-server": "^2.0.8",
     "@supabase/supabase-js": "^2.110.2",
     "dotenv": "^16.4.0",
+    "hono": "^4.12.30",
     "protobufjs": "^8.7.0",
     "upstox-js-sdk": "^2.29.0",
     "ws": "^8.21.0"
