@@ -425,134 +425,87 @@ api.post('/api/dlq', async (c) => {
 
 /** GET /api/status — Bot state + active position + margin */
 api.get('/api/status', async (c) => {
+  // FIXED: Using c.env.SUPABASE_SERVICE_KEY
+  const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY as string);
+  
+  // 1. Fetch State ONLY from Supabase (The Single Source of Truth)
+  let sysState = null;
+  try {
+    const { data, error } = await supabase.from('system_state').select('*').eq('id', 1).single();
+    if (error) console.error("Supabase State Error:", error.message);
+    sysState = data;
+  } catch (e) {
+    console.error("Critical Supabase connection failure in /api/status");
+  }
+
+  // 2. Fetch Active Positions from KV 
   const stateRaw = await c.env.TRADING_KV.get(KV_KEYS.BOT_STATE);
-  const state: BotState = stateRaw ? JSON.parse(stateRaw) : {
-    status: 'STOPPED', lastUpdated: '', activePosition: null, lockTimestamp: null, lastMacdLine: null
-  };
-  const accessToken = await getUpstoxAccessToken(c);
+  const kvState = stateRaw ? JSON.parse(stateRaw) : {};
+  const accessToken = await c.env.TRADING_KV.get(KV_KEYS.UPSTOX_ACCESS_TOKEN);
   const hasToken = !!accessToken;
+
+  // 3. Merge them to feed the dashboard
+  const state = {
+    status: sysState?.bot_status || 'STOPPED',
+    tradingMode: sysState?.trading_mode || 'LIVE',
+    lastUpdated: sysState?.updated_at || '',
+    activePosition: kvState.activePosition || null,
+    activeHedgePosition: kvState.activeHedgePosition || null,
+    lockTimestamp: kvState.lockTimestamp || null,
+  };
 
   // Fetch cached margin
   let marginRaw = await c.env.TRADING_KV.get(KV_KEYS.ACCOUNT_MARGIN);
   let margin = marginRaw ? JSON.parse(marginRaw) : null;
-
-  // Dynamically refresh if missing, empty, or older than 5 minutes
   const now = Date.now();
-  const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-  if (hasToken && (!margin || !margin.timestamp || (now - margin.timestamp > CACHE_TTL_MS) || (margin.availableMargin === 0 && margin.totalBalance === 0))) {
+  const CACHE_TTL_MS = 5 * 60 * 1000;
+  if (hasToken && (!margin || !margin.timestamp || (now - margin.timestamp > CACHE_TTL_MS))) {
     try {
       const funds = await getFundsAndMargin(accessToken);
-      const marginData = {
-        ...funds,
-        timestamp: now
-      };
+      const marginData = { ...funds, timestamp: now };
       await c.env.TRADING_KV.put(KV_KEYS.ACCOUNT_MARGIN, JSON.stringify(marginData));
       margin = marginData;
-    } catch (e) {
-      // Fail silently and fallback to cached value
-    }
+    } catch (e) {}
   }
-
+  
   const lastHeartbeat = await c.env.TRADING_KV.get('daemon_last_heartbeat');
   const daemonAlive = lastHeartbeat ? (now - parseInt(lastHeartbeat)) < 3 * 60 * 1000 : false;
 
-  // Enrich activePosition and activeHedgePosition with dynamic LTP & PnL
-  if (hasToken) {
-    const keysToFetch: string[] = [];
-    if (state.activePosition) keysToFetch.push(state.activePosition.instrumentToken);
-    if (state.activeHedgePosition) keysToFetch.push(state.activeHedgePosition.instrumentToken);
-
-    if (keysToFetch.length > 0) {
-      try {
-        const ltpMap = await getLTP(accessToken, keysToFetch);
-        if (state.activePosition) {
-          const key = state.activePosition.instrumentToken;
-          const ltp = ltpMap[key] || 0;
-          if (ltp > 0) {
-            (state.activePosition as any).ltp = ltp;
-            (state.activePosition as any).unrealizedPnL = (ltp - state.activePosition.entryPrice) * state.activePosition.quantity;
-          }
-        }
-        if (state.activeHedgePosition) {
-          const key = state.activeHedgePosition.instrumentToken;
-          const ltp = ltpMap[key] || 0;
-          if (ltp > 0) {
-            (state.activeHedgePosition as any).ltp = ltp;
-            (state.activeHedgePosition as any).unrealizedPnL = (ltp - state.activeHedgePosition.entryPrice) * state.activeHedgePosition.quantity;
-          }
-        }
-      } catch (e) {
-        // Fail silently
-      }
-    }
-  }
-
-  // Calculate today's realized PnL
-  const today = getTodayDateStr();
-  let todayRealizedPnL = 0;
-  try {
-    const pnlRow = await c.env.TRADING_DB.prepare(
-      `SELECT SUM(pnl) as daily_pnl FROM order_ledger WHERE date(updated_at) = ? AND pnl IS NOT NULL AND pnl != 0`
-    ).bind(today).first();
-    if (pnlRow && pnlRow.daily_pnl) {
-      todayRealizedPnL = parseFloat(pnlRow.daily_pnl as any) || 0;
-    }
-  } catch (e) {
-    console.error("Failed to fetch daily PnL:", e);
-  }
-
-  return c.json({ ...state, hasAccessToken: hasToken, margin, daemonAlive, todayRealizedPnL });
+  return c.json({ ...state, hasAccessToken: hasToken, margin, daemonAlive });
 });
 
 /** POST /api/control — Toggle bot status */
 api.post('/api/control', async (c) => {
   const { action, mode, reason } = await c.req.json<{ action: string, mode?: 'LIVE' | 'PAPER', reason?: string }>();
-  const stateRaw = await c.env.TRADING_KV.get(KV_KEYS.BOT_STATE);
-  const state: BotState = stateRaw ? JSON.parse(stateRaw) : {
-    status: 'STOPPED', lastUpdated: '', activePosition: null, lockTimestamp: null, lastMacdLine: null
-  };
+  
+  // FIXED: Using c.env.SUPABASE_SERVICE_KEY to match your wrangler.jsonc
+  const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY as string);
 
-  // 1. Setup Supabase payload
   const dbUpdate: any = { updated_at: new Date().toISOString() };
+  let newStatus = '';
 
   if (action === 'START') {
-    state.status = 'RUNNING';
+    newStatus = 'RUNNING';
     dbUpdate.bot_status = 'RUNNING';
   } else if (action === 'STOP') {
-    state.status = 'STOPPED';
+    newStatus = 'STOPPED';
     dbUpdate.bot_status = 'STOPPED';
   } else if (action === 'EMERGENCY_HALT') {
-    state.status = 'EMERGENCY_HALT';
+    newStatus = 'EMERGENCY_HALT';
     dbUpdate.bot_status = 'EMERGENCY_HALT';
-    if (reason && c.env.DISCORD_WEBHOOK_URL) {
-      await notifyDiscord(c.env.DISCORD_WEBHOOK_URL, `✅ **CIRCUIT BREAKER TRIPPED**\n${reason}`);
-    }
   } else if (action === 'SET_MODE' && mode) {
-    state.tradingMode = mode;
     dbUpdate.trading_mode = mode;
   } else {
     return c.json({ error: 'Invalid action' }, 400);
   }
 
-  state.lastUpdated = new Date().toISOString();
+  const { error } = await supabase.from('system_state').update(dbUpdate).eq('id', 1);
   
-  try {
-    await c.env.TRADING_KV.put(KV_KEYS.BOT_STATE, JSON.stringify(state));
-  } catch (kvErr: any) {
-    console.error('[KV WARN] Rate limit hit on BOT_STATE put:', kvErr.message);
-  }
-  
-  try {
-    const serviceKey = c.env.SUPABASE_SERVICE_ROLE_KEY || c.env.SUPABASE_SERVICE_KEY;
-    const supabase = createClient(c.env.SUPABASE_URL, serviceKey);
-    
-    const { error } = await supabase.from('system_state').update(dbUpdate).eq('id', 1);
-    if (error) console.error("Supabase State Update Failed:", error.message);
-  } catch (err: any) {
-    console.error("Critical Error updating Supabase from Cloudflare:", err.message);
+  if (error) {
+    return c.json({ error: error.message }, 500);
   }
 
-  return c.json({ success: true, status: state.status, mode: state.tradingMode });
+  return c.json({ success: true, status: newStatus });
 });
 /** 
  * POST /api/position/sl-override 
@@ -748,6 +701,11 @@ api.post('/api/emergency-squareoff', async (c) => {
   if (!stateRaw) return c.json({ error: 'No bot state' }, 404);
 
   const state: BotState = JSON.parse(stateRaw);
+  
+  // HALT THE EC2 DAEMON INSTANTLY VIA SUPABASE
+  const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY as string);
+  await supabase.from('system_state').update({ bot_status: 'EMERGENCY_HALT' }).eq('id', 1);
+  
   state.status = 'EMERGENCY_HALT';
 
   const isPaperMode = state.tradingMode === 'PAPER';
