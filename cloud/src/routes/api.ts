@@ -125,8 +125,12 @@ api.post('/api/poll', async (c) => {
           reqPerMinute: body.rateMetrics.reqPerMinute,
           lastUpdated: now
         };
-        await kv.put(KV_KEYS.BOT_STATE, JSON.stringify(latestState));
-        await kv.put('daemon_last_heartbeat', now.toString());
+        try {
+          await kv.put(KV_KEYS.BOT_STATE, JSON.stringify(latestState));
+          await kv.put('daemon_last_heartbeat', now.toString());
+        } catch (kvErr: any) {
+          console.error('[KV WARN] Rate limit hit on put:', kvErr.message);
+        }
       }
     }
 
@@ -182,7 +186,11 @@ api.post('/api/poll', async (c) => {
       }
 
       if (changed) {
-        await kv.put(KV_KEYS.PENDING_ORDERS, JSON.stringify(remainingList));
+        try {
+          await kv.put(KV_KEYS.PENDING_ORDERS, JSON.stringify(remainingList));
+        } catch (kvErr: any) {
+          console.error('[KV WARN] Rate limit hit on PENDING_ORDERS put:', kvErr.message);
+        }
       }
       accessToken = await kv.get(KV_KEYS.UPSTOX_ACCESS_TOKEN);
     }

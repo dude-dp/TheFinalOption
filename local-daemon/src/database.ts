@@ -26,12 +26,12 @@ export async function syncCandleToDatabase(candle: any, retries = 3): Promise<vo
       const { error } = await supabase
         .from('nifty_candles')
         .upsert({
-          timestamp: candle.timestamp,
+          timestamp: new Date(candle.timestamp).toISOString(),
           open: candle.open,
           high: candle.high,
           low: candle.low,
           close: candle.close,
-          volume: candle.volume
+          volume: candle.volume || 0
         }, { onConflict: 'timestamp' });
 
       if (error) throw error;
