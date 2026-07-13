@@ -49,6 +49,31 @@ export class UpstoxWSClient {
     this.token = token;
   }
 
+  private async syncCandleToCloud(candle: any, retries = 3): Promise<void> {
+    const cloudUrl = this.workerUrl;
+    const secret = this.pollSecret;
+
+    for (let i = 0; i < retries; i++) {
+      try {
+        const response = await fetch(`${cloudUrl}/api/admin/sync-candle`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ secret, candle })
+        });
+
+        if (response.ok) {
+          return; // Success! Chart is updated.
+        }
+      } catch (error) {
+        if (i === retries - 1) {
+          console.error(`[CHART SYNC] Failed to push live candle to D1 after ${retries} attempts.`);
+        }
+        // Wait 1 second before retrying to let the network stabilize
+        await new Promise(res => setTimeout(res, 1000));
+      }
+    }
+  }
+
   public subscribe(instrumentKey: string) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     const subPayload = {
@@ -125,7 +150,7 @@ export class UpstoxWSClient {
 
             this.archiver.recordTick(tick);
 
-            // 1. Process the standard candle close logic
+            // 1. Process the standard candle logic
             const closedCandles = this.aggregator.processTick(tick);
 
             // 2. 🚀 X-RAY EXTRACTION: Get live, unfinished delta and volume from the active candle
@@ -135,8 +160,14 @@ export class UpstoxWSClient {
             // 3. Monitor active positions for institutional exhaustion on EVERY millisecond tick
             executor.monitorLiveOrderFlow(liveDelta, liveVolume, tick.ltp);
 
-            // 4. Standard MACD signal generation fires only when a full 1-minute candle closes
-            if (closedCandles) {
+            // 4. IF A CANDLE CLOSES, SYNC IT TO THE CLOUD CHART
+            if (closedCandles && closedCandles.length > 0) {
+              const latestClosedCandle = closedCandles[closedCandles.length - 1];
+              
+              // Push to Cloudflare D1 so the Dashboard renders the new bar
+              this.syncCandleToCloud(latestClosedCandle);
+
+              // Standard MACD signal generation
               this.evaluateAndPushSignal(closedCandles, onSignal);
             }
           }

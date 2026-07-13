@@ -16,6 +16,7 @@ async function upstoxGet(path: string, token: string): Promise<any> {
     headers: {
       'Accept': 'application/json',
       'Authorization': `Bearer ${token}`,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     },
   });
   if (!res.ok) {
@@ -32,6 +33,7 @@ async function upstoxPost(path: string, token: string, body: any): Promise<any> 
       'Content-Type': 'application/json',
       'Accept': 'application/json',
       'Authorization': `Bearer ${token}`,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     },
     body: JSON.stringify(body),
   });
@@ -299,7 +301,8 @@ export async function fetchHistoricalCandlesRange(accessToken: string, fromDate:
     method: 'GET',
     headers: {
       'Accept': 'application/json',
-      'Authorization': `Bearer ${accessToken}`
+      'Authorization': `Bearer ${accessToken}`,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     }
   });
 

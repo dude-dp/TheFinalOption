@@ -119,7 +119,7 @@ async function getHistoricalCandles(): Promise<any[]> {
         volume: spot.volume || 0
       }));
     }
-  } catch(err: any) {
+  } catch (err: any) {
     logError(`Failed to fetch historical candles: ${err.message}`);
   }
   return [];
@@ -130,7 +130,7 @@ function connectCloudWS(): void {
   // Convert http/https to ws/wss
   const wsUrl = CONFIG.workerUrl.replace(/^http/, 'ws') + `/api/ws?secret=${CONFIG.pollSecret}`;
   logInfo(`🔌 Connecting to Cloud WebSocket: ${wsUrl}`);
-  
+
   const ws = new WebSocket(wsUrl);
 
   ws.on('open', () => {
@@ -164,6 +164,46 @@ function connectCloudWS(): void {
 }
 
 // --- WS Engine ---
+/**
+ * 🫀 WATCHDOG HEARTBEAT
+ * Pings the Cloudflare API every 5 seconds so the dashboard knows the daemon is alive.
+ * Prevents the Cloud "Dead Man's Switch" from auto-stopping the bot.
+ */
+function startWatchdogHeartbeat() {
+  const cloudUrl = CONFIG.workerUrl || 'https://thefinaloption.thefinaloptionautomation.workers.dev/';
+  const secret = CONFIG.pollSecret || '';
+
+  setInterval(async () => {
+    try {
+      const memory = process.memoryUsage();
+
+      const response = await fetch(`${cloudUrl}/api/poll`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          secret: secret,
+          memoryRss: memory.rss,
+          memoryHeapUsed: memory.heapUsed,
+          rateMetrics: { reqPerSecond: 1, reqPerMinute: 60 } // Tells UI we are active
+        })
+      });
+
+      if (response.ok) {
+        const data: any = await response.json();
+
+        // If memory leak detected by cloud, it will request a safe restart
+        if (data.shouldRestart) {
+          logWarn('[WATCHDOG] Cloud requested a daemon restart. Rebooting safely...');
+          process.exit(1); // PM2 will auto-restart it instantly
+        }
+      }
+    } catch (error: any) {
+      // We don't crash here, just log it. The network might just be blipping.
+      logError(`[WATCHDOG] Heartbeat ping failed: ${error.message}`);
+    }
+  }, 5000); // Sends a pulse every 5 seconds
+}
+
 async function bootstrapEngine() {
   logInfo('═══════════════════════════════════════════');
   logInfo('  TheFinalOption — Local Execution Daemon  ');
@@ -186,18 +226,18 @@ async function bootstrapEngine() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ secret: CONFIG.pollSecret })
       });
-      
+
       if (!res.ok) {
         throw new Error(`HTTP ${res.status} ${res.statusText}`);
       }
-      
+
       const data: any = await res.json();
       if (data && data.accessToken) {
         activeToken = data.accessToken;
       } else {
         throw new Error('No accessToken returned from Cloudflare');
       }
-    } catch(err: any) {
+    } catch (err: any) {
       logError(`Failed to bootstrap access token: ${err.message}`);
       process.exit(1);
     }
@@ -256,6 +296,9 @@ async function bootstrapEngine() {
   // Connect to Cloud Worker WebSocket
   connectCloudWS();
 
+  // 🚀 NEW: Start the Heartbeat so the Dashboard stops auto-killing the bot
+  startWatchdogHeartbeat();
+
   // Background Sweeper (runs every 15 seconds)
   setInterval(() => {
     sweepOrphanedOrders(activeToken).catch(e => logError(`Sweeper crash: ${e.message}`));
@@ -273,7 +316,7 @@ async function bootstrapEngine() {
   setInterval(() => {
     syncProfitTracker(wsClient).catch(e => logError(`ProfitTracker sync crash: ${e.message}`));
   }, 10000);
-  
+
   // Initial sync before starting WS
   await syncProfitTracker(wsClient);
 
@@ -288,7 +331,7 @@ async function bootstrapEngine() {
   // 3. Define the signal callback
   const onSignal = async (signalPayload: any) => {
     logInfo(`[SIGNAL] 1-Min Candle Closed. MACD: ${signalPayload.currentMacd.toFixed(2)} | Signal: ${signalPayload.signal}`);
-    
+
     try {
       const response = await fetch(`${CONFIG.workerUrl}/api/signal-ingest`, {
         method: 'POST',
@@ -298,9 +341,9 @@ async function bootstrapEngine() {
           ...signalPayload
         })
       });
-      
+
       const commands: any = await response.json();
-      
+
       if (commands.orders && commands.orders.length > 0) {
         const sells = commands.orders.filter((o: any) => o.transactionType === 'SELL');
         const buys = commands.orders.filter((o: any) => o.transactionType === 'BUY');
@@ -315,14 +358,14 @@ async function bootstrapEngine() {
           logTrade(`📥 Received execution order via WS Signal: ${order.correlationId}`);
 
           let resultPayload: any;
-          
+
           if (CONFIG.dryRun) {
             resultPayload = await executeOrder(order, activeToken, true);
           } else {
             const executionResult = await executeOrderStealth(order, activeToken);
 
             let finalStatus = executionResult.success ? 'FILLED' : (executionResult.filledLots > 0 ? 'PARTIALLY_FILLED' : 'REJECTED');
-            
+
             if (executionResult.success) {
               logInfo(`[SUCCESS] 🟢 Iceberg fully deployed! ${executionResult.filledLots}/${executionResult.requestedLots} lots filled.`);
             } else {
@@ -359,7 +402,7 @@ async function bootstrapEngine() {
         if (isAuthError) {
           logWarn(`⚠️  Upstox token rejected (${err.message.split(':')[0].trim()}). Please re-authenticate at your dashboard. Retrying in 60s...`);
           await new Promise(resolve => setTimeout(resolve, 60000));
-          
+
           try {
             logInfo('🔄 Attempting to fetch fresh token from Cloudflare...');
             const res = await fetch(`${CONFIG.workerUrl}/api/poll`, {
@@ -431,16 +474,16 @@ async function sweepOrphanedOrders(activeToken: string): Promise<void> {
       });
 
       if (!statusRes.ok) continue;
-      
+
       const sData: any = await statusRes.json();
       const uOrder = sData.data?.[0];
       if (!uOrder) continue;
 
       const upstoxStatus = uOrder.status?.toUpperCase();
-      
+
       if (upstoxStatus === 'COMPLETE' || upstoxStatus === 'FILLED' || upstoxStatus === 'REJECTED' || upstoxStatus === 'CANCELLED') {
         const finalStatus = upstoxStatus === 'COMPLETE' ? 'FILLED' : upstoxStatus as any;
-        
+
         await confirmOrder({
           correlationId: order.correlation_id,
           upstoxOrderId: order.upstox_order_id,
@@ -450,7 +493,7 @@ async function sweepOrphanedOrders(activeToken: string): Promise<void> {
           statusMessage: uOrder.status_message || 'Recovered by Daemon Sweeper',
           timestamp: new Date().toISOString(),
         });
-        
+
         logInfo(`✅ Phantom Order Resolved: ${order.upstox_order_id} -> ${finalStatus}`);
       } else {
         const orderAgeHours = (Date.now() - new Date(order.created_at).getTime()) / (1000 * 60 * 60);
@@ -462,7 +505,7 @@ async function sweepOrphanedOrders(activeToken: string): Promise<void> {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ correlationId: order.correlation_id, upstoxOrderId: order.upstox_order_id }),
             });
-          } catch (e) {}
+          } catch (e) { }
         }
       }
     }
@@ -541,7 +584,7 @@ async function syncProfitTracker(wsClient?: UpstoxWSClient): Promise<void> {
     });
     if (res.ok) {
       const data: any = await res.json();
-      
+
       // Init Capital & Realized PnL
       if (data.margin && data.margin.totalBalance) {
         await tracker.initializeDailyState(async () => data.margin.totalBalance, data.todayRealizedPnL || 0);
@@ -549,16 +592,16 @@ async function syncProfitTracker(wsClient?: UpstoxWSClient): Promise<void> {
         // Fallback to update realized PNL even if margin is delayed
         tracker.setRealizedPnL(data.todayRealizedPnL || 0);
       }
-      
+
       // Sync Active Position
       if (data.activePosition) {
         if (tracker.activePositionToken !== data.activePosition.instrumentToken) {
-           tracker.setActivePosition(
-             data.activePosition.instrumentToken, 
-             data.activePosition.quantity, 
-             data.activePosition.entryPrice
-           );
-           if (wsClient) wsClient.subscribe(data.activePosition.instrumentToken);
+          tracker.setActivePosition(
+            data.activePosition.instrumentToken,
+            data.activePosition.quantity,
+            data.activePosition.entryPrice
+          );
+          if (wsClient) wsClient.subscribe(data.activePosition.instrumentToken);
         }
       } else {
         tracker.clearActivePosition();

@@ -819,31 +819,21 @@ api.get('/api/chart-data', dashboardAuth, async (c) => {
   });
 });
 
-/** 
- * POST /api/admin/backfill 
- * Downloads the last 30 days of 1-min candles and saves them to D1 
+/** * POST /api/admin/backfill 
+ * WAF-Bypass: Uses the Intraday endpoint instead of historical date ranges.
  */
 api.post('/api/admin/backfill', dashboardAuth, async (c) => {
   const accessToken = await c.env.TRADING_KV.get(KV_KEYS.UPSTOX_ACCESS_TOKEN);
   if (!accessToken) return c.json({ error: 'No Upstox token found. Please login first.' }, 401);
 
-  // Calculate dates (Today and 30 days ago)
-  const today = new Date();
-  const past = new Date();
-  past.setDate(today.getDate() - 30);
-
-  const toDateStr = today.toISOString().split('T')[0];
-  const fromDateStr = past.toISOString().split('T')[0];
-
   try {
-    const candles = await fetchHistoricalCandlesRange(accessToken, fromDateStr, toDateStr);
-
-    if (candles.length === 0) {
-      return c.json({ error: 'No data returned from Upstox' }, 400);
+    // fetchNiftyCandles uses the safe /intraday/ endpoint which bypasses the strict historical WAF
+    const candles = await fetchNiftyCandles(accessToken, getTodayDateStr());
+    
+    if (!candles || candles.length === 0) {
+      return c.json({ error: 'No intraday data returned from Upstox.' }, 400);
     }
 
-    // D1 accepts a maximum of 100 statements per batch operation.
-    // We must chunk the thousands of candles into groups of 100.
     const statements = [];
     for (const candle of candles) {
       statements.push(
@@ -860,13 +850,44 @@ api.post('/api/admin/backfill', dashboardAuth, async (c) => {
       await c.env.TRADING_DB.batch(chunk);
     }
 
-    return c.json({
-      success: true,
-      message: `Successfully backfilled ${candles.length} historical candles from ${fromDateStr} to ${toDateStr}.`
+    return c.json({ 
+      success: true, 
+      message: `Successfully seeded ${candles.length} recent intraday candles! Chart is ready.` 
     });
 
   } catch (error: any) {
     return c.json({ error: error.message }, 500);
+  }
+});
+
+/**
+ * POST /api/admin/sync-candle
+ * Called by local daemon to push newly closed 1-minute candles.
+ */
+api.post('/api/admin/sync-candle', async (c) => {
+  const body = await c.req.json<{ secret: string; candle: any }>();
+  if (body.secret !== c.env.POLL_SECRET) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const { timestamp, open, high, low, close, volume } = body.candle;
+  
+  try {
+    await c.env.TRADING_DB.prepare(
+      `INSERT OR IGNORE INTO nifty_candles (timestamp, open, high, low, close, volume) 
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).bind(
+      new Date(timestamp).toISOString(), 
+      open, 
+      high, 
+      low, 
+      close, 
+      volume || 0
+    ).run();
+
+    return c.json({ success: true });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
   }
 });
 
