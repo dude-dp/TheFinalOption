@@ -16,6 +16,14 @@ import { ApiTracker, tracker } from './tracker.js';
 import { UpstoxWSClient } from './ws-client.js';
 import { brokerAdapter } from './broker-adapter.js';
 import WebSocket from 'ws';
+// --- Crash Guards ---
+process.on('uncaughtException', (err) => {
+  logError(`[FATAL] Uncaught Exception: ${err.message}\n${err.stack}`);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  logError(`[FATAL] Unhandled Promise Rejection at: ${promise}, reason: ${reason}`);
+});
 
 // --- Configuration ---
 const CONFIG = {

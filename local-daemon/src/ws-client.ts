@@ -163,6 +163,11 @@ export class UpstoxWSClient {
       }
     });
 
+    this.ws.on('error', (err) => {
+      console.error('🔴 [WS CLIENT ERROR] Connection blip caught:', (err as any).message || err);
+      // Do NOT throw or re-emit — just log it. The 'close' handler below will reconnect.
+    });
+
     this.ws.on('close', () => {
       console.log('🔴 WS Closed. Reconnecting in 5s...');
       setTimeout(() => this.connect(onSignal), 5000);
