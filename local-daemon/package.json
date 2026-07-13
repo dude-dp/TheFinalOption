@@ -12,6 +12,7 @@
     "build": "tsc"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.110.2",
     "dotenv": "^16.4.0",
     "protobufjs": "^8.7.0",
     "upstox-js-sdk": "^2.29.0",

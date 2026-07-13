@@ -109,18 +109,25 @@ api.post('/api/poll', async (c) => {
     if (!stateRaw) return c.json({ error: 'Bot state not found' }, 404);
     const state: BotState = JSON.parse(stateRaw);
 
-    // 1. Update KV Heartbeat Metrics (Race Condition Safe)
+    // 1. Update KV Heartbeat Metrics (Race Condition Safe & KV Rate-Limit Proof)
     if (body.rateMetrics) {
       const latestStateRaw = await kv.get(KV_KEYS.BOT_STATE);
       const latestState: BotState = latestStateRaw ? JSON.parse(latestStateRaw) : state;
       
-      latestState.daemonMetrics = {
-        reqPerSecond: body.rateMetrics.reqPerSecond,
-        reqPerMinute: body.rateMetrics.reqPerMinute,
-        lastUpdated: Date.now()
-      };
-      await kv.put(KV_KEYS.BOT_STATE, JSON.stringify(latestState));
-      await kv.put('daemon_last_heartbeat', Date.now().toString());
+      const lastUpdated = latestState.daemonMetrics?.lastUpdated || 0;
+      const now = Date.now();
+
+      // 🛡️ THE KV THROTTLE: Only execute the KV write once every 2 minutes (120,000 ms).
+      // Allows 5-second polling for ultra-fast command execution without hitting the 1,000/day KV limit.
+      if (now - lastUpdated > 120000) {
+        latestState.daemonMetrics = {
+          reqPerSecond: body.rateMetrics.reqPerSecond,
+          reqPerMinute: body.rateMetrics.reqPerMinute,
+          lastUpdated: now
+        };
+        await kv.put(KV_KEYS.BOT_STATE, JSON.stringify(latestState));
+        await kv.put('daemon_last_heartbeat', now.toString());
+      }
     }
 
     // 2. Watchdog Memory Check (Writes to Supabase)
@@ -883,36 +890,6 @@ api.post('/api/admin/backfill', dashboardAuth, async (c) => {
   } catch (error: any) {
     return c.json({ error: error.message }, 500);
   }
-});
-
-/**
- * POST /api/admin/sync-candle
- * Called by local daemon to push newly closed 1-minute candles.
- */
-api.post('/api/admin/sync-candle', async (c) => {
-  const body = await c.req.json<{ secret: string; candle: any }>();
-  if (body.secret !== c.env.POLL_SECRET) {
-    return c.json({ error: 'Unauthorized' }, 401);
-  }
-
-  const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY);
-  
-  const { error } = await supabase
-    .from('nifty_candles')
-    .upsert({
-      timestamp: new Date(body.candle.timestamp).toISOString(),
-      open: body.candle.open,
-      high: body.candle.high,
-      low: body.candle.low,
-      close: body.candle.close,
-      volume: body.candle.volume || 0
-    }, { onConflict: 'timestamp' });
-
-  if (error) {
-    return c.json({ error: error.message }, 500);
-  }
-  
-  return c.json({ success: true });
 });
 
 /** GET /api/summary — Daily AI summary */

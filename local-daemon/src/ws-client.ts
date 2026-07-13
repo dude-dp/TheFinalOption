@@ -6,6 +6,7 @@ import { TickArchiver } from './archiver';
 import { tracker } from './tracker';
 import { varianceEngine } from './variance.js';
 import { executor } from './executor.js';
+import { syncCandleToDatabase } from './database';
 
 // Import local MACD if available or mock it for compilation
 let calculateMACD: any = null;
@@ -49,30 +50,6 @@ export class UpstoxWSClient {
     this.token = token;
   }
 
-  private async syncCandleToCloud(candle: any, retries = 3): Promise<void> {
-    const cloudUrl = this.workerUrl;
-    const secret = this.pollSecret;
-
-    for (let i = 0; i < retries; i++) {
-      try {
-        const response = await fetch(`${cloudUrl}/api/admin/sync-candle`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ secret, candle })
-        });
-
-        if (response.ok) {
-          return; // Success! Chart is updated.
-        }
-      } catch (error) {
-        if (i === retries - 1) {
-          console.error(`[CHART SYNC] Failed to push live candle to D1 after ${retries} attempts.`);
-        }
-        // Wait 1 second before retrying to let the network stabilize
-        await new Promise(res => setTimeout(res, 1000));
-      }
-    }
-  }
 
   public subscribe(instrumentKey: string) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
@@ -160,12 +137,12 @@ export class UpstoxWSClient {
             // 3. Monitor active positions for institutional exhaustion on EVERY millisecond tick
             executor.monitorLiveOrderFlow(liveDelta, liveVolume, tick.ltp);
 
-            // 4. IF A CANDLE CLOSES, SYNC IT TO THE CLOUD CHART
+            // 4. IF A CANDLE CLOSES, INJECT DIRECTLY TO SUPABASE
             if (closedCandles && closedCandles.length > 0) {
               const latestClosedCandle = closedCandles[closedCandles.length - 1];
               
-              // Push to Cloudflare D1 so the Dashboard renders the new bar
-              this.syncCandleToCloud(latestClosedCandle);
+              // 🚀 Direct Database Injection (Bypasses Cloudflare API entirely)
+              syncCandleToDatabase(latestClosedCandle);
 
               // Standard MACD signal generation
               this.evaluateAndPushSignal(closedCandles, onSignal);
