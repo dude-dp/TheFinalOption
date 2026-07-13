@@ -457,8 +457,8 @@ api.get('/api/status', async (c) => {
       // 🛡️ MOCKS: Prevents the dashboard.js Fuel Gauge from crashing
       // 🛡️ FIXED: Renamed to 'daemonMetrics' to match exactly what dashboard.js expects
       daemonMetrics: { reqPerMinute: 0, errorRate: 0, avgLatency: 0 },
-      // 🛡️ MOCKS: Prevents position rendering components from throwing null errors
-      activePosition: null,
+      // 🟢 UI now reads from EC2 natively
+      activePosition: sysState.active_position || null,
       activeHedgePosition: null,
       lockTimestamp: null
     });

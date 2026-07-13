@@ -100,10 +100,18 @@ export class StateEngine {
         const livePnL = (global as any).currentLivePnL || 0.00; 
         const activeLTP = (global as any).currentActiveLTP || 0.00;
 
+        const activePos = (global as any).hasActivePosition ? {
+            tradingSymbol: (global as any).activePositionSymbol || 'NIFTY_OPTIONS',
+            quantity: (global as any).activePositionQty || 0,
+            entryPrice: (global as any).activePositionEntry || 0,
+            optionType: 'CE/PE' // Dynamically set this based on symbol
+        } : null;
+
         await supabase.from('system_state').update({
             live_pnl: livePnL,
             active_position_ltp: activeLTP,
             account_margin: marginData,
+            active_position: activePos, // 🟢 Pushes live trade data to the dashboard
             daemon_last_heartbeat: new Date().toISOString()
         }).eq('id', 1);
       } catch (err: any) {

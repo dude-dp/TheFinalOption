@@ -75,73 +75,44 @@ class BrokerAdapter {
    * Safe expiry calculator ported from old strike.ts logic.
    * Calculates the target Tuesday expiry and handles same-day rollover.
    */
-  private getNearestWeeklyExpiry(): string {
-    const date = new Date();
-    const dayOfWeek = date.getDay(); // 0=Sun, 2=Tue
-    
-    // Automatically roll to next week if today is expiry day
-    const rollToNext = (dayOfWeek === 2); 
-    
-    let daysUntilExpiry = (2 - dayOfWeek + 7) % 7;
-
-    if (daysUntilExpiry === 0 && rollToNext) {
-      daysUntilExpiry = 7;
-    } else if (rollToNext) {
-      daysUntilExpiry += 7;
-    }
-
-    date.setDate(date.getDate() + daysUntilExpiry);
-
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-
-    return `${year}-${month}-${day}`;
-  }
-
   /**
-   * Option Chain Resolver: Finds the exact token for the ATM strike.
+   * Option Chain Resolver: Dynamically fetches nearest expiry and finds the exact ATM Token
    */
   public async getAtmOptionToken(strikePrice: number, optionType: 'CE' | 'PE'): Promise<string> {
-    if (!this.apiToken) throw new Error('No Upstox API token available');
-
-    const expiryDate = this.getNearestWeeklyExpiry();
-    const encodedKey = encodeURIComponent('NSE_INDEX|Nifty 50');
-    const url = `https://api.upstox.com/v2/option/chain?instrument_key=${encodedKey}&expiry_date=${expiryDate}`;
-
+    if (!this.apiToken) throw new Error('No Upstox token available for Option Chain fetch.');
+    
     try {
-      const response = await fetch(url, {
-        headers: {
-          'Accept': 'application/json',
-          'Authorization': `Bearer ${this.apiToken}`,
-          'User-Agent': 'TheFinalOption-Daemon/1.0'
-        }
+      // 1. Fetch the nearest expiry date for NIFTY 50
+      const expiryRes = await fetch('https://api.upstox.com/v2/option/chain/expiry-dates?instrument_key=NSE_INDEX%7CNifty%2050', {
+         headers: { 'Authorization': `Bearer ${this.apiToken}`, 'Accept': 'application/json' }
       });
-
-      if (!response.ok) {
-        const err = await response.text();
-        throw new Error(`Upstox Option Chain API failed: ${response.status} ${err}`);
+      const expiryData = await expiryRes.json() as any;
+      
+      if (!expiryRes.ok || !expiryData.data || expiryData.data.length === 0) {
+         throw new Error(`Failed to fetch expiry dates: ${JSON.stringify(expiryData)}`);
       }
+      
+      const currentExpiry = expiryData.data[0]; // e.g., "2026-07-16"
 
-      const json = await response.json() as any;
-      if (!json.data) throw new Error('Invalid option chain data returned.');
+      // 2. Fetch the full option chain for that specific expiry
+      const chainRes = await fetch(`https://api.upstox.com/v2/option/chain?instrument_key=NSE_INDEX%7CNifty%2050&expiry_date=${currentExpiry}`, {
+         headers: { 'Authorization': `Bearer ${this.apiToken}`, 'Accept': 'application/json' }
+      });
+      const chainData = await chainRes.json() as any;
 
-      // Find the specific strike price in the array
-      const strikeData = json.data.find((item: any) => item.strike_price === strikePrice);
-
-      if (!strikeData) {
-        throw new Error(`Strike ${strikePrice} not found in the option chain for expiry ${expiryDate}`);
+      if (!chainRes.ok || !chainData.data) {
+         throw new Error(`Failed to fetch option chain: ${JSON.stringify(chainData)}`);
       }
-
-      if (optionType === 'CE' && strikeData.call_options) {
-        return strikeData.call_options.instrument_key;
-      } else if (optionType === 'PE' && strikeData.put_options) {
-        return strikeData.put_options.instrument_key;
+      
+      // 3. Extract the exact instrument key for our ATM strike
+      const contract = chainData.data.find((c: any) => c.strike_price === strikePrice);
+      if (contract) {
+         return optionType === 'CE' ? contract.call_options.instrument_key : contract.put_options.instrument_key;
       }
-
-      throw new Error(`Could not find ${optionType} instrument for strike ${strikePrice}`);
-    } catch (error: any) {
-      logError(`[BROKER] Option Chain fetch error: ${error.message}`);
+      
+      throw new Error(`Strike ${strikePrice} not found in option chain for expiry ${currentExpiry}`);
+    } catch (error) {
+      logError(`[BROKER] Option Chain Resolution Error: ${error}`);
       throw error;
     }
   }

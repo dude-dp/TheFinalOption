@@ -13,7 +13,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { logInfo, logWarn, logError, logTrade } from './logger.js';
 import './server.js';
-import { executeOrder, executeOrderStealth } from './executor.js';
+import { executeOrder, executeOrderStealth, executor } from './executor.js';
 import { DataEngine } from './data-engine.js';
 import { StateEngine } from './state-engine.js';
 import { executeEmergencyMarketExit } from './iceberg.js';
@@ -347,61 +347,19 @@ async function bootstrapEngine() {
       return; 
     }
 
-    try {
-      const response = await fetch(`${CONFIG.workerUrl}/api/signal-ingest`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          secret: CONFIG.pollSecret,
-          ...signalPayload
-        })
-      });
-
-      const commands: any = await response.json();
-
-      if (commands.orders && commands.orders.length > 0) {
-        const sells = commands.orders.filter((o: any) => o.transactionType === 'SELL');
-        const buys = commands.orders.filter((o: any) => o.transactionType === 'BUY');
-        const ordered = [...sells, ...buys];
-
-        for (const order of ordered) {
-          if (orderCircuitBreaker.tripped) {
-            logWarn('Circuit breaker is tripped. Skipping execution.');
-            continue;
-          }
-
-          logTrade(`📥 Received execution order via WS Signal: ${order.correlationId}`);
-
-          let resultPayload: any;
-
-          if (CONFIG.dryRun) {
-            resultPayload = await executeOrder(order, activeToken, true);
-          } else {
-            const executionResult = await executeOrderStealth(order, activeToken);
-
-            let finalStatus = executionResult.success ? 'FILLED' : (executionResult.filledLots > 0 ? 'PARTIALLY_FILLED' : 'REJECTED');
-
-            if (executionResult.success) {
-              logInfo(`[SUCCESS] 🟢 Iceberg fully deployed! ${executionResult.filledLots}/${executionResult.requestedLots} lots filled.`);
-            } else {
-              logWarn(`[WARN] 🟡 Iceberg partially/fully failed. ${executionResult.filledLots}/${executionResult.requestedLots} lots filled.`);
-            }
-
-            resultPayload = {
-              correlationId: order.correlationId,
-              upstoxOrderId: executionResult.details[0]?.orderId || `ICEBERG-${Date.now()}`,
-              status: finalStatus,
-              executionPrice: order.orderPrice,
-              filledQuantity: executionResult.filledLots,
-              statusMessage: executionResult.success ? 'Stealth Iceberg Execution Complete' : 'Iceberg partially failed',
-              timestamp: new Date().toISOString(),
-            };
-          }
-          await confirmOrder(resultPayload);
-        }
-      }
-    } catch (err: any) {
-      logError(`[ERROR] Failed to push signal to Cloudflare: ${err.message}`);
+    // ⚡ NATIVE EXECUTION ROUTING (Bypassing Cloudflare completely)
+    if (signalPayload.signal.startsWith('BUY')) {
+        // Calculate lot sizing based on your max risk config, or hardcode quantity for now
+        const targetQuantity = CONFIG.defaultTradeQty || 50; 
+        
+        // Push directly into the EC2 executor
+        await executor.evaluateAndExecuteTrade(
+            signalPayload.signal, 
+            targetQuantity, 
+            signalPayload.close, // LTP
+            {} as any, // Mock market depth if your WS isn't supplying L2 data
+            signalPayload.delta || 50 // Institutional order flow delta
+        );
     }
   };
 
