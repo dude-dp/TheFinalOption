@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { basicAuth } from 'hono/basic-auth';
@@ -9,15 +10,15 @@ const app = new Hono();
 
 // Initialize Supabase Client using your environment configurations
 const supabaseUrl = process.env.SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_SERVICE_KEY || '';
-const supabase = (supabaseUrl && supabaseKey) 
-  ? createClient(supabaseUrl, supabaseKey) 
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '';
+const supabase = (supabaseUrl && supabaseKey)
+  ? createClient(supabaseUrl, supabaseKey)
   : null;
 
 // Guard dashboard access securely
 app.use('/*', basicAuth({
   username: process.env.ADMIN_USER || 'dp',
-  password: process.env.POLL_SECRET || 'password123'
+  password: process.env.POLL_SECRET || 'Healthywealth007'
 }));
 
 // Helper to write dedicated backfill logs
@@ -33,26 +34,26 @@ function logToBackfill(message: string) {
 async function runHistoricalBackfill(days: number) {
   try {
     logToBackfill(`STARTING BACKFILL: Initiating historical sync for the past ${days} days.`);
-    
+
     // 1. Calculate historical date ranges
     for (let i = days; i >= 0; i--) {
       const targetDate = new Date();
       targetDate.setDate(targetDate.getDate() - i);
       const dateStr = targetDate.toISOString().split('T')[0];
-      
+
       logToBackfill(`PROCESSING: Fetching historical NIFTY options data from Upstox for date: ${dateStr}`);
-      
+
       // TODO: Replace with your exact Upstox historical API call logic
       // const candles = await fetchUpstoxHistoricalData(targetDate);
       const mockCandlesCount = 375; // Typical 1-minute candles in a trading session
-      
+
       logToBackfill(`INGESTION: Retrieved ${mockCandlesCount} candles for ${dateStr}. Streaming directly to Supabase...`);
-      
+
       if (!supabase) {
         logToBackfill(`WARNING: Supabase keys missing. Cannot write to database.`);
         continue;
       }
-      
+
       // 2. Stream directly to Supabase PostgreSQL target table
       /*
       const { error } = await supabase
@@ -61,10 +62,10 @@ async function runHistoricalBackfill(days: number) {
       
       if (error) throw error;
       */
-      
+
       logToBackfill(`SUCCESS: Successfully committed session records to Supabase for ${dateStr}.`);
     }
-    
+
     logToBackfill(`COMPLETED: Full backfill migration sequence finished cleanly.`);
   } catch (error: any) {
     logToBackfill(`FATAL ERROR DURING BACKFILL: ${error.message || error}`);
@@ -75,10 +76,10 @@ async function runHistoricalBackfill(days: number) {
 app.post('/api/backfill', async (c) => {
   const body = await c.req.json();
   const days = parseInt(body.days, 10) || 1;
-  
+
   // Fire-and-forget backfill process in the background to prevent HTTP network timeouts
   runHistoricalBackfill(days);
-  
+
   return c.json({ success: true, message: `Backfill routine started for ${days} days.` });
 });
 
@@ -96,7 +97,7 @@ app.get('/api/logs/:type', (c) => {
   const fileStats = fs.statSync(logPath);
   const maxReadBytes = 200000; // ~200KB chunk window
   const startPos = Math.max(0, fileStats.size - maxReadBytes);
-  
+
   const buffer = Buffer.alloc(fileStats.size - startPos);
   const fd = fs.openSync(logPath, 'r');
   fs.readSync(fd, buffer, 0, buffer.length, startPos);
