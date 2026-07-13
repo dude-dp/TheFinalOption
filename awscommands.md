@@ -8,3 +8,9 @@ npm install typescript @types/node --save-dev
 npm run build
 
 
+
+## Start daemon
+pm2 start ecosystem.config.cjs
+
+## save process list
+pm2 save --force
