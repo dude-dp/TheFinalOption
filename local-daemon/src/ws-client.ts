@@ -1,22 +1,20 @@
 // local-daemon/src/ws-client.ts
 import WebSocket from 'ws';
 import protobuf from 'protobufjs';
-import { CandleAggregator } from './aggregator';
-import { TickArchiver } from './archiver';
-import { tracker } from './tracker';
+import { createClient } from '@supabase/supabase-js';
+
+// 🟢 FIXED: Added exact .js extensions for ESM compatibility
+import { CandleAggregator } from './aggregator.js';
+import { TickArchiver } from './archiver.js';
+import { tracker } from './tracker.js';
 import { varianceEngine } from './variance.js';
 import { executor } from './executor.js';
 import { DataEngine } from './data-engine.js';
+// 🟢 FIXED: Native ESM Import for MACD (No more require() crashes)
+import { getLatestMACDValues } from './lib/macd.js';
+// 🟢 FIXED: Import the native EC2 market exit capability
+import { executeEmergencyMarketExit } from './iceberg.js';
 
-// Import local MACD if available or mock it for compilation
-let calculateMACD: any = null;
-try {
-  calculateMACD = require('./lib/macd').getLatestMACDValues;
-} catch (e) {
-  calculateMACD = (candles: any[]) => { return { macdLine: [0, 0], histogram: [0, 0] }; };
-}
-
-// 1. Define Strict Types for Market Depth
 export interface OrderBookLevel {
   price: number;
   quantity: number;
@@ -32,7 +30,7 @@ export interface TickData {
   instrumentToken: string;
   ltp: number;
   timestamp: number;
-  depth: MarketDepth; // The new payload for the Liquidity Scanner
+  depth: MarketDepth; 
 }
 
 export class UpstoxWSClient {
@@ -41,15 +39,12 @@ export class UpstoxWSClient {
   private archiver = new TickArchiver();
   private token: string;
   private instrumentKey = 'NSE_INDEX|Nifty 50'; 
-  private workerUrl = process.env.CLOUD_WORKER_URL || '';
-  private pollSecret = process.env.POLL_SECRET || '';
 
   private latestDepth: MarketDepth = { bids: [], asks: [] };
 
   constructor(token: string) {
     this.token = token;
   }
-
 
   public subscribe(instrumentKey: string) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
@@ -84,7 +79,6 @@ export class UpstoxWSClient {
 
     this.ws.on('open', () => {
       console.log('🟢 Upstox Native WebSocket Connected');
-      
       const subPayload = {
         guid: "nifty_tracker",
         method: "sub",
@@ -101,7 +95,6 @@ export class UpstoxWSClient {
           const feed = decoded.feeds[this.instrumentKey];
           
           if (feed.fullFeed?.ff?.marketFF?.ltpc?.ltp) {
-            // 2. Extract and structure the Order Book Depth
             const depth: MarketDepth = { bids: [], asks: [] };
             const rawQuotes = feed.fullFeed.ff.marketFF.marketLevel?.bidAskQuote;
             
@@ -112,7 +105,6 @@ export class UpstoxWSClient {
               });
             }
 
-            // 3. Assemble the enriched tick
             const tick: TickData = {
               instrumentToken: this.instrumentKey,
               ltp: feed.fullFeed.ff.marketFF.ltpc.ltp,
@@ -121,31 +113,20 @@ export class UpstoxWSClient {
             };
 
             this.latestDepth = depth;
-            tracker.setSpotPrice(tick.ltp); // 🟢 NEW: Feed Live Nifty Price to Executor!
+            tracker.setSpotPrice(tick.ltp); 
 
-            // 1. Measure Kinetic Velocity
-            const volatilityState = varianceEngine.evaluateVelocity(tick.timestamp);
-
+            varianceEngine.evaluateVelocity(tick.timestamp);
             this.archiver.recordTick(tick);
 
-            // 1. Process the standard candle logic
             const closedCandles = this.aggregator.processTick(tick);
-
-            // 2. 🚀 X-RAY EXTRACTION: Get live, unfinished delta and volume from the active candle
             const liveDelta = this.aggregator.getLiveDelta();
             const liveVolume = this.aggregator.getLiveVolume();
 
-            // 3. Monitor active positions for institutional exhaustion on EVERY millisecond tick
             executor.monitorLiveOrderFlow(liveDelta, liveVolume, tick.ltp);
 
-            // 4. IF A CANDLE CLOSES, INJECT DIRECTLY TO SUPABASE
             if (closedCandles && closedCandles.length > 0) {
               const latestClosedCandle = closedCandles[closedCandles.length - 1];
-              
-              // 🟢 FIXED: Use DataEngine to prevent double-database writes
               DataEngine.recordLiveCandle(latestClosedCandle);
-
-              // Standard MACD signal generation
               this.evaluateAndPushSignal(closedCandles, onSignal);
             }
           }
@@ -155,15 +136,25 @@ export class UpstoxWSClient {
             const ltp = feed.fullFeed.ff.marketFF.ltpc.ltp;
             tracker.updateUnrealizedPnLFromLtp(ltp);
             
-            // Evaluate Circuit Breaker dynamically on every option tick
+            // 🟢 FIXED: 100% Native Circuit Breaker Routing
             const cbReason = tracker.evaluateCircuitBreaker();
-            if (cbReason) {
-              import('./executor.js').then(({ executeMarketExitAll, haltTradingSession }) => {
-                 console.log(`\n🛡️ [CIRCUIT BREAKER] TRIGGERED: ${cbReason}`);
-                 executeMarketExitAll(this.workerUrl, this.pollSecret);
-                 haltTradingSession(this.workerUrl, this.pollSecret, cbReason);
-                 tracker.clearActivePosition(); // Prevent multi-triggers
-              });
+            if (cbReason && !tracker.getState().isHalted) {
+               console.log(`\n🛡️ [CIRCUIT BREAKER] TRIGGERED: ${cbReason}`);
+               
+               // 1. Mark tracker as halted immediately to block incoming signals
+               tracker.haltTrading(cbReason);
+               
+               // 2. Execute stealth market exit natively
+               executeEmergencyMarketExit().then(async () => {
+                 tracker.clearActivePosition();
+                 
+                 // 3. Dispatch the new status to the UI dashboard instantly
+                 const supabase = createClient(
+                   process.env.SUPABASE_URL || '', 
+                   process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+                 );
+                 await supabase.from('system_state').update({ bot_status: 'EMERGENCY_HALT' }).eq('id', 1);
+               });
             }
           }
         }
@@ -174,7 +165,6 @@ export class UpstoxWSClient {
 
     this.ws.on('error', (err) => {
       console.error('🔴 [WS CLIENT ERROR] Connection blip caught:', (err as any).message || err);
-      // Do NOT throw or re-emit — just log it. The 'close' handler below will reconnect.
     });
 
     this.ws.on('close', () => {
@@ -184,12 +174,10 @@ export class UpstoxWSClient {
   }
 
   private evaluateAndPushSignal(candles: any[], onSignal: (signalData: any) => void) {
-    if (!calculateMACD) return;
-
-    const macdResult = calculateMACD(candles.map(c => c.close));
+    // 🟢 FIXED: Utilizing direct module invocation
+    const macdResult = getLatestMACDValues(candles.map(c => c.close));
     if (!macdResult) return;
 
-    // Use macdLine if available (zero-crossover), otherwise fall back to histogram
     const line = macdResult.macdLine || macdResult.histogram;
     if (!line || line.length < 2) return;
 
@@ -200,7 +188,6 @@ export class UpstoxWSClient {
     if (prevMacd < 0 && currentMacd > 0) signal = 'BUY_CE';
     if (prevMacd > 0 && currentMacd < 0) signal = 'BUY_PE';
 
-    // The most recently closed candle where the crossover just occurred
     const crossoverCandle = candles[candles.length - 1];
 
     onSignal({
@@ -208,7 +195,7 @@ export class UpstoxWSClient {
       currentMacd,
       prevMacd,
       spotPrice: crossoverCandle.close,
-      crossoverDelta: crossoverCandle.delta, // 🚀 Injecting the Institutional Delta
+      crossoverDelta: crossoverCandle.delta, 
       depth: this.latestDepth,
       timestamp: new Date().toISOString()
     });

@@ -27,7 +27,7 @@ const CONFIG = {
 
 async function getHistoricalCandles(): Promise<any[]> {
   // Can be left as is, or you can query Supabase directly for the last 100 candles to seed MACD
-  return []; 
+  return [];
 }
 
 async function bootstrapEngine() {
@@ -70,10 +70,10 @@ async function bootstrapEngine() {
 
     // 🟢 FIXED: Use actual Upstox margin to set Circuit Breakers
     await tracker.initializeDailyState(async () => {
-       const marginData = await brokerAdapter.getFundsAndMargin(true);
-       return marginData.available_margin || 100000;
+      const marginData = await brokerAdapter.getFundsAndMargin(true);
+      return marginData.available_margin || 100000;
     }, recoveredRealizedPnL);
-    
+
     tracker.updateUnrealizedPnL(recoveredUnrealizedPnL);
 
     const bootState = tracker.getState();
@@ -111,41 +111,41 @@ async function bootstrapEngine() {
       volume: signalPayload.volume || 0
     });
 
-    if (StateEngine.botStatus !== 'RUNNING') return; 
+    if (StateEngine.botStatus !== 'RUNNING') return;
 
     if (signalPayload.signal.startsWith('BUY')) {
-        await executor.evaluateAndExecuteTrade(
-            signalPayload.signal, 
-            CONFIG.defaultTradeQty, 
-            signalPayload.close, 
-            signalPayload.depth, 
-            signalPayload.crossoverDelta || 50
-        );
+      await executor.evaluateAndExecuteTrade(
+        signalPayload.signal,
+        CONFIG.defaultTradeQty,
+        signalPayload.close,
+        signalPayload.depth,
+        signalPayload.crossoverDelta || 50
+      );
     }
   };
 
   const connectWithRetry = async () => {
-    while (true) {
-      try {
-        logInfo('🔌 Connecting to Upstox WebSocket...');
-        await wsClient.connect(onSignal);
-        break; 
-      } catch (err: any) {
-        if (err.message.includes('401') || err.message.includes('Auth')) {
-          logWarn(`⚠️ Token rejected. Re-authenticate on dashboard. Retrying in 30s...`);
-          await new Promise(resolve => setTimeout(resolve, 30000));
-        } else {
-          logError(`WS error: ${err.message}. Retrying in 15s...`);
-          await new Promise(resolve => setTimeout(resolve, 15000));
-        }
+  while (true) {
+    try {
+      logInfo('🔌 Connecting to Upstox WebSocket...');
+      await wsClient.connect(onSignal);
+      break;
+    } catch (err: any) {
+      if (err.message.includes('401') || err.message.includes('Auth')) {
+        logWarn(`⚠️ Token rejected. Re-authenticate on dashboard. Retrying in 30s...`);
+        await new Promise(resolve => setTimeout(resolve, 30000));
+      } else {
+        logError(`WS error: ${err.message}. Retrying in 15s...`);
+        await new Promise(resolve => setTimeout(resolve, 15000));
       }
     }
-  };
+  }
+};
 
-  connectWithRetry().catch(e => logError(`Fatal WS loop: ${e.message}`));
+connectWithRetry().catch(e => logError(`Fatal WS loop: ${e.message}`));
 
-  process.on('SIGINT', () => process.exit(0));
-  process.on('SIGTERM', () => process.exit(0));
+process.on('SIGINT', () => process.exit(0));
+process.on('SIGTERM', () => process.exit(0));
 }
 
 bootstrapEngine().catch((err: any) => {
