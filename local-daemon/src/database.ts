@@ -19,7 +19,12 @@ if (!supabase) {
  * 🚀 Pushes a completed 1-minute candle directly into PostgreSQL.
  */
 export async function syncCandleToDatabase(candle: any, retries = 3): Promise<void> {
-  if (!supabase) return; // Safely abort if the DB engine isn't wired up
+  logger.info(`[DB] Attempting to sync closed candle at ${new Date(candle.timestamp).toISOString()}`);
+  
+  if (!supabase) {
+    logger.warn('[DB] 🚨 Aborting sync: Supabase engine is not initialized (missing keys).');
+    return; 
+  }
 
   for (let i = 0; i < retries; i++) {
     try {
