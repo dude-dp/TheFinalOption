@@ -58,8 +58,8 @@ export class UpstoxWSClient {
       method: "sub",
       data: { mode: "full", instrumentKeys: [instrumentKey] }
     };
-    // 🟢 FIXED: Sent as Buffer for BINARY Frame (Required by Upstox V3 Feed)
-    this.ws.send(Buffer.from(JSON.stringify(subPayload)));
+    // Send as Text Frame (plain string) as required by Upstox V3 API
+    this.ws.send(JSON.stringify(subPayload));
   }
 
   public async connect(onSignal: (signalData: any) => void) {
@@ -90,8 +90,8 @@ export class UpstoxWSClient {
         method: "sub",
         data: { mode: "full", instrumentKeys: [this.instrumentKey] }
       };
-      // 🟢 FIXED: Sent as Buffer for BINARY Frame (Required by Upstox V3 Feed)
-      this.ws?.send(Buffer.from(JSON.stringify(subPayload)));
+      // Send as Text Frame (plain string) as required by Upstox V3 API
+      this.ws?.send(JSON.stringify(subPayload));
     });
 
     this.ws.on('message', (data: WebSocket.RawData) => {
