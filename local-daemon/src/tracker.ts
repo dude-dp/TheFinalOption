@@ -61,6 +61,13 @@ class PortfolioTracker {
     this.liveSpotPrice = price;
   }
 
+  // 🟢 NEW: Live tick candle data for UI streaming
+  public latestTick: any = null;
+
+  public setLatestTick(tick: any): void {
+    this.latestTick = tick;
+  }
+
   /**
    * Initializes or reconciles the daily structural boundaries.
    * Should be invoked at 09:15 AM IST or immediately upon daemon boot sequence.

@@ -137,4 +137,18 @@ export class CandleAggregator {
   public getLiveVolume(): number {
     return this.currentCandle ? this.currentCandle.volume : 0;
   }
+
+  /**
+   * 🚀 Returns the active, unfinished candle.
+   */
+  public getCurrentCandle(): LocalCandle | null {
+    return this.currentCandle;
+  }
+
+  /**
+   * 🚀 Returns the list of closed candles.
+   */
+  public getClosedCandles(): LocalCandle[] {
+    return this.closedCandles;
+  }
 }

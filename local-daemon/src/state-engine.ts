@@ -85,13 +85,12 @@ export class StateEngine {
       .subscribe();
   }
 
-  /**
-   * 📡 BACKGROUND TELEMETRY LOOP: Offloads HTTP requests from Cloudflare to EC2
-   */
   private static startTelemetryReporting(token: string) {
     if (this.telemetryInterval) clearInterval(this.telemetryInterval);
 
     logInfo('[STATE-ENGINE] Starting 2-second live dashboard telemetry sync...');
+
+    let heartbeatCounter = 0;
 
     this.telemetryInterval = setInterval(async () => {
       try {
@@ -109,13 +108,25 @@ export class StateEngine {
             optionType: tracker.activePositionToken.includes('CE') ? 'CE' : 'PE'
         } : null;
 
+        const latestTick = tracker.latestTick;
+
         await supabase.from('system_state').update({
             live_pnl: state.activeUnrealizedPnL, // Pushes live floating PnL
-            active_position_ltp: 0, // (Handled internally by UnrealizedPnL)
-            account_margin: marginData,
+            active_position_ltp: tracker.liveSpotPrice || 0, // 🟢 Pushes Nifty spot price!
+            account_margin: {
+              ...marginData,
+              latestTick: latestTick // 🟢 Embed the live tick data for UI streaming
+            },
             active_position: activePos, // Populates the Dashboard Active Trades UI!
             daemon_last_heartbeat: new Date().toISOString()
         }).eq('id', 1);
+
+        // 🟢 NEW: Periodic heartbeat logs to standard output for PM2
+        heartbeatCounter++;
+        if (heartbeatCounter >= 5) {
+          logInfo(`[HEARTBEAT] Daemon Active | Bot Status: ${this.botStatus} | Spot LTP: ₹${tracker.liveSpotPrice.toFixed(2)} | Live PnL: ₹${state.activeUnrealizedPnL.toFixed(2)}`);
+          heartbeatCounter = 0;
+        }
       } catch (err: any) {
         logError(`[TELEMETRY] Broadcast failed: ${err.message}`);
       }

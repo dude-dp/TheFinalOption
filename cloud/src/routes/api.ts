@@ -460,7 +460,8 @@ api.get('/api/status', async (c) => {
       // 🟢 UI now reads from EC2 natively
       activePosition: sysState.active_position || null,
       activeHedgePosition: null,
-      lockTimestamp: null
+      lockTimestamp: null,
+      latestTick: sysState.account_margin?.latestTick || null
     });
   } catch (err: any) {
     return c.json({ error: `Failed to compile UI telemetry: ${err.message}` }, 500);

@@ -2,6 +2,8 @@
 import WebSocket from 'ws';
 import protobuf from 'protobufjs';
 import { createClient } from '@supabase/supabase-js';
+import { fileURLToPath } from 'url';
+import path from 'path';
 
 import { CandleAggregator } from './aggregator.js';
 import { TickArchiver } from './archiver.js';
@@ -12,6 +14,9 @@ import { DataEngine } from './data-engine.js';
 import { getLatestMACDValues } from './lib/macd.js';
 import { executeEmergencyMarketExit } from './executor.js';
 import { logInfo, logError } from './logger.js'; // 🟢 Added Logger
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 export interface OrderBookLevel {
   price: number;
@@ -53,8 +58,8 @@ export class UpstoxWSClient {
       method: "sub",
       data: { mode: "full", instrumentKeys: [instrumentKey] }
     };
-    // 🟢 FIXED: Sent as plain string to trigger a TEXT Frame
-    this.ws.send(JSON.stringify(subPayload));
+    // 🟢 FIXED: Sent as Buffer for BINARY Frame (Required by Upstox V3 Feed)
+    this.ws.send(Buffer.from(JSON.stringify(subPayload)));
   }
 
   public async connect(onSignal: (signalData: any) => void) {
@@ -72,7 +77,7 @@ export class UpstoxWSClient {
       throw new Error(`WS Auth Failed — No redirect URI. Response: ${JSON.stringify(authData)}`);
     }
 
-    const root = await protobuf.load("./src/MarketDataFeed.proto");
+    const root = await protobuf.load(path.join(__dirname, "MarketDataFeed.proto"));
     const FeedResponse = root.lookupType("com.upstox.marketdatafeeder.rpc.proto.FeedResponse");
 
     this.ws = new WebSocket(authData.data.authorized_redirect_uri);
@@ -85,8 +90,8 @@ export class UpstoxWSClient {
         method: "sub",
         data: { mode: "full", instrumentKeys: [this.instrumentKey] }
       };
-      // 🟢 FIXED: Sent as plain string to trigger a TEXT Frame
-      this.ws?.send(JSON.stringify(subPayload));
+      // 🟢 FIXED: Sent as Buffer for BINARY Frame (Required by Upstox V3 Feed)
+      this.ws?.send(Buffer.from(JSON.stringify(subPayload)));
     });
 
     this.ws.on('message', (data: WebSocket.RawData) => {
@@ -114,13 +119,17 @@ export class UpstoxWSClient {
             const rawQuotes = ff?.marketFF?.marketLevel?.bidAskQuote;
             if (rawQuotes && Array.isArray(rawQuotes)) {
               rawQuotes.forEach((q: any) => {
-                if (q.bp > 0) depth.bids.push({ price: q.bp, quantity: q.bq, orders: q.bno });
-                if (q.ap > 0) depth.asks.push({ price: q.ap, quantity: q.aq, orders: q.ano });
+                const bp = q.bidP || q.bp;
+                const bq = q.bidQ || q.bq;
+                const ap = q.askP || q.ap;
+                const aq = q.askQ || q.aq;
+                if (bp > 0) depth.bids.push({ price: bp, quantity: Number(bq) || 0, orders: 0 });
+                if (ap > 0) depth.asks.push({ price: ap, quantity: Number(aq) || 0, orders: 0 });
               });
             }
 
-            const exchangeTs = ff?.indexFF?.exchangeTimeStamp || ff?.marketFF?.exchangeTimeStamp;
-            const tickTime = exchangeTs ? Number(exchangeTs) : Date.now();
+            const ltt = ff?.indexFF?.ltpc?.ltt || ff?.marketFF?.ltpc?.ltt;
+            const tickTime = ltt ? Number(ltt) : (decoded.currentTs ? Number(decoded.currentTs) : Date.now());
 
             const tick: TickData = {
               instrumentToken: this.instrumentKey,
@@ -140,6 +149,26 @@ export class UpstoxWSClient {
             const liveVolume = this.aggregator.getLiveVolume();
 
             executor.monitorLiveOrderFlow(liveDelta, liveVolume, tick.ltp);
+
+            const liveCandle = this.aggregator.getCurrentCandle();
+            const currentClosedCandles = this.aggregator.getClosedCandles();
+
+            if (liveCandle) {
+              // Calculate live MACD indicator for current minute candle
+              const closes = currentClosedCandles.map(c => c.close);
+              closes.push(tick.ltp); // Append the live ltp
+              const macdResult = getLatestMACDValues(closes);
+              const liveMacd = macdResult ? macdResult.current : 0;
+
+              tracker.setLatestTick({
+                timestamp: liveCandle.timestamp,
+                open: liveCandle.open,
+                high: liveCandle.high,
+                low: liveCandle.low,
+                ltp: tick.ltp,
+                macd_line: liveMacd
+              });
+            }
 
             if (closedCandles && closedCandles.length > 0) {
               const latestClosedCandle = closedCandles[closedCandles.length - 1];

@@ -527,6 +527,11 @@
     // Live rate metrics from daemon
     updateFuelGauge(data.daemonMetrics, data.daemonAlive);
 
+    // 🟢 Update Live Candle in Chart
+    if (data.latestTick) {
+      updateLiveChart(data.latestTick);
+    }
+
     // Update Quant Analytics indicators
     if (data.indicators) {
       const pcrEl = document.getElementById('metric-pcr');
