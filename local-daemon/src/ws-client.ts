@@ -11,6 +11,7 @@ import { executor } from './executor.js';
 import { DataEngine } from './data-engine.js';
 import { getLatestMACDValues } from './lib/macd.js';
 import { executeEmergencyMarketExit } from './executor.js';
+import { logInfo, logError } from './logger.js'; // 🟢 Added Logger
 
 export interface OrderBookLevel {
   price: number;
@@ -38,6 +39,8 @@ export class UpstoxWSClient {
   private instrumentKey = 'NSE_INDEX|Nifty 50'; 
 
   private latestDepth: MarketDepth = { bids: [], asks: [] };
+  private lastLogTime: number = 0;
+  private decodeErrorLogged: boolean = false;
 
   constructor(token: string) {
     this.token = token;
@@ -50,7 +53,8 @@ export class UpstoxWSClient {
       method: "sub",
       data: { mode: "full", instrumentKeys: [instrumentKey] }
     };
-    this.ws.send(Buffer.from(JSON.stringify(subPayload)));
+    // 🟢 FIXED: Sent as plain string to trigger a TEXT Frame
+    this.ws.send(JSON.stringify(subPayload));
   }
 
   public async connect(onSignal: (signalData: any) => void) {
@@ -81,25 +85,32 @@ export class UpstoxWSClient {
         method: "sub",
         data: { mode: "full", instrumentKeys: [this.instrumentKey] }
       };
-      this.ws?.send(Buffer.from(JSON.stringify(subPayload)));
+      // 🟢 FIXED: Sent as plain string to trigger a TEXT Frame
+      this.ws?.send(JSON.stringify(subPayload));
     });
 
-    this.ws.on('message', (data: ArrayBuffer) => {
+    this.ws.on('message', (data: WebSocket.RawData) => {
       try {
-        const decoded = FeedResponse.decode(new Uint8Array(data)) as any;
+        // Bulletproof buffer conversion for Node.js
+        const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data as any);
+        const decoded = FeedResponse.decode(buffer) as any;
         
         // 1. Process Main NIFTY 50 Tracker Feed
         if (decoded.feeds && decoded.feeds[this.instrumentKey]) {
           const feed = decoded.feeds[this.instrumentKey];
           const ff = feed.fullFeed?.ff;
           
-          // 🟢 UNIVERSAL EXTRACTOR: Checks both indexFF (Indices) and marketFF (Options)
           const ltp = ff?.indexFF?.ltpc?.ltp || ff?.marketFF?.ltpc?.ltp;
           
           if (ltp) {
+            // 🟢 NEW: Visual Heartbeat for PM2 Logs (Fires once every 10 seconds)
+            const now = Date.now();
+            if (now - this.lastLogTime > 10000) {
+                logInfo(`📡 [LIVE FEED] NIFTY 50 Active | Spot LTP: ₹${ltp.toFixed(2)}`);
+                this.lastLogTime = now;
+            }
+
             const depth: MarketDepth = { bids: [], asks: [] };
-            
-            // Only attempt to parse Market Depth if it's an asset that supports it
             const rawQuotes = ff?.marketFF?.marketLevel?.bidAskQuote;
             if (rawQuotes && Array.isArray(rawQuotes)) {
               rawQuotes.forEach((q: any) => {
@@ -108,7 +119,6 @@ export class UpstoxWSClient {
               });
             }
 
-            // 🟢 FIXED: Use exchange timestamp if available, fallback to accurate local IST
             const exchangeTs = ff?.indexFF?.exchangeTimeStamp || ff?.marketFF?.exchangeTimeStamp;
             const tickTime = exchangeTs ? Number(exchangeTs) : Date.now();
 
@@ -150,12 +160,9 @@ export class UpstoxWSClient {
             const cbReason = tracker.evaluateCircuitBreaker();
             if (cbReason && !tracker.getState().isHalted) {
                console.log(`\n🛡️ [CIRCUIT BREAKER] TRIGGERED: ${cbReason}`);
-               
                tracker.haltTrading(cbReason);
-               
                executeEmergencyMarketExit().then(async () => {
                  tracker.clearActivePosition();
-                 
                  const supabase = createClient(
                    process.env.SUPABASE_URL || '', 
                    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || ''
@@ -165,8 +172,11 @@ export class UpstoxWSClient {
             }
           }
         }
-      } catch (err) {
-        // Suppress noisy decode errors for malformed ticks, but prevent total failure
+      } catch (err: any) {
+        if (!this.decodeErrorLogged) {
+            logError(`[WS DECODE ERROR] Protobuf parse failure (suppressing future errors): ${err.message}`);
+            this.decodeErrorLogged = true;
+        }
       }
     });
 
@@ -176,7 +186,6 @@ export class UpstoxWSClient {
 
     this.ws.on('close', () => {
       console.log('🔴 WS Closed. Entering auto-reconnect sequence...');
-      
       const attemptReconnect = async () => {
         try {
           await this.connect(onSignal);
@@ -185,7 +194,6 @@ export class UpstoxWSClient {
           setTimeout(attemptReconnect, 15000); 
         }
       };
-      
       setTimeout(attemptReconnect, 5000);
     });
   }
