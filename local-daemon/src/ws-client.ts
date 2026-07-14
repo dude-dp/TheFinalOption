@@ -3,16 +3,13 @@ import WebSocket from 'ws';
 import protobuf from 'protobufjs';
 import { createClient } from '@supabase/supabase-js';
 
-// 🟢 FIXED: Added exact .js extensions for ESM compatibility
 import { CandleAggregator } from './aggregator.js';
 import { TickArchiver } from './archiver.js';
 import { tracker } from './tracker.js';
 import { varianceEngine } from './variance.js';
 import { executor } from './executor.js';
 import { DataEngine } from './data-engine.js';
-// 🟢 FIXED: Native ESM Import for MACD (No more require() crashes)
 import { getLatestMACDValues } from './lib/macd.js';
-// 🟢 FIXED: Import the native EC2 market exit capability
 import { executeEmergencyMarketExit } from './executor.js';
 
 export interface OrderBookLevel {
@@ -91,13 +88,19 @@ export class UpstoxWSClient {
       try {
         const decoded = FeedResponse.decode(new Uint8Array(data)) as any;
         
+        // 1. Process Main NIFTY 50 Tracker Feed
         if (decoded.feeds && decoded.feeds[this.instrumentKey]) {
           const feed = decoded.feeds[this.instrumentKey];
+          const ff = feed.fullFeed?.ff;
           
-          if (feed.fullFeed?.ff?.marketFF?.ltpc?.ltp) {
+          // 🟢 UNIVERSAL EXTRACTOR: Checks both indexFF (Indices) and marketFF (Options)
+          const ltp = ff?.indexFF?.ltpc?.ltp || ff?.marketFF?.ltpc?.ltp;
+          
+          if (ltp) {
             const depth: MarketDepth = { bids: [], asks: [] };
-            const rawQuotes = feed.fullFeed.ff.marketFF.marketLevel?.bidAskQuote;
             
+            // Only attempt to parse Market Depth if it's an asset that supports it
+            const rawQuotes = ff?.marketFF?.marketLevel?.bidAskQuote;
             if (rawQuotes && Array.isArray(rawQuotes)) {
               rawQuotes.forEach((q: any) => {
                 if (q.bp > 0) depth.bids.push({ price: q.bp, quantity: q.bq, orders: q.bno });
@@ -107,7 +110,7 @@ export class UpstoxWSClient {
 
             const tick: TickData = {
               instrumentToken: this.instrumentKey,
-              ltp: feed.fullFeed.ff.marketFF.ltpc.ltp,
+              ltp: ltp,
               timestamp: Date.now(),
               depth: depth
             };
@@ -130,25 +133,25 @@ export class UpstoxWSClient {
               this.evaluateAndPushSignal(closedCandles, onSignal);
             }
           }
-        } else if (decoded.feeds && tracker.activePositionToken && decoded.feeds[tracker.activePositionToken]) {
+        } 
+        // 2. Process Active Option Trade Feed (Trailing Stops / Circuit Breakers)
+        else if (decoded.feeds && tracker.activePositionToken && decoded.feeds[tracker.activePositionToken]) {
           const feed = decoded.feeds[tracker.activePositionToken];
-          if (feed.fullFeed?.ff?.marketFF?.ltpc?.ltp) {
-            const ltp = feed.fullFeed.ff.marketFF.ltpc.ltp;
+          const ff = feed.fullFeed?.ff;
+          const ltp = ff?.indexFF?.ltpc?.ltp || ff?.marketFF?.ltpc?.ltp;
+          
+          if (ltp) {
             tracker.updateUnrealizedPnLFromLtp(ltp);
             
-            // 🟢 FIXED: 100% Native Circuit Breaker Routing
             const cbReason = tracker.evaluateCircuitBreaker();
             if (cbReason && !tracker.getState().isHalted) {
                console.log(`\n🛡️ [CIRCUIT BREAKER] TRIGGERED: ${cbReason}`);
                
-               // 1. Mark tracker as halted immediately to block incoming signals
                tracker.haltTrading(cbReason);
                
-               // 2. Execute stealth market exit natively
                executeEmergencyMarketExit().then(async () => {
                  tracker.clearActivePosition();
                  
-                 // 3. Dispatch the new status to the UI dashboard instantly
                  const supabase = createClient(
                    process.env.SUPABASE_URL || '', 
                    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || ''
@@ -159,7 +162,7 @@ export class UpstoxWSClient {
           }
         }
       } catch (err) {
-        console.error("Protobuf Decode Error", err);
+        // Suppress noisy decode errors for malformed ticks, but prevent total failure
       }
     });
 
@@ -175,7 +178,7 @@ export class UpstoxWSClient {
           await this.connect(onSignal);
         } catch (err: any) {
           console.error(`🔴 Reconnect failed: ${err.message}. Retrying in 15s...`);
-          setTimeout(attemptReconnect, 15000); // Bulletproof infinite retry loop
+          setTimeout(attemptReconnect, 15000); 
         }
       };
       
@@ -184,7 +187,6 @@ export class UpstoxWSClient {
   }
 
   private evaluateAndPushSignal(candles: any[], onSignal: (signalData: any) => void) {
-    // 🟢 FIXED: Utilizing direct module invocation
     const macdResult = getLatestMACDValues(candles.map(c => c.close));
     if (!macdResult) return;
 
