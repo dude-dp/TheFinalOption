@@ -108,10 +108,14 @@ export class UpstoxWSClient {
               });
             }
 
+            // 🟢 FIXED: Use exchange timestamp if available, fallback to accurate local IST
+            const exchangeTs = ff?.indexFF?.exchangeTimeStamp || ff?.marketFF?.exchangeTimeStamp;
+            const tickTime = exchangeTs ? Number(exchangeTs) : Date.now();
+
             const tick: TickData = {
               instrumentToken: this.instrumentKey,
               ltp: ltp,
-              timestamp: Date.now(),
+              timestamp: tickTime,
               depth: depth
             };
 
