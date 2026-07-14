@@ -16,7 +16,14 @@ import { tracker } from './tracker.js';
 import { UpstoxWSClient } from './ws-client.js';
 import { brokerAdapter } from './broker-adapter.js';
 
+import { createClient } from '@supabase/supabase-js';
+
 export let activeWsClient: UpstoxWSClient | null = null;
+
+const supabase = createClient(
+  process.env.SUPABASE_URL || '',
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || ''
+);
 
 process.on('uncaughtException', (err) => logError(`[FATAL] Uncaught Exception: ${err.message}\n${err.stack}`));
 process.on('unhandledRejection', (reason, promise) => logError(`[FATAL] Unhandled Rejection at: ${promise}, reason: ${reason}`));
@@ -26,8 +33,32 @@ const CONFIG = {
 };
 
 async function getHistoricalCandles(): Promise<any[]> {
-  // Can be left as is, or you can query Supabase directly for the last 100 candles to seed MACD
-  return [];
+  try {
+    const { data, error } = await supabase
+      .from('nifty_candles')
+      .select('*')
+      .order('timestamp', { ascending: false })
+      .limit(100);
+
+    if (error) throw error;
+    if (!data) return [];
+
+    // The aggregator expects them chronologically (oldest to newest)
+    return data.reverse().map((row: any) => ({
+      timestamp: row.timestamp,
+      open: Number(row.open),
+      high: Number(row.high),
+      low: Number(row.low),
+      close: Number(row.close),
+      volume: Number(row.volume || 0),
+      buyVolume: 0,
+      sellVolume: 0,
+      delta: 0
+    }));
+  } catch (err: any) {
+    logError(`[BOOT] Failed to seed historical candles from Supabase: ${err.message}`);
+    return [];
+  }
 }
 
 async function bootstrapEngine() {

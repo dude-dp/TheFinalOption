@@ -59,17 +59,20 @@ export class DataEngine {
 
       // 2. Loop through all days from the last recorded date to TODAY
       const today = new Date();
-      let currentDate = new Date(lastDate);
+      today.setUTCHours(0, 0, 0, 0);
+
+      const currentDate = new Date(lastDate);
+      currentDate.setUTCHours(0, 0, 0, 0);
 
       while (currentDate <= today) {
         const dateStr = currentDate.toISOString().split('T')[0];
         // Only run sync for weekdays (Mon=1 to Fri=5)
-        const dayOfWeek = currentDate.getDay();
+        const dayOfWeek = currentDate.getUTCDay();
         if (dayOfWeek >= 1 && dayOfWeek <= 5) {
           await this.patchDay(dateStr, upstoxToken);
         }
         // Move to the next day
-        currentDate.setDate(currentDate.getDate() + 1);
+        currentDate.setUTCDate(currentDate.getUTCDate() + 1);
       }
 
       logInfo('[DATA-ENGINE] Auto-Heal complete. Database is synchronized.');
