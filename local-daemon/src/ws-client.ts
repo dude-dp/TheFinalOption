@@ -151,7 +151,7 @@ export class UpstoxWSClient {
                  // 3. Dispatch the new status to the UI dashboard instantly
                  const supabase = createClient(
                    process.env.SUPABASE_URL || '', 
-                   process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+                   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || ''
                  );
                  await supabase.from('system_state').update({ bot_status: 'EMERGENCY_HALT' }).eq('id', 1);
                });
