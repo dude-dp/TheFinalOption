@@ -34,13 +34,19 @@ const CONFIG = {
 
 async function getHistoricalCandles(): Promise<any[]> {
   try {
+    logInfo(`[BOOT] Fetching historical candles from Supabase: ${process.env.SUPABASE_URL}`);
     const { data, error } = await supabase
       .from('nifty_candles')
       .select('*')
       .order('timestamp', { ascending: false })
       .limit(100);
 
-    if (error) throw error;
+    if (error) {
+      logError(`[BOOT] Supabase query failed: ${error.message}`);
+      throw error;
+    }
+
+    logInfo(`[BOOT] Fetched ${data?.length ?? 0} historical candles from Supabase.`);
     if (!data) return [];
 
     // The aggregator expects them chronologically (oldest to newest)
@@ -71,6 +77,9 @@ async function bootstrapEngine() {
   await StateEngine.initialize(async (newToken) => {
     activeToken = newToken;
     brokerAdapter.initialize(newToken);
+    if (activeWsClient) {
+      activeWsClient.updateToken(newToken);
+    }
     await DataEngine.autoRecoverGaps(newToken);
   });
 

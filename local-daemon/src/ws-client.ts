@@ -46,9 +46,15 @@ export class UpstoxWSClient {
   private latestDepth: MarketDepth = { bids: [], asks: [] };
   private lastLogTime: number = 0;
   private decodeErrorLogged: boolean = false;
+  private msgCount: number = 0;
 
   constructor(token: string) {
     this.token = token;
+  }
+
+  public updateToken(newToken: string) {
+    this.token = newToken;
+    logInfo(`[WS-CLIENT] Internal token dynamically updated for next reconnect.`);
   }
 
   public subscribe(instrumentKey: string) {
@@ -58,8 +64,8 @@ export class UpstoxWSClient {
       method: "sub",
       data: { mode: "full", instrumentKeys: [instrumentKey] }
     };
-    // Send as Text Frame (plain string) as required by Upstox V3 API
-    this.ws.send(JSON.stringify(subPayload));
+    // Send as Binary Frame (Buffer) as required by Upstox V3 API
+    this.ws.send(Buffer.from(JSON.stringify(subPayload)));
   }
 
   public async connect(onSignal: (signalData: any) => void) {
@@ -71,10 +77,16 @@ export class UpstoxWSClient {
       throw new Error(`Upstox WS Auth HTTP ${authRes.status}: Token may be expired.`);
     }
 
-    const authData: any = await authRes.json();
+    let authData: any;
+    const authText = await authRes.text();
+    try {
+      authData = JSON.parse(authText);
+    } catch (e) {
+      throw new Error(`WS Auth Failed — Invalid JSON: ${authText.substring(0, 100)}`);
+    }
     
     if (!authData.data?.authorized_redirect_uri) {
-      throw new Error(`WS Auth Failed — No redirect URI. Response: ${JSON.stringify(authData)}`);
+      throw new Error(`WS Auth Failed — No redirect URI. Response: ${authText}`);
     }
 
     const root = await protobuf.load(path.join(__dirname, "MarketDataFeed.proto"));
@@ -90,33 +102,54 @@ export class UpstoxWSClient {
         method: "sub",
         data: { mode: "full", instrumentKeys: [this.instrumentKey] }
       };
-      // Send as Text Frame (plain string) as required by Upstox V3 API
-      this.ws?.send(JSON.stringify(subPayload));
+      // Send as Binary Frame (Buffer) as required by Upstox V3 API
+      this.ws?.send(Buffer.from(JSON.stringify(subPayload)));
     });
 
     this.ws.on('message', (data: WebSocket.RawData) => {
       try {
-        // Bulletproof buffer conversion for Node.js
-        const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data as any);
+        // Bulletproof conversion for Node.js ArrayBuffer to Uint8Array
+        const buffer = new Uint8Array(data as ArrayBuffer);
+
+        this.msgCount++;
+        if (this.msgCount <= 5 || this.msgCount % 100 === 0) {
+          logInfo(`[WS MESSAGE #${this.msgCount}] Received raw packet of size ${buffer.length} bytes.`);
+        }
+
         const decoded = FeedResponse.decode(buffer) as any;
+        const decodedObj = FeedResponse.toObject(decoded, {
+          defaults: true,
+          longs: String,
+          enums: String,
+          bytes: String
+        });
+
+        // TEMPORARY DEBUG: Log sample feed data
+        if (this.msgCount <= 5) {
+          logInfo(`[WS DEBUG #${this.msgCount}] Feed map keys: ${decoded.feeds ? Object.keys(decoded.feeds).join(', ') : 'none'}`);
+        }
         
         // 1. Process Main NIFTY 50 Tracker Feed
         if (decoded.feeds && decoded.feeds[this.instrumentKey]) {
           const feed = decoded.feeds[this.instrumentKey];
-          const ff = feed.fullFeed?.ff;
           
-          const ltp = ff?.indexFF?.ltpc?.ltp || ff?.marketFF?.ltpc?.ltp;
+          // Fix: FullFeed object directly contains indexFF and marketFF. There is no 'ff' property.
+          const ltp = feed.fullFeed?.indexFF?.ltpc?.ltp || feed.fullFeed?.marketFF?.ltpc?.ltp;
           
           if (ltp) {
-            // 🟢 NEW: Visual Heartbeat for PM2 Logs (Fires once every 10 seconds)
+            if (this.msgCount <= 5) {
+              logInfo(`[WS DEBUG #${this.msgCount}] Extracted LTP: ${ltp}`);
+            }
+            
+            // Only log heartbeat every 10 seconds (approx every 10 ticks)
             const now = Date.now();
             if (now - this.lastLogTime > 10000) {
-                logInfo(`📡 [LIVE FEED] NIFTY 50 Active | Spot LTP: ₹${ltp.toFixed(2)}`);
-                this.lastLogTime = now;
+               console.log(`\n💓 [NIFTY 50 LIVE] LTP: ${ltp} | Time: ${new Date().toISOString()}`);
+               this.lastLogTime = now;
             }
 
             const depth: MarketDepth = { bids: [], asks: [] };
-            const rawQuotes = ff?.marketFF?.marketLevel?.bidAskQuote;
+            const rawQuotes = feed.fullFeed?.marketFF?.marketLevel?.bidAskQuote;
             if (rawQuotes && Array.isArray(rawQuotes)) {
               rawQuotes.forEach((q: any) => {
                 const bp = q.bidP || q.bp;
@@ -128,7 +161,7 @@ export class UpstoxWSClient {
               });
             }
 
-            const ltt = ff?.indexFF?.ltpc?.ltt || ff?.marketFF?.ltpc?.ltt;
+            const ltt = feed.fullFeed?.indexFF?.ltpc?.ltt || feed.fullFeed?.marketFF?.ltpc?.ltt;
             const tickTime = ltt ? Number(ltt) : (decoded.currentTs ? Number(decoded.currentTs) : Date.now());
 
             const tick: TickData = {
@@ -180,8 +213,7 @@ export class UpstoxWSClient {
         // 2. Process Active Option Trade Feed (Trailing Stops / Circuit Breakers)
         else if (decoded.feeds && tracker.activePositionToken && decoded.feeds[tracker.activePositionToken]) {
           const feed = decoded.feeds[tracker.activePositionToken];
-          const ff = feed.fullFeed?.ff;
-          const ltp = ff?.indexFF?.ltpc?.ltp || ff?.marketFF?.ltpc?.ltp;
+          const ltp = feed.fullFeed?.indexFF?.ltpc?.ltp || feed.fullFeed?.marketFF?.ltpc?.ltp;
           
           if (ltp) {
             tracker.updateUnrealizedPnLFromLtp(ltp);

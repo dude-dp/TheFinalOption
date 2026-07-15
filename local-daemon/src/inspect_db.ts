@@ -7,17 +7,28 @@ const supabase = createClient(
 );
 
 async function run() {
-  const { data, error } = await supabase
+  const { data: candles, error: candleError } = await supabase
+    .from('nifty_candles')
+    .select('*')
+    .order('timestamp', { ascending: false })
+    .limit(5);
+
+  if (candleError) {
+    console.error('Error fetching nifty_candles:', candleError);
+  } else {
+    console.log('Sample nifty_candles:', candles);
+  }
+
+  const { data: state, error: stateError } = await supabase
     .from('system_state')
     .select('*')
     .eq('id', 1)
     .single();
 
-  if (error) {
-    console.error('Error fetching system_state:', error);
+  if (stateError) {
+    console.error('Error fetching system_state:', stateError);
   } else {
-    console.log('Columns in system_state:', Object.keys(data));
-    console.log('Sample data:', data);
+    console.log('Sample system_state:', state);
   }
 }
 

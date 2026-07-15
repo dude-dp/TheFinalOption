@@ -58,7 +58,14 @@ class BrokerAdapter {
       });
 
       if (response.ok) {
-        const json = await response.json() as any;
+        let json: any;
+        const resText = await response.text();
+        try {
+          json = JSON.parse(resText);
+        } catch (e) {
+          logError(`[BROKER] Margin JSON parse error: ${resText.substring(0, 100)}`);
+          return this.marginCache;
+        }
         if (json.status === 'success' && json.data?.equity) {
           this.marginCache = json.data.equity;
           this.marginLastFetched = now;
@@ -87,7 +94,13 @@ class BrokerAdapter {
       const expiryRes = await fetch('https://api.upstox.com/v2/option/chain/expiry-dates?instrument_key=NSE_INDEX%7CNifty%2050', {
          headers: { 'Authorization': `Bearer ${this.apiToken}`, 'Accept': 'application/json' }
       });
-      const expiryData = await expiryRes.json() as any;
+      let expiryData: any;
+      const expiryText = await expiryRes.text();
+      try {
+        expiryData = JSON.parse(expiryText);
+      } catch (e) {
+        throw new Error(`Invalid JSON for expiry dates: ${expiryText.substring(0, 100)}`);
+      }
       
       if (!expiryRes.ok || !expiryData.data || expiryData.data.length === 0) {
          throw new Error(`Failed to fetch expiry dates: ${JSON.stringify(expiryData)}`);
@@ -99,7 +112,13 @@ class BrokerAdapter {
       const chainRes = await fetch(`https://api.upstox.com/v2/option/chain?instrument_key=NSE_INDEX%7CNifty%2050&expiry_date=${currentExpiry}`, {
          headers: { 'Authorization': `Bearer ${this.apiToken}`, 'Accept': 'application/json' }
       });
-      const chainData = await chainRes.json() as any;
+      let chainData: any;
+      const chainText = await chainRes.text();
+      try {
+        chainData = JSON.parse(chainText);
+      } catch (e) {
+        throw new Error(`Invalid JSON for option chain: ${chainText.substring(0, 100)}`);
+      }
 
       if (!chainRes.ok || !chainData.data) {
          throw new Error(`Failed to fetch option chain: ${JSON.stringify(chainData)}`);
@@ -229,7 +248,13 @@ class BrokerAdapter {
         throw new Error(`Upstox API HTTP ${response.status}`);
       }
 
-      const json = await response.json() as any;
+      let json: any;
+      const resText = await response.text();
+      try {
+        json = JSON.parse(resText);
+      } catch (e) {
+        throw new Error(`Invalid JSON for short term positions: ${resText.substring(0, 100)}`);
+      }
       
       if (!json.data) return [];
 
@@ -279,7 +304,13 @@ class BrokerAdapter {
         })
       });
 
-      const result = await response.json() as any;
+      let result: any;
+      const resText = await response.text();
+      try {
+        result = JSON.parse(resText);
+      } catch (e) {
+        throw new Error(`Invalid JSON for order place: ${resText.substring(0, 100)}`);
+      }
 
       if (!response.ok) {
         throw new Error(`Execution Failed: ${result.errors?.[0]?.message || 'Unknown Broker Error'}`);

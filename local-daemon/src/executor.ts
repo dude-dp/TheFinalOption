@@ -117,7 +117,21 @@ export async function executeOrder(
       };
     }
 
-    const placeData: any = await placeRes.json();
+    let placeData: any;
+    const placeDataText = await placeRes.text();
+    try {
+      placeData = JSON.parse(placeDataText);
+    } catch (e) {
+      logError(`Invalid JSON from place API: ${placeDataText.substring(0, 100)}`);
+      return {
+        correlationId: order.correlationId,
+        upstoxOrderId: '',
+        status: 'REJECTED',
+        executionPrice: null,
+        filledQuantity: null,
+        rejectionReason: `Invalid JSON: ${placeDataText.substring(0, 100)}`,
+      };
+    }
     const upstoxOrderId = placeData?.data?.order_id || '';
     logInfo(`Order placed. Upstox ID: ${upstoxOrderId}`);
 
@@ -174,7 +188,14 @@ async function pollOrderStatus(
 
       if (!res.ok) continue;
 
-      const data: any = await res.json();
+      let data: any;
+      const resText = await res.text();
+      try {
+        data = JSON.parse(resText);
+      } catch (e) {
+        logWarn(`Invalid JSON from details API: ${resText.substring(0, 100)}`);
+        continue;
+      }
       const orderData = data?.data;
 
       if (!orderData) continue;
@@ -284,7 +305,13 @@ export async function executeOrderStealth(order: any, upstoxToken: string) {
         body: JSON.stringify(payload)
       });
 
-      const data: any = await res.json();
+      let data: any;
+      const resText = await res.text();
+      try {
+        data = JSON.parse(resText);
+      } catch (e) {
+        throw new Error(`Invalid JSON response: ${resText.substring(0, 100)}`);
+      }
       
       if (res.ok && data.status === 'success') {
         fillResults.push({ sliceQty, orderId: data.data.order_id, status: 'SUBMITTED' });
