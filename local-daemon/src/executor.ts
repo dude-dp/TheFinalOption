@@ -253,10 +253,11 @@ function sleep(ms: number): Promise<void> {
 import { generateIcebergSlices } from './iceberg.js';
 
 // Standard NIFTY configuration. 
-// Freeze limit is 1800 qty (72 lots). We keep max slices stealthy at 15 lots (375 qty).
+// NSE Nifty 50 lot size is 75 (revised Nov 2024). Freeze limit is 1800 qty (24 lots). We keep max slices stealthy at 4 lots (300 qty).
+const NIFTY_LOT_SIZE = 75;
 const ICEBERG_CONF = {
-  minLotsPerSlice: 4,     // e.g., 100 qty
-  maxLotsPerSlice: 15,    // e.g., 375 qty
+  minLotsPerSlice: 1,     // e.g., 75 qty
+  maxLotsPerSlice: 4,     // e.g., 300 qty
   baseDelayMs: 250,       // Wait 250ms between slices
   jitterMs: 300           // Add up to 300ms of random delay (Total delay: 250ms - 550ms)
 };
@@ -368,7 +369,7 @@ export async function executeEmergencyMarketExit() {
         instrumentToken: pos.instrumentToken,
         tradingSymbol: pos.tradingSymbol,
         transactionType: transactionType,
-        lots: Math.abs(pos.netQuantity) / 25,
+        lots: Math.abs(pos.netQuantity) / NIFTY_LOT_SIZE,
         quantity: Math.abs(pos.netQuantity),
         orderPrice: 0, // MARKET order for guaranteed ruthless exit
       };
@@ -508,7 +509,7 @@ export class ExecutionEngine {
           instrumentToken: instrumentToken,
           tradingSymbol: `NIFTY_${atmStrike}_${direction}`,
           transactionType: 'BUY',
-          lots: Math.floor(quantity / 25), 
+          lots: Math.floor(quantity / NIFTY_LOT_SIZE), 
           quantity: quantity,
           orderPrice: limitPrice,
       };
@@ -545,7 +546,7 @@ export class ExecutionEngine {
       if (lotsToBuy < 1) lotsToBuy = 1; 
       if (lotsToBuy > 36) lotsToBuy = 36; 
       
-      const quantity = lotsToBuy * 25;
+      const quantity = lotsToBuy * NIFTY_LOT_SIZE;
       logInfo(`[EXECUTOR] ATM Strike: ${atmStrike}. Firing ${lotsToBuy} lots.`);
 
       const instrumentToken = await brokerAdapter.getAtmOptionToken(atmStrike, direction);
