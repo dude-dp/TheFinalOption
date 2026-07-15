@@ -27,6 +27,7 @@ jobs:
             # Go into the daemon folder, install deps, and restart PM2
             cd local-daemon
             npm install
+            npm run build
             
             # Restart the PM2 process gracefully
             pm2 reload ecosystem.config.cjs --update-env

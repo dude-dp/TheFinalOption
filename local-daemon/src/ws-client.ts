@@ -45,7 +45,6 @@ export class UpstoxWSClient {
 
   private latestDepth: MarketDepth = { bids: [], asks: [] };
   private lastLogTime: number = 0;
-  private decodeErrorLogged: boolean = false;
   private msgCount: number = 0;
 
   constructor(token: string) {
@@ -108,40 +107,59 @@ export class UpstoxWSClient {
 
     this.ws.on('message', (data: WebSocket.RawData) => {
       try {
-        // Bulletproof conversion for Node.js ArrayBuffer to Uint8Array
-        const buffer = new Uint8Array(data as ArrayBuffer);
+        // Bulletproof conversion: Node.js ws delivers Buffer, not ArrayBuffer.
+        // Buffer IS a Uint8Array subclass, so we can use it directly with protobuf.
+        let buffer: Uint8Array;
+        if (Buffer.isBuffer(data)) {
+          buffer = data; // Buffer extends Uint8Array — use directly
+        } else if (data instanceof ArrayBuffer) {
+          buffer = new Uint8Array(data);
+        } else {
+          // data is Buffer[] (fragmented) — concatenate
+          buffer = Buffer.concat(data as Buffer[]);
+        }
 
         this.msgCount++;
         if (this.msgCount <= 5 || this.msgCount % 100 === 0) {
-          logInfo(`[WS MESSAGE #${this.msgCount}] Received raw packet of size ${buffer.length} bytes.`);
+          logInfo(`[WS MESSAGE #${this.msgCount}] Received packet: ${buffer.length} bytes (type: ${typeof data}, isBuffer: ${Buffer.isBuffer(data)})`);
         }
 
-        const decoded = FeedResponse.decode(buffer) as any;
-        const decodedObj = FeedResponse.toObject(decoded, {
+        const decoded = FeedResponse.decode(buffer);
+        
+        // CRITICAL FIX: decoded.feeds is a protobuf Map, NOT a plain JS object.
+        // Object.keys() and bracket-access DO NOT work on protobuf Maps.
+        // We MUST use FeedResponse.toObject() to convert it to a plain JS object.
+        const msg = FeedResponse.toObject(decoded, {
           defaults: true,
-          longs: String,
+          longs: Number,
           enums: String,
           bytes: String
-        });
+        }) as any;
 
-        // TEMPORARY DEBUG: Log sample feed data
+        // Debug first 5 messages to verify feed structure
         if (this.msgCount <= 5) {
-          logInfo(`[WS DEBUG #${this.msgCount}] Feed map keys: ${decoded.feeds ? Object.keys(decoded.feeds).join(', ') : 'none'}`);
+          const feedKeys = msg.feeds ? Object.keys(msg.feeds) : [];
+          logInfo(`[WS DEBUG #${this.msgCount}] Feed keys: [${feedKeys.join(', ')}] | type: ${msg.type}`);
+          if (feedKeys.length > 0) {
+            logInfo(`[WS DEBUG #${this.msgCount}] First feed sample: ${JSON.stringify(msg.feeds[feedKeys[0]]).substring(0, 300)}`);
+          }
         }
         
         // 1. Process Main NIFTY 50 Tracker Feed
-        if (decoded.feeds && decoded.feeds[this.instrumentKey]) {
-          const feed = decoded.feeds[this.instrumentKey];
+        if (msg.feeds && msg.feeds[this.instrumentKey]) {
+          const feed = msg.feeds[this.instrumentKey];
           
-          // Fix: FullFeed object directly contains indexFF and marketFF. There is no 'ff' property.
-          const ltp = feed.fullFeed?.indexFF?.ltpc?.ltp || feed.fullFeed?.marketFF?.ltpc?.ltp;
+          // FullFeed object directly contains indexFF and marketFF.
+          const ff = feed.fullFeed || feed.FullFeed || feed.ff || feed.FF;
+          const ltp = ff?.indexFF?.ltpc?.ltp || ff?.marketFF?.ltpc?.ltp 
+                   || ff?.IndexFF?.ltpc?.ltp || ff?.MarketFF?.ltpc?.ltp;
           
           if (ltp) {
             if (this.msgCount <= 5) {
-              logInfo(`[WS DEBUG #${this.msgCount}] Extracted LTP: ${ltp}`);
+              logInfo(`[WS DEBUG #${this.msgCount}] ✅ Extracted LTP: ${ltp}`);
             }
             
-            // Only log heartbeat every 10 seconds (approx every 10 ticks)
+            // Only log heartbeat every 10 seconds
             const now = Date.now();
             if (now - this.lastLogTime > 10000) {
                console.log(`\n💓 [NIFTY 50 LIVE] LTP: ${ltp} | Time: ${new Date().toISOString()}`);
@@ -149,7 +167,7 @@ export class UpstoxWSClient {
             }
 
             const depth: MarketDepth = { bids: [], asks: [] };
-            const rawQuotes = feed.fullFeed?.marketFF?.marketLevel?.bidAskQuote;
+            const rawQuotes = ff?.marketFF?.marketLevel?.bidAskQuote || ff?.MarketFF?.marketLevel?.bidAskQuote;
             if (rawQuotes && Array.isArray(rawQuotes)) {
               rawQuotes.forEach((q: any) => {
                 const bp = q.bidP || q.bp;
@@ -161,8 +179,8 @@ export class UpstoxWSClient {
               });
             }
 
-            const ltt = feed.fullFeed?.indexFF?.ltpc?.ltt || feed.fullFeed?.marketFF?.ltpc?.ltt;
-            const tickTime = ltt ? Number(ltt) : (decoded.currentTs ? Number(decoded.currentTs) : Date.now());
+            const ltt = ff?.indexFF?.ltpc?.ltt || ff?.marketFF?.ltpc?.ltt;
+            const tickTime = ltt ? Number(ltt) : (msg.currentTs ? Number(msg.currentTs) : Date.now());
 
             const tick: TickData = {
               instrumentToken: this.instrumentKey,
@@ -208,12 +226,16 @@ export class UpstoxWSClient {
               DataEngine.recordLiveCandle(latestClosedCandle);
               this.evaluateAndPushSignal(closedCandles, onSignal);
             }
+          } else if (this.msgCount <= 5) {
+            logInfo(`[WS DEBUG #${this.msgCount}] ⚠️ Feed found for ${this.instrumentKey} but no LTP. Feed structure: ${JSON.stringify(feed).substring(0, 300)}`);
           }
         } 
         // 2. Process Active Option Trade Feed (Trailing Stops / Circuit Breakers)
-        else if (decoded.feeds && tracker.activePositionToken && decoded.feeds[tracker.activePositionToken]) {
-          const feed = decoded.feeds[tracker.activePositionToken];
-          const ltp = feed.fullFeed?.indexFF?.ltpc?.ltp || feed.fullFeed?.marketFF?.ltpc?.ltp;
+        else if (msg.feeds && tracker.activePositionToken && msg.feeds[tracker.activePositionToken]) {
+          const feed = msg.feeds[tracker.activePositionToken];
+          const ff = feed.fullFeed || feed.FullFeed || feed.ff || feed.FF;
+          const ltp = ff?.indexFF?.ltpc?.ltp || ff?.marketFF?.ltpc?.ltp
+                   || ff?.IndexFF?.ltpc?.ltp || ff?.MarketFF?.ltpc?.ltp;
           
           if (ltp) {
             tracker.updateUnrealizedPnLFromLtp(ltp);
@@ -232,11 +254,15 @@ export class UpstoxWSClient {
                });
             }
           }
+        } else if (this.msgCount <= 10) {
+          const feedKeys = msg.feeds ? Object.keys(msg.feeds) : [];
+          logInfo(`[WS DEBUG #${this.msgCount}] No matching feed. Available keys: [${feedKeys.join(', ')}] | Looking for: ${this.instrumentKey}`);
         }
       } catch (err: any) {
-        if (!this.decodeErrorLogged) {
-            logError(`[WS DECODE ERROR] Protobuf parse failure (suppressing future errors): ${err.message}`);
-            this.decodeErrorLogged = true;
+        // Log every unique error, not just the first one
+        logError(`[WS DECODE ERROR] ${err.message} (msg #${this.msgCount})`);
+        if (this.msgCount <= 3) {
+          logError(`[WS DECODE STACK] ${err.stack}`);
         }
       }
     });
