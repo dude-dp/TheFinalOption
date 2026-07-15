@@ -20,7 +20,8 @@ jobs:
             echo "Deploying latest changes to the daemon..."
             cd ~/thefinaloption
             
-            # Stash any accidental local changes and pull the latest code
+            # Discard any untracked/stashed files and pull the latest code
+            git clean -fd
             git stash
             git pull origin main
             
