@@ -90,24 +90,22 @@ class BrokerAdapter {
     if (!this.apiToken) throw new Error('No Upstox token available for Option Chain fetch.');
     
     try {
-      // 1. Fetch the nearest expiry date for NIFTY 50
-      const expiryRes = await fetch('https://api.upstox.com/v2/option/chain/expiry-dates?instrument_key=NSE_INDEX%7CNifty%2050', {
+      // 1. Fetch available contracts to get expiry dates
+      const contractRes = await fetch('https://api.upstox.com/v2/option/contract?instrument_key=NSE_INDEX%7CNifty%2050', {
          headers: { 'Authorization': `Bearer ${this.apiToken}`, 'Accept': 'application/json' }
       });
-      let expiryData: any;
-      const expiryText = await expiryRes.text();
-      try {
-        expiryData = JSON.parse(expiryText);
-      } catch (e) {
-        throw new Error(`Invalid JSON for expiry dates: ${expiryText.substring(0, 100)}`);
+      const contractText = await contractRes.text();
+      let contractData = JSON.parse(contractText);
+      
+      if (!contractRes.ok || !contractData.data) {
+         throw new Error(`Failed to fetch option contracts: ${contractText.substring(0, 200)}`);
       }
       
-      if (!expiryRes.ok || !expiryData.data || expiryData.data.length === 0) {
-         throw new Error(`Failed to fetch expiry dates: ${JSON.stringify(expiryData)}`);
-      }
+      // The option contracts API returns a list of contracts. We need to find the unique expiry dates, sort them, and pick the nearest one.
+      const expiries = Array.from(new Set(contractData.data.map((c: any) => c.expiry))).sort();
+      if (expiries.length === 0) throw new Error("No expiries found in option contracts");
+      const currentExpiry = expiries[0];
       
-      const currentExpiry = expiryData.data[0]; // e.g., "2026-07-16"
-
       // 2. Fetch the full option chain for that specific expiry
       const chainRes = await fetch(`https://api.upstox.com/v2/option/chain?instrument_key=NSE_INDEX%7CNifty%2050&expiry_date=${currentExpiry}`, {
          headers: { 'Authorization': `Bearer ${this.apiToken}`, 'Accept': 'application/json' }
@@ -124,13 +122,14 @@ class BrokerAdapter {
          throw new Error(`Failed to fetch option chain: ${JSON.stringify(chainData)}`);
       }
       
-      // 3. Extract the exact instrument key for our ATM strike
-      const contract = chainData.data.find((c: any) => c.strike_price === strikePrice);
+      // 2. Extract the exact instrument key for our ATM strike
+      const contract = chainData.data.find((c: any) => Number(c.strike_price) === Number(strikePrice));
       if (contract) {
          return optionType === 'CE' ? contract.call_options.instrument_key : contract.put_options.instrument_key;
       }
       
-      throw new Error(`Strike ${strikePrice} not found in option chain for expiry ${currentExpiry}`);
+      const availableStrikes = chainData.data.map((c: any) => c.strike_price).slice(0, 10);
+      throw new Error(`Strike ${strikePrice} not found in option chain for expiry current_week. First 10 available: ${availableStrikes.join(', ')}`);
     } catch (error) {
       logError(`[BROKER] Option Chain Resolution Error: ${error}`);
       throw error;
