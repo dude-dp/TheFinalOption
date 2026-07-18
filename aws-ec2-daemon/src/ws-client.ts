@@ -13,7 +13,8 @@ import { executor } from './executor.js';
 import { DataEngine } from './data-engine.js';
 import { getLatestMACDValues } from './lib/macd.js';
 import { executeEmergencyMarketExit } from './executor.js';
-import { logInfo, logError } from './logger.js'; // 🟢 Added Logger
+import { StateEngine } from './state-engine.js';
+import { logInfo, logError } from './logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -225,6 +226,21 @@ export class UpstoxWSClient {
               const latestClosedCandle = closedCandles[closedCandles.length - 1];
               DataEngine.recordLiveCandle(latestClosedCandle);
               this.evaluateAndPushSignal(closedCandles, onSignal);
+
+              // ─── Confluence Signal Evaluation ─────────────────────────
+              // Non-blocking: StateEngine.evaluateAndRoute returns a Promise
+              // that we intentionally do NOT await here so the WS handler
+              // returns in microseconds.
+              const allCandles = this.aggregator.getClosedCandles();
+              const token = this.token;
+              if (StateEngine.activeToken) {
+                StateEngine.evaluateAndRoute(
+                  allCandles,
+                  latestClosedCandle.close,
+                  StateEngine.activeToken
+                ).catch((err: Error) => logError(`[SIGNAL] Unhandled error in evaluateAndRoute: ${err.message}`));
+              }
+              // ──────────────────────────────────────────────────────────
             }
           } else if (this.msgCount <= 5) {
             logInfo(`[WS DEBUG #${this.msgCount}] ⚠️ Feed found for ${this.instrumentKey} but no LTP. Feed structure: ${JSON.stringify(feed).substring(0, 300)}`);

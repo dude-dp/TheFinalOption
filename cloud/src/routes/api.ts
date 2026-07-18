@@ -69,6 +69,94 @@ async function getUpstoxAccessToken(c: any): Promise<string | null> {
 // =====================
 
 /**
+ * POST /api/log
+ * Async event sink for the EC2 daemon's fire-and-forget log dispatcher.
+ *
+ * The daemon calls this from async-logger.ts without awaiting the response.
+ * This endpoint handles batch-insert into Supabase system_events table.
+ * Auth: X-Poll-Secret header (same as all daemon endpoints).
+ *
+ * Accepted event types:
+ *   - signal_eval     → Confluence evaluation results (every candle close)
+ *   - slippage_event  → Fill price vs spot-at-signal delta
+ *   - trade_fill      → Entry order confirmed fill
+ *   - gtt_placed      → GTT OCO bracket anchored
+ *   - circuit_breaker → Kill switch / halt events
+ *   - system_event    → Generic lifecycle events (teardown, target hit, etc.)
+ */
+api.post('/api/log', async (c) => {
+  const secret = c.req.header('X-Poll-Secret');
+  if (secret !== c.env.POLL_SECRET) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  let payload: Record<string, unknown>;
+  try {
+    payload = await c.req.json<Record<string, unknown>>();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const eventType = payload.type as string;
+  if (!eventType) {
+    return c.json({ error: 'Missing required field: type' }, 400);
+  }
+
+  try {
+    const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY);
+
+    // Determine the correct table based on event type
+    if (eventType === 'trade_fill' || eventType === 'slippage_event' || eventType === 'gtt_placed') {
+      // Trade-level events → trade_signals table
+      const { error } = await supabase.from('trade_signals').insert({
+        event_type: eventType,
+        direction: payload.direction ?? null,
+        signal: payload.signal ?? null,
+        order_id: payload.orderId ?? null,
+        fill_price: payload.fillPrice ?? null,
+        spot_at_signal: payload.spotAtSignal ?? null,
+        slippage_delta: payload.slippageDelta ?? null,
+        lots: payload.lots ?? null,
+        quantity: payload.quantity ?? null,
+        instrument_token: payload.instrumentToken ?? null,
+        gtt_id: payload.gttId ?? null,
+        target_price: payload.targetPrice ?? null,
+        stop_loss_price: payload.stopLossPrice ?? null,
+        gross_points: payload.grossPoints ?? null,
+        net_profit_target: payload.netProfitTarget ?? null,
+        vwap: payload.vwap ?? null,
+        rsi: payload.rsi ?? null,
+        ema9: payload.ema9 ?? null,
+        ema21: payload.ema21 ?? null,
+        timestamp: payload.timestamp ?? new Date().toISOString(),
+      });
+
+      if (error) {
+        console.error('[API/LOG] trade_signals insert failed:', error.message);
+        return c.json({ error: 'DB insert failed' }, 500);
+      }
+    } else {
+      // Signal evals and system events → system_events table
+      const { error } = await supabase.from('system_events').insert({
+        event_type: eventType,
+        payload: JSON.stringify(payload),
+        timestamp: (payload.timestamp as string) ?? new Date().toISOString(),
+      });
+
+      if (error) {
+        console.error('[API/LOG] system_events insert failed:', error.message);
+        return c.json({ error: 'DB insert failed' }, 500);
+      }
+    }
+
+    return c.json({ ok: true });
+  } catch (err: any) {
+    console.error('[API/LOG] Unexpected error:', err.message);
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
+/**
  * GET /api/ws
  * 🚀 TASK 4.2: Ultra-low latency WebSocket stream.
  * The local daemon connects here to receive instant execution fills.

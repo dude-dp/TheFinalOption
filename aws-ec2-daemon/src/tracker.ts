@@ -28,13 +28,30 @@ export class ApiTracker {
 
 export interface DailyState {
   startingCapital: number;
-  secureTarget: number;       // 5% Core Target
-  hardCeiling: number;        // 20% Extreme Profit Cap
-  dailyRealizedPnL: number;   // Closed Positions PnL
-  activeUnrealizedPnL: number; // Floating Open Positions PnL
-  isShieldModeActive: boolean; // True when >= 5% profit has been secured
-  isHalted: boolean;          // True if any circuit breaker tripped
-  haltReason: string;         // Log details for the shutdown event
+
+  // ── Existing Emergency Tiers (unchanged) ──────────────────────────────
+  secureTarget: number;         // 5% profit → activates trailing floor
+  hardCeiling: number;          // 20% profit → emergency market exit
+
+  // ── New Layered Defense Tiers (user-approved) ─────────────────────────
+  /** 2% drawdown from starting capital → hard kill switch */
+  drawdownFloor: number;
+  /** 5% gain → trailing lock activates, floor lifts to 3% guaranteed profit */
+  trailingLockThreshold: number;
+  /** Once trailing is active, halt new trades if PnL dips below this floor */
+  trailingFloorTarget: number;
+  /** 10% gain → soft halt: no new trades, existing GTTs stay active */
+  dailyHaltCeiling: number;
+
+  // ── P&L State ─────────────────────────────────────────────────────────
+  dailyRealizedPnL: number;     // Closed Positions PnL
+  activeUnrealizedPnL: number;  // Floating Open Positions PnL
+
+  // ── Flags ─────────────────────────────────────────────────────────────
+  isShieldModeActive: boolean;  // True when >= 5% profit secured
+  isTrailingLockActive: boolean; // True when trailing floor is active
+  isHalted: boolean;            // True if any circuit breaker tripped
+  haltReason: string;
 }
 
 class PortfolioTracker {
@@ -42,12 +59,23 @@ class PortfolioTracker {
     startingCapital: 0,
     secureTarget: 0,
     hardCeiling: 0,
+    drawdownFloor: 0,
+    trailingLockThreshold: 0,
+    trailingFloorTarget: 0,
+    dailyHaltCeiling: 0,
     dailyRealizedPnL: 0,
     activeUnrealizedPnL: 0,
     isShieldModeActive: false,
+    isTrailingLockActive: false,
     isHalted: false,
     haltReason: '',
   };
+
+  // ── Consecutive SL counter ──────────────────────────────────────────────
+  private consecutiveStopLossHits: number = 0;
+
+  // ── Active GTT registry (for teardown cancellation) ────────────────────
+  private activeGttId: string | null = null;
 
   // Compatibility properties for active position tracking
   public activePositionToken: string = "";
@@ -85,13 +113,25 @@ class PortfolioTracker {
       }
 
       this.state.startingCapital = balance;
+
+      // Existing emergency tiers (unchanged)
       this.state.secureTarget = balance * 0.05;
       this.state.hardCeiling = balance * 0.20;
+
+      // New layered defense tiers
+      this.state.drawdownFloor = balance * 0.02;          // 2% max drawdown → kill switch
+      this.state.trailingLockThreshold = balance * 0.05; // 5% gain → activate trailing
+      this.state.trailingFloorTarget = balance * 0.03;   // 3% guaranteed floor once trailing active
+      this.state.dailyHaltCeiling = balance * 0.10;      // 10% gain → halt new trades
+
       this.state.dailyRealizedPnL = initialRealizedPnL;
       this.state.activeUnrealizedPnL = 0;
       this.state.isHalted = false;
+      this.state.isTrailingLockActive = false;
       this.state.haltReason = '';
-      
+      this.consecutiveStopLossHits = 0;
+      this.activeGttId = null;
+
       // Automatically activate Shield Mode if booting mid-day with goals already reached
       if (this.state.dailyRealizedPnL >= this.state.secureTarget) {
         this.state.isShieldModeActive = true;
@@ -101,9 +141,10 @@ class PortfolioTracker {
 
       logInfo(
         `[TRACKER] Daily bounds initialized. Capital: ₹${this.state.startingCapital.toFixed(2)} | ` +
-        `5% Target: ₹${this.state.secureTarget.toFixed(2)} | ` +
-        `20% Ceiling: ₹${this.state.hardCeiling.toFixed(2)} | ` +
-        `Current Realized: ₹${this.state.dailyRealizedPnL.toFixed(2)}`
+        `2% Kill Floor: ₹${this.state.drawdownFloor.toFixed(2)} | ` +
+        `5% Trail Lock: ₹${this.state.trailingLockThreshold.toFixed(2)} | ` +
+        `10% Halt: ₹${this.state.dailyHaltCeiling.toFixed(2)} | ` +
+        `20% Emergency: ₹${this.state.hardCeiling.toFixed(2)}`
       );
     } catch (error: any) {
       logError(`[TRACKER] Failed to safely initialize daily state boundaries: ${error.message}`);
@@ -124,11 +165,67 @@ class PortfolioTracker {
    */
   public setRealizedPnL(pnl: number): void {
     this.state.dailyRealizedPnL = pnl;
-    
+
+    // Existing: 5% shield mode activation
     if (this.state.dailyRealizedPnL >= this.state.secureTarget && !this.state.isShieldModeActive) {
       this.state.isShieldModeActive = true;
-      logInfo(`[TRACKER] 5% Profit Shield Activated. Protecting secured baseline of ₹${this.state.secureTarget.toFixed(2)}.`);
+      logInfo(`[TRACKER] 5% Profit Shield Activated. Protecting ₹${this.state.secureTarget.toFixed(2)}.`);
     }
+
+    // New Tier 2: Trailing lock activation — once 5% is hit, floor rises to 3%
+    if (this.state.dailyRealizedPnL >= this.state.trailingLockThreshold && !this.state.isTrailingLockActive) {
+      this.state.isTrailingLockActive = true;
+      logInfo(`[TRACKER] 🔒 Trailing Lock Activated. Guaranteed floor: ₹${this.state.trailingFloorTarget.toFixed(2)} (3%).`);
+    }
+  }
+
+  // ── Consecutive Stop-Loss Counter ─────────────────────────────────────
+
+  /**
+   * Record the outcome of a closed trade.
+   * Resets the consecutive SL counter on any win.
+   * Increments on a stop-loss hit.
+   */
+  public recordTradeOutcome(wasStopLoss: boolean): void {
+    if (wasStopLoss) {
+      this.consecutiveStopLossHits++;
+      logWarn(`[TRACKER] Stop-loss recorded. Consecutive hits: ${this.consecutiveStopLossHits}/3`);
+    } else {
+      if (this.consecutiveStopLossHits > 0) {
+        logInfo(`[TRACKER] Win recorded. Resetting consecutive SL counter.`);
+      }
+      this.consecutiveStopLossHits = 0;
+    }
+  }
+
+  /**
+   * Returns true if 3 consecutive stop-losses have been hit.
+   * Caller must invoke the Upstox kill-switch API and halt the daemon.
+   */
+  public shouldTriggerKillSwitch(): boolean {
+    return this.consecutiveStopLossHits >= 3;
+  }
+
+  public getConsecutiveStopCount(): number {
+    return this.consecutiveStopLossHits;
+  }
+
+  // ── Active GTT Registry ────────────────────────────────────────────────
+
+  /** Store the GTT order ID returned by Upstox after placing an OCO bracket. */
+  public setActiveGtt(id: string): void {
+    this.activeGttId = id;
+    logInfo(`[TRACKER] Active GTT registered: ${id}`);
+  }
+
+  /** Clear GTT registry after cancellation or fill. */
+  public clearActiveGtt(): void {
+    this.activeGttId = null;
+  }
+
+  /** Returns the current active GTT ID, or null if none. */
+  public getActiveGttId(): string | null {
+    return this.activeGttId;
   }
 
   /**

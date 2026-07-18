@@ -7,11 +7,15 @@ import { logInfo, logWarn, logError, logTrade } from './logger.js';
 import { StateEngine } from './state-engine.js';
 import { brokerAdapter } from './broker-adapter.js';
 import { ApiTracker, tracker } from './tracker.js';
+import type { ConfluenceSignal } from './confluence.js';
+import { asyncLog } from './async-logger.js';
+import { calculateGrossTargetPoints, NIFTY_LOT_SIZE_2026 } from '../../cloud/src/lib/lot-sizing.js';
 
 import { liquidityScanner } from './liquidity.js';
 import type { MarketDepth } from './ws-client.js';
 import { activeWsClient } from './index.js'; // 🟢 NEW IMPORT
 
+/** V3 HFT endpoint — requires whitelisted static IP (EC2 Elastic IP: 13.205.66.82) */
 const HFT_URL = 'https://api-hft.upstox.com';
 const API_URL = 'https://api.upstox.com';
 
@@ -253,8 +257,8 @@ function sleep(ms: number): Promise<void> {
 import { generateIcebergSlices } from './iceberg.js';
 
 // Standard NIFTY configuration. 
-// NSE Nifty 50 lot size is 75 (revised Nov 2024). Freeze limit is 1800 qty (24 lots). We keep max slices stealthy at 4 lots (300 qty).
-const NIFTY_LOT_SIZE = 75;
+// NSE Nifty 50 lot size is 6 5.
+const NIFTY_LOT_SIZE = 65;
 const ICEBERG_CONF = {
   minLotsPerSlice: 1,     // e.g., 75 qty
   maxLotsPerSlice: 4,     // e.g., 300 qty
@@ -265,15 +269,15 @@ const ICEBERG_CONF = {
 export async function executeOrderStealth(order: any, upstoxToken: string) {
   const lotSize = order.quantity / order.lots; // Automatically derive lot size
   const slices = generateIcebergSlices(order.lots, ICEBERG_CONF);
-  
+
   logInfo(`[ICEBERG] Fracturing ${order.lots} lots into ${slices.length} stealth slices: ${slices.join(', ')}`);
 
   const fillResults: any[] = [];
-  
+
   for (let i = 0; i < slices.length; i++) {
     const sliceLots = slices[i];
     const sliceQty = sliceLots * lotSize;
-    
+
     // 1. Build the unique Upstox payload for this slice
     const payload = {
       quantity: sliceQty,
@@ -291,11 +295,11 @@ export async function executeOrderStealth(order: any, upstoxToken: string) {
     };
 
     // 2. Log API hit to prevent ban
-    ApiTracker.recordCall(); 
+    ApiTracker.recordCall();
 
     try {
-      logInfo(`[ICEBERG] 🧊 Firing slice ${i+1}/${slices.length} -> ${sliceQty} qty (${sliceLots} lots)`);
-      
+      logInfo(`[ICEBERG] 🧊 Firing slice ${i + 1}/${slices.length} -> ${sliceQty} qty (${sliceLots} lots)`);
+
       const res = await fetch('https://api.upstox.com/v2/order/place', {
         method: 'POST',
         headers: {
@@ -313,15 +317,15 @@ export async function executeOrderStealth(order: any, upstoxToken: string) {
       } catch (e) {
         throw new Error(`Invalid JSON response: ${resText.substring(0, 100)}`);
       }
-      
+
       if (res.ok && data.status === 'success') {
         fillResults.push({ sliceQty, orderId: data.data.order_id, status: 'SUBMITTED' });
       } else {
-        logError(`[ERROR] Slice ${i+1} failed: ${JSON.stringify(data.errors || data)}`);
+        logError(`[ERROR] Slice ${i + 1} failed: ${JSON.stringify(data.errors || data)}`);
         fillResults.push({ sliceQty, status: 'FAILED', error: data });
       }
     } catch (err: any) {
-      logError(`[NETWORK ERROR] Slice ${i+1}: ${err.message}`);
+      logError(`[NETWORK ERROR] Slice ${i + 1}: ${err.message}`);
       fillResults.push({ sliceQty, status: 'NETWORK_ERROR' });
     }
 
@@ -335,7 +339,7 @@ export async function executeOrderStealth(order: any, upstoxToken: string) {
 
   // Calculate success rate to send back to Cloudflare
   const successfulLots = fillResults.filter(r => r.status === 'SUBMITTED').reduce((acc, curr) => acc + (curr.sliceQty / lotSize), 0);
-  
+
   return {
     success: successfulLots === order.lots,
     requestedLots: order.lots,
@@ -352,7 +356,7 @@ export async function executeEmergencyMarketExit() {
     logError('❌ [EXECUTOR] Cannot exit market: No active token.');
     return;
   }
-  
+
   try {
     const positions = await brokerAdapter.getOpenPositions();
     const activePositions = positions.filter((p: any) => p.netQuantity !== 0);
@@ -373,7 +377,7 @@ export async function executeEmergencyMarketExit() {
         quantity: Math.abs(pos.netQuantity),
         orderPrice: 0, // MARKET order for guaranteed ruthless exit
       };
-      
+
       logInfo(`[EXECUTOR] Squaring off ${pos.tradingSymbol} (${pos.netQuantity} qty)...`);
       await executeOrderStealth(orderPayload, StateEngine.activeToken);
     }
@@ -386,9 +390,9 @@ export async function executeEmergencyMarketExit() {
 export class ExecutionEngine {
   private readonly MAX_ACCEPTABLE_SLIPPAGE_POINTS = 2.0;
   private readonly MIN_REQUIRED_DELTA = 30;
-  private readonly MIN_TICK_VOLUME = 200;           
-  private readonly ABSOLUTE_DELTA_FLOOR = 120;      
-  private readonly RELATIVE_DELTA_DOMINANCE = 0.35; 
+  private readonly MIN_TICK_VOLUME = 200;
+  private readonly ABSOLUTE_DELTA_FLOOR = 120;
+  private readonly RELATIVE_DELTA_DOMINANCE = 0.35;
   private isExecutingTapeExit = false;
 
   constructor() {
@@ -413,7 +417,7 @@ export class ExecutionEngine {
         return false;
       }
     }
-    return true; 
+    return true;
   }
 
   private async triggerEmergencyShutdown(reason: string): Promise<void> {
@@ -431,7 +435,7 @@ export class ExecutionEngine {
     const token = tracker.activePositionToken;
     if (!token) return;
 
-    const isLong  = token.endsWith('CE') || token.includes('CE-');
+    const isLong = token.endsWith('CE') || token.includes('CE-');
     const isShort = token.endsWith('PE') || token.includes('PE-');
 
     if (tracker.activePositionQty === 0 || this.isExecutingTapeExit || liveVolume < this.MIN_TICK_VOLUME) return;
@@ -481,19 +485,19 @@ export class ExecutionEngine {
     }
 
     logInfo(`[EXECUTOR] ✅ Verified WAP at ₹${metrics.expectedExecutionPrice.toFixed(2)}. Executing...`);
-    await this.executeNativeTrade(signal as 'BUY_CE' | 'BUY_PE', targetQuantity, metrics.expectedExecutionPrice, ltp); 
+    await this.executeNativeTrade(signal as 'BUY_CE' | 'BUY_PE', targetQuantity, metrics.expectedExecutionPrice, ltp);
   }
 
   private async executeNativeTrade(signal: 'BUY_CE' | 'BUY_PE', quantity: number, limitPrice: number, liveLtp: number) {
     if (!StateEngine.activeToken) {
-       logError('[EXECUTOR] Cannot execute trade: No active token.');
-       return;
+      logError('[EXECUTOR] Cannot execute trade: No active token.');
+      return;
     }
 
     // 🟢 FIXED: Wrapped the entire external API execution flow in a Try/Catch to prevent PM2 Crash
     try {
       const direction = signal === 'BUY_CE' ? 'CE' : 'PE';
-      const spotPrice = liveLtp || tracker.liveSpotPrice; 
+      const spotPrice = liveLtp || tracker.liveSpotPrice;
       if (!spotPrice || spotPrice === 0) {
         logError('[EXECUTOR] CRITICAL: Spot price is 0. Aborting trade.');
         return;
@@ -502,23 +506,23 @@ export class ExecutionEngine {
       const atmStrike = Math.round(spotPrice / 50) * 50;
 
       await brokerAdapter.getFundsAndMargin(true);
-      const instrumentToken = await brokerAdapter.getAtmOptionToken(atmStrike, direction);
+      const { instrumentKey: instrumentToken, lotSize } = await brokerAdapter.getAtmOptionToken(atmStrike, direction);
 
       const orderPayload = {
-          correlationId: `AUTO-${Date.now()}`,
-          instrumentToken: instrumentToken,
-          tradingSymbol: `NIFTY_${atmStrike}_${direction}`,
-          transactionType: 'BUY',
-          lots: Math.floor(quantity / NIFTY_LOT_SIZE), 
-          quantity: quantity,
-          orderPrice: limitPrice,
+        correlationId: `AUTO-${Date.now()}`,
+        instrumentToken: instrumentToken,
+        tradingSymbol: `NIFTY_${atmStrike}_${direction}`,
+        transactionType: 'BUY',
+        lots: Math.floor(quantity / lotSize),
+        quantity: Math.floor(quantity / lotSize) * lotSize, // exact multiple of live lot size
+        orderPrice: limitPrice,
       };
 
       const res = await executeOrderStealth(orderPayload, StateEngine.activeToken);
-      
+
       if (res.success || res.filledLots > 0) {
-         tracker.setActivePosition(instrumentToken, res.filledLots * 25, limitPrice);
-         if (activeWsClient) activeWsClient.subscribe(instrumentToken);
+        tracker.setActivePosition(instrumentToken, res.filledLots * lotSize, limitPrice);
+        if (activeWsClient) activeWsClient.subscribe(instrumentToken);
       }
     } catch (err: any) {
       logError(`[EXECUTOR] Execution halted due to network/API exception: ${err.message}`);
@@ -527,48 +531,330 @@ export class ExecutionEngine {
 
   public async takeManualPosition(direction: 'CE' | 'PE') {
     if (!StateEngine.activeToken) return;
-    
+
     // 🟢 FIXED: Wrapped in Try/Catch
     try {
       const spotPrice = tracker.liveSpotPrice;
       if (spotPrice === 0) {
-         logError('[EXECUTOR] Cannot execute manual trade: Waiting for live WS feed...');
-         return;
+        logError('[EXECUTOR] Cannot execute manual trade: Waiting for live WS feed...');
+        return;
       }
-      
+
       const atmStrike = Math.round(spotPrice / 50) * 50;
-      
+
       const marginData = await brokerAdapter.getFundsAndMargin(true);
       const availableMargin = marginData.available_margin || 0;
-      
-      const maxMarginPerLot = 4000; 
-      let lotsToBuy = Math.floor((availableMargin * 0.9) / maxMarginPerLot);
-      if (lotsToBuy < 1) lotsToBuy = 1; 
-      if (lotsToBuy > 36) lotsToBuy = 36; 
-      
-      const quantity = lotsToBuy * NIFTY_LOT_SIZE;
-      logInfo(`[EXECUTOR] ATM Strike: ${atmStrike}. Firing ${lotsToBuy} lots.`);
 
-      const instrumentToken = await brokerAdapter.getAtmOptionToken(atmStrike, direction);
+      const { instrumentKey: instrumentToken, lotSize } = await brokerAdapter.getAtmOptionToken(atmStrike, direction);
+
+      const maxMarginPerLot = 15000;
+      let lotsToBuy = Math.floor((availableMargin * 0.9) / maxMarginPerLot);
+      if (lotsToBuy < 1) lotsToBuy = 1;
+      if (lotsToBuy > 36) lotsToBuy = 36;
+      const quantity = lotsToBuy * lotSize;
+      logInfo(`[EXECUTOR] ATM Strike: ${atmStrike}. Firing ${lotsToBuy} lots (${quantity} qty @ lot size ${lotSize}).`);
 
       const orderPayload = {
-          correlationId: `MANUAL-${Date.now()}`,
-          instrumentToken: instrumentToken,
-          tradingSymbol: `NIFTY_${atmStrike}_${direction}`,
-          transactionType: 'BUY',
-          lots: lotsToBuy,
-          quantity: quantity,
-          orderPrice: 0, 
+        correlationId: `MANUAL-${Date.now()}`,
+        instrumentToken: instrumentToken,
+        tradingSymbol: `NIFTY_${atmStrike}_${direction}`,
+        transactionType: 'BUY',
+        lots: lotsToBuy,
+        quantity: quantity,
+        orderPrice: 0,
       };
 
       const res = await executeOrderStealth(orderPayload, StateEngine.activeToken);
-      
+
       if (res.success || res.filledLots > 0) {
-         tracker.setActivePosition(instrumentToken, res.filledLots * 25, spotPrice); 
-         if (activeWsClient) activeWsClient.subscribe(instrumentToken);
+        tracker.setActivePosition(instrumentToken, res.filledLots * lotSize, spotPrice);
+        if (activeWsClient) activeWsClient.subscribe(instrumentToken);
       }
     } catch (err: any) {
       logError(`[EXECUTOR] Manual execution failed: ${err.message}`);
+    }
+  }
+
+  // ============================================================
+  // Confluence-Triggered Entry Pipeline
+  // ============================================================
+
+  /**
+   * Execute a directional trade triggered by the confluence signal engine.
+   *
+   * Flow:
+   *   1. Circuit breaker check
+   *   2. Fetch margin → compute 2% net profit target
+   *   3. Fetch ATM option token
+   *   4. Place HFT MARKET order with stale-signal timeout (3s)
+   *   5. Extract fill price → anchor GTT OCO bracket
+   *   6. Log slippage delta + signal audit asynchronously
+   */
+  public async executeConfluentTrade(
+    signal: ConfluenceSignal,
+    accessToken: string
+  ): Promise<void> {
+    const direction = signal.signal === 'BUY_CE' ? 'CE' : 'PE';
+
+    logTrade(`[⚡ CONFLUENCE] ${signal.signal} triggered | ${signal.reason}`);
+
+    const isSafe = await this.evaluateCircuitBreakers();
+    if (!isSafe) {
+      logWarn('[EXECUTOR] Circuit breaker blocked confluent trade.');
+      return;
+    }
+
+    // Block if already in a position
+    if (tracker.activePositionQty !== 0) {
+      logInfo('[EXECUTOR] Active position exists. Skipping new signal.');
+      return;
+    }
+
+    try {
+      // Step 1: Margin → lot sizing (2% of daily capital as net target)
+      const marginData = await brokerAdapter.getFundsAndMargin(true);
+      const availableMargin: number = marginData.available_margin || 0;
+      if (availableMargin <= 0) {
+        logError('[EXECUTOR] Invalid margin data. Aborting trade.');
+        return;
+      }
+
+      // Step 2: Fetch ATM option instrument token
+      const spotPrice = tracker.liveSpotPrice;
+      if (spotPrice === 0) {
+        logError('[EXECUTOR] Spot price is 0. Aborting trade.');
+        return;
+      }
+      const atmStrike = Math.round(spotPrice / 50) * 50;
+      const { instrumentKey: instrumentToken, lotSize } = await brokerAdapter.getAtmOptionToken(
+        atmStrike, direction
+      );
+
+      // Step 3: Size position (use 2% of margin per trade, max 36 lots)
+      const maxMarginPerLot = 15000;
+      let lots = Math.floor((availableMargin * 0.02 * 50) / maxMarginPerLot);
+      if (lots < 1) lots = 1;
+      if (lots > 36) lots = 36;
+      const quantity = lots * NIFTY_LOT_SIZE_2026;
+
+      // Step 4: Build HFT V3 payload
+      const hftPayload = {
+        quantity,
+        product: 'I',
+        validity: 'DAY',
+        price: 0,
+        trigger_price: 0,
+        instrument_token: instrumentToken,
+        order_type: 'MARKET',
+        transaction_type: 'BUY',
+        market_protection: 2, // Reject if slippage > 2%
+        slice: true,
+        tag: `CONF-${Date.now()}`.substring(0, 20),
+      };
+
+      const headers = {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      };
+
+      // Step 5: Place order with 3-second stale-signal timeout
+      const spotAtSignal = spotPrice; // snapshot before network round-trip
+      let orderId: string | null = null;
+
+      try {
+        const placeRes = await this.placeWithTimeout(
+          `${HFT_URL}/v3/order/place`,
+          { method: 'POST', headers, body: JSON.stringify(hftPayload) },
+          accessToken,
+          3000
+        );
+
+        if (!placeRes || !placeRes.ok) {
+          const errBody = placeRes ? await placeRes.text() : 'timeout';
+          logError(`[EXECUTOR] HFT order placement failed: ${errBody.substring(0, 200)}`);
+          return;
+        }
+
+        const placeData = await placeRes.json() as any;
+        orderId = placeData?.data?.order_id;
+        if (!orderId) {
+          logError('[EXECUTOR] No order_id in HFT response. Aborting.');
+          return;
+        }
+        logInfo(`[EXECUTOR] HFT order placed. Order ID: ${orderId}`);
+      } catch (timeoutErr: any) {
+        logWarn(`[EXECUTOR] ${timeoutErr.message} — signal stale, trade skipped.`);
+        return;
+      }
+
+      // Step 6: Poll for fill
+      ApiTracker.recordCall();
+      const result = await pollOrderStatus(orderId, accessToken, `CONF-${orderId}`);
+      if (result.status !== 'FILLED' || !result.executionPrice) {
+        logError(`[EXECUTOR] Order not filled. Status: ${result.status}`);
+        return;
+      }
+
+      const fillPrice = result.executionPrice;
+      logTrade(`[✅ FILLED] ${direction} @ ₹${fillPrice} | ${lots} lots`);
+
+      // Step 7: Slippage delta tracking (Enhancement 2)
+      const slippageDelta = Math.abs(fillPrice - spotAtSignal);
+      logInfo(`[SLIPPAGE] Spot@signal: ₹${spotAtSignal} | Fill: ₹${fillPrice} | Delta: ${slippageDelta.toFixed(2)}pts`);
+      asyncLog({
+        type: 'slippage_event',
+        direction,
+        spotAtSignal,
+        fillPrice,
+        slippageDelta,
+        lots,
+        orderId,
+      });
+
+      // Step 8: Register active position in tracker
+      tracker.setActivePosition(instrumentToken, quantity, fillPrice);
+      if (activeWsClient) activeWsClient.subscribe(instrumentToken);
+
+      // Step 9: Log fill event asynchronously
+      asyncLog({
+        type: 'trade_fill',
+        signal: signal.signal,
+        direction,
+        orderId,
+        fillPrice,
+        lots,
+        quantity,
+        instrumentToken,
+        vwap: signal.vwap,
+        rsi: signal.rsi,
+        ema9: signal.ema9,
+        ema21: signal.ema21,
+      });
+
+      // Step 10: Anchor server-side GTT OCO bracket immediately
+      await this.anchorGttOcoBracket(
+        orderId, instrumentToken, fillPrice, lots, quantity, accessToken
+      );
+
+    } catch (err: any) {
+      logError(`[EXECUTOR] Confluent trade pipeline failed: ${err.message}`);
+    }
+  }
+
+  /**
+   * Place an order with a hard stale-signal timeout.
+   *
+   * If the Upstox API doesn't respond within timeoutMs, the Promise races
+   * to a rejection. The caller must catch STALE_SIGNAL_TIMEOUT and abort.
+   * This prevents getting filled at the top of a fading momentum spike.
+   */
+  private async placeWithTimeout(
+    url: string,
+    options: RequestInit,
+    _accessToken: string,
+    timeoutMs: number
+  ): Promise<Response> {
+    const orderPromise = fetch(url, options);
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(
+        `STALE_SIGNAL_TIMEOUT: No response from HFT endpoint within ${timeoutMs}ms`
+      )), timeoutMs)
+    );
+    return Promise.race([orderPromise, timeoutPromise]);
+  }
+
+  /**
+   * Immediately after a fill confirmation, anchor a server-side GTT OCO bracket.
+   *
+   * Target  = Fill + dynamicGrossPoints (2% net account return after STT + friction)
+   * StopLoss = Fill − 1.5 points (max 1% account drawdown per trade)
+   *
+   * The GTT ID is stored in tracker for cancellation during the 15:15 teardown.
+   */
+  private async anchorGttOcoBracket(
+    _orderId: string,
+    instrumentToken: string,
+    fillPrice: number,
+    lots: number,
+    quantity: number,
+    accessToken: string
+  ): Promise<void> {
+    try {
+      const state = tracker.getState();
+      // Net 2% of starting daily capital is the per-trade profit target
+      const netProfitTarget = state.startingCapital * 0.02;
+
+      // Dynamic gross points — scales with lot count and fill price IV
+      const grossPoints = calculateGrossTargetPoints(
+        fillPrice, lots, netProfitTarget, NIFTY_LOT_SIZE_2026
+      );
+
+      const targetPrice = parseFloat((fillPrice + grossPoints).toFixed(2));
+      const stopLossPrice = parseFloat((fillPrice - 1.5).toFixed(2));
+
+      logInfo(
+        `[GTT-OCO] Anchoring bracket | Fill: ₹${fillPrice} | ` +
+        `Target: ₹${targetPrice} (+${grossPoints.toFixed(2)}pts) | SL: ₹${stopLossPrice}`
+      );
+
+      const gttPayload = {
+        instrument_token: instrumentToken,
+        quantity,
+        transaction_type: 'SELL',
+        product: 'I',
+        rules: [
+          {
+            strategy: 'TARGET',
+            trigger_type: 'IMMEDIATE',
+            trigger_price: targetPrice,
+            price: targetPrice,
+          },
+          {
+            strategy: 'STOPLOSS',
+            trigger_type: 'IMMEDIATE',
+            trigger_price: stopLossPrice,
+            price: stopLossPrice,
+          },
+        ],
+      };
+
+      ApiTracker.recordCall();
+      const gttRes = await fetch(`${API_URL}/v3/order/gtt/place`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify(gttPayload),
+      });
+
+      const gttBody = await gttRes.json() as any;
+
+      if (gttRes.ok && gttBody?.status === 'success') {
+        const gttId = gttBody?.data?.id ?? gttBody?.data?.gtt_id ?? 'UNKNOWN';
+        tracker.setActiveGtt(String(gttId));
+        logTrade(`[🔒 GTT OCO LIVE] ID: ${gttId} | Target: ₹${targetPrice} | SL: ₹${stopLossPrice}`);
+
+        asyncLog({
+          type: 'gtt_placed',
+          gttId,
+          instrumentToken,
+          fillPrice,
+          targetPrice,
+          stopLossPrice,
+          grossPoints,
+          lots,
+          netProfitTarget,
+        });
+      } else {
+        logError(`[GTT-OCO] Placement failed: ${JSON.stringify(gttBody).substring(0, 200)}`);
+        logWarn('[GTT-OCO] Falling back to client-side monitoring (no server bracket active).');
+      }
+    } catch (err: any) {
+      logError(`[GTT-OCO] Critical failure anchoring bracket: ${err.message}`);
+      logWarn('[GTT-OCO] Position is UNPROTECTED. Manual intervention required.');
     }
   }
 }

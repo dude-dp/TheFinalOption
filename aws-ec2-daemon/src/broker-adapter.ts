@@ -84,13 +84,14 @@ class BrokerAdapter {
    * Calculates the target Tuesday expiry and handles same-day rollover.
    */
   /**
-   * Option Chain Resolver: Dynamically fetches nearest expiry and finds the exact ATM Token
+   * Option Chain Resolver: Dynamically fetches nearest expiry, lot size, and the exact ATM Token.
+   * Returns both the instrument key AND the live lot size from the exchange.
    */
-  public async getAtmOptionToken(strikePrice: number, optionType: 'CE' | 'PE'): Promise<string> {
+  public async getAtmOptionToken(strikePrice: number, optionType: 'CE' | 'PE'): Promise<{ instrumentKey: string; lotSize: number }> {
     if (!this.apiToken) throw new Error('No Upstox token available for Option Chain fetch.');
     
     try {
-      // 1. Fetch available contracts to get expiry dates
+      // 1. Fetch available contracts to get expiry dates AND lot sizes
       const contractRes = await fetch('https://api.upstox.com/v2/option/contract?instrument_key=NSE_INDEX%7CNifty%2050', {
          headers: { 'Authorization': `Bearer ${this.apiToken}`, 'Accept': 'application/json' }
       });
@@ -101,10 +102,15 @@ class BrokerAdapter {
          throw new Error(`Failed to fetch option contracts: ${contractText.substring(0, 200)}`);
       }
       
-      // The option contracts API returns a list of contracts. We need to find the unique expiry dates, sort them, and pick the nearest one.
-      const expiries = Array.from(new Set(contractData.data.map((c: any) => c.expiry))).sort();
-      if (expiries.length === 0) throw new Error("No expiries found in option contracts");
+      // Find the nearest expiry and extract lot size from the contracts data
+      const expiries = Array.from(new Set(contractData.data.map((c: any) => c.expiry))).sort() as string[];
+      if (expiries.length === 0) throw new Error('No expiries found in option contracts');
       const currentExpiry = expiries[0];
+
+      // Get lot size from the nearest-expiry contracts (consistent across strikes for same series)
+      const nearestContracts = contractData.data.filter((c: any) => c.expiry === currentExpiry);
+      const lotSize: number = nearestContracts[0]?.lot_size || 65; // fallback to 65 (current NSE standard)
+      logInfo(`[BROKER] Using expiry ${currentExpiry}, lot size: ${lotSize}`);
       
       // 2. Fetch the full option chain for that specific expiry
       const chainRes = await fetch(`https://api.upstox.com/v2/option/chain?instrument_key=NSE_INDEX%7CNifty%2050&expiry_date=${currentExpiry}`, {
@@ -122,14 +128,15 @@ class BrokerAdapter {
          throw new Error(`Failed to fetch option chain: ${JSON.stringify(chainData)}`);
       }
       
-      // 2. Extract the exact instrument key for our ATM strike
+      // 3. Extract the exact instrument key for our ATM strike
       const contract = chainData.data.find((c: any) => Number(c.strike_price) === Number(strikePrice));
       if (contract) {
-         return optionType === 'CE' ? contract.call_options.instrument_key : contract.put_options.instrument_key;
+         const instrumentKey = optionType === 'CE' ? contract.call_options.instrument_key : contract.put_options.instrument_key;
+         return { instrumentKey, lotSize };
       }
       
       const availableStrikes = chainData.data.map((c: any) => c.strike_price).slice(0, 10);
-      throw new Error(`Strike ${strikePrice} not found in option chain for expiry current_week. First 10 available: ${availableStrikes.join(', ')}`);
+      throw new Error(`Strike ${strikePrice} not found in option chain for expiry ${currentExpiry}. First 10 available: ${availableStrikes.join(', ')}`);
     } catch (error) {
       logError(`[BROKER] Option Chain Resolution Error: ${error}`);
       throw error;

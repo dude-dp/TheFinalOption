@@ -5,6 +5,79 @@
 
 import type { OptionType } from './types';
 
+// ============================================
+// Delta-Bounded Option Chain Selection
+// ============================================
+
+/**
+ * Represents a single contract row from the Upstox option chain API.
+ * The `delta` value comes from the Greeks object in the chain payload.
+ */
+export interface OptionChainEntry {
+  strikePrice: number;
+  instrumentKey: string;
+  tradingSymbol: string;
+  optionType: 'CE' | 'PE';
+  /** Absolute value — CE deltas are positive, PE deltas come in negative from API */
+  delta: number;
+  bidPrice: number;
+  askPrice: number;
+  ltp: number;
+}
+
+/**
+ * From a live option chain payload, return the single contract whose
+ * absolute delta is closest to 0.50 within the [deltaMin, deltaMax] band.
+ *
+ * Filters by direction (CE or PE), delta bounds, and bid-ask spread quality.
+ * Returns null if no liquid ATM contract is found.
+ *
+ * @param chain    - Array of option chain entries from Upstox API
+ * @param direction - 'CE' for bullish, 'PE' for bearish
+ * @param deltaMin  - Minimum acceptable delta (default 0.40)
+ * @param deltaMax  - Maximum acceptable delta (default 0.60)
+ */
+export function filterByDeltaRange(
+  chain: OptionChainEntry[],
+  direction: 'CE' | 'PE',
+  deltaMin: number = 0.40,
+  deltaMax: number = 0.60
+): OptionChainEntry | null {
+  const candidates = chain
+    .filter(c => c.optionType === direction)
+    .filter(c => {
+      const absDelta = Math.abs(c.delta);
+      return absDelta >= deltaMin && absDelta <= deltaMax;
+    })
+    .filter(c => validateLiquidity(c));
+
+  if (candidates.length === 0) return null;
+
+  // Sort by proximity to 0.50 delta (purest ATM) and return best candidate
+  candidates.sort(
+    (a, b) => Math.abs(Math.abs(a.delta) - 0.50) - Math.abs(Math.abs(b.delta) - 0.50)
+  );
+  return candidates[0];
+}
+
+/**
+ * Validate that a contract is sufficiently liquid for scalping.
+ * Rejects contracts where the bid-ask spread exceeds maxSpread points.
+ *
+ * A spread > 0.50 points on an option implies wide market-maker margins
+ * and will immediately eat into the already-tight scalping edge.
+ *
+ * @param contract  - The option chain entry to validate
+ * @param maxSpread - Maximum allowable bid-ask spread in points (default 0.50)
+ */
+export function validateLiquidity(
+  contract: OptionChainEntry,
+  maxSpread: number = 0.50
+): boolean {
+  if (contract.bidPrice <= 0 || contract.askPrice <= 0) return false;
+  return (contract.askPrice - contract.bidPrice) <= maxSpread;
+}
+
 /**
  * Calculate the At-The-Money (ATM) strike price by rounding
  * the spot price to the nearest strike interval (default 50).
