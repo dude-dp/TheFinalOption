@@ -17,6 +17,6 @@ coverage/
 .logs/
 .trade_orders_history.json
 
-# Local Daemon Archival Data
-local-daemon/data/
+# AWS EC2 Daemon Archival Data
+aws-ec2-daemon/data/
 *.csv
