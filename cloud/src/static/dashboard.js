@@ -6,28 +6,127 @@
 (function () {
   'use strict';
 
-  // Function to handle terminal logs in the new UI format (ToolStaq IDE aesthetic)
+  // --- ADVANCED LOGGING SYSTEM ---
+  class SystemLogger {
+      constructor() {
+          this.container = document.getElementById('system-logs');
+          this.currentFilter = 'all';
+          this.setupTabs();
+          this.log('Terminal session initialized.', 'system', 'cloud');
+      }
+
+      setupTabs() {
+          const tabs = document.querySelectorAll('.log-tab');
+          tabs.forEach(tab => {
+              tab.addEventListener('click', (e) => {
+                  // UI Update
+                  tabs.forEach(t => t.classList.remove('active'));
+                  e.target.classList.add('active');
+                  
+                  // Filter Logic
+                  this.currentFilter = e.target.getAttribute('data-filter');
+                  this.applyFilter();
+              });
+          });
+      }
+
+      applyFilter() {
+          if (!this.container) return;
+          const lines = this.container.querySelectorAll('.log-line');
+          lines.forEach(line => {
+              if (this.currentFilter === 'all') {
+                  line.style.display = 'flex';
+              } else {
+                  const type = line.getAttribute('data-type');
+                  const source = line.getAttribute('data-source');
+                  
+                  if (
+                      (this.currentFilter === 'trade' && type === 'trade') ||
+                      (this.currentFilter === 'error' && type === 'error') ||
+                      (this.currentFilter === 'ec2' && source === 'ec2')
+                  ) {
+                      line.style.display = 'flex';
+                  } else {
+                      line.style.display = 'none';
+                  }
+              }
+          });
+      }
+
+      /**
+       * @param {string} message 
+       * @param {string} type - 'info' | 'error' | 'trade' | 'system'
+       * @param {string} source - 'cloud' | 'ec2' | 'broker'
+       */
+      log(message, type = 'info', source = 'cloud') {
+          if (!this.container) return;
+
+          // Map legacy types to new types
+          if (type === 'success') type = 'trade';
+          if (type === 'warning') type = 'info';
+
+          const colors = {
+              info: 'var(--text-primary)',
+              trade: 'var(--accent-success)',
+              error: 'var(--accent-danger)',
+              system: 'var(--text-secondary)'
+          };
+
+          const tagColors = {
+              cloud: 'rgba(255,255,255,0.1)',
+              ec2: 'rgba(139, 92, 246, 0.2)', // Purple for daemon
+              broker: 'rgba(59, 130, 246, 0.2)'
+          };
+
+          const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false, hour: "numeric", minute: "numeric", second: "numeric", fractionalSecondDigits: 3 });
+          
+          const logHTML = `
+              <div class="log-line" data-type="${type}" data-source="${source}">
+                  <span class="log-time">[${timestamp}]</span>
+                  <span class="log-tag mono" style="background: ${tagColors[source] || tagColors.cloud}; color: ${source === 'ec2' ? 'var(--accent-system)' : 'inherit'}">${(source || 'cloud').toUpperCase()}</span>
+                  <span class="log-msg" style="color: ${colors[type] || colors.info}">${message}</span>
+              </div>
+          `;
+
+          this.container.insertAdjacentHTML('afterbegin', logHTML);
+          this.applyFilter(); // Re-apply filter so incoming logs respect current tab
+      }
+  }
+
+  const terminal = new SystemLogger();
+
   window.addLog = function(message, type = 'info') {
-      const logsContainer = document.getElementById('system-logs');
-      if (!logsContainer) return;
+      terminal.log(message, type, 'cloud');
+  };
 
-      const colors = {
-          info: 'var(--text-primary)',
-          success: 'var(--accent-success)',
-          error: 'var(--accent-danger)',
-          warning: 'var(--accent-info)'
-      };
-
-      const timestamp = new Date().toLocaleTimeString();
+  window.updateBotIntelligence = function(payload) {
+      if (!payload) return;
       
-      const logHTML = `
-          <div class="log-line">
-              <span class="log-time">[${timestamp}]</span>
-              <span class="log-msg" style="color: ${colors[type] || colors.info}">${message}</span>
-          </div>
-      `;
+      if (payload.regime) {
+          const regimeEl = document.getElementById('intel-regime');
+          if (regimeEl) {
+              regimeEl.innerText = payload.regime;
+              regimeEl.style.color = payload.regime.includes('Bullish') ? 'var(--accent-success)' : 
+                                     payload.regime.includes('Bearish') ? 'var(--accent-danger)' : 'var(--accent-warning)';
+          }
+      }
 
-      logsContainer.insertAdjacentHTML('afterbegin', logHTML);
+      if (payload.confluenceScore !== undefined) {
+          const txt = document.getElementById('intel-score-txt');
+          if (txt) txt.innerText = `${payload.confluenceScore}%`;
+          
+          const fill = document.getElementById('intel-score-fill');
+          if (fill) {
+              fill.style.width = `${payload.confluenceScore}%`;
+              fill.style.background = payload.confluenceScore > 75 ? 'var(--accent-success)' : 
+                                      payload.confluenceScore > 40 ? 'var(--accent-warning)' : 'var(--accent-danger)';
+          }
+      }
+
+      if (payload.activeTask) {
+          const taskEl = document.getElementById('intel-task');
+          if (taskEl) taskEl.innerText = payload.activeTask;
+      }
   };
 
   const POLL_INTERVAL = 3000;

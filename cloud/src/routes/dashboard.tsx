@@ -107,99 +107,92 @@ dashboard.get('/', (c) => {
     <!-- Main Content -->
     <!-- Bento Grid Content -->
     <main class="bento-grid">
-      
-      <!-- Chart -->
       <section class="bento-item chart-section">
         <div class="chart-header-overlay">
           <h2 class="bento-title">Market Data</h2>
-          
           <div class="chart-actions">
-            <button id="manual-ce-btn" class="btn btn-buy-ce">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 17l6 -6l4 4l8 -8" />
-                <path d="M14 7l7 0l0 7" />
-              </svg>
-              Buy CE
-            </button>
-            
-            <button id="manual-pe-btn" class="btn btn-buy-pe">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 7l6 6l4 -4l8 8" />
-                <path d="M21 10l0 7l-7 0" />
-              </svg>
-              Buy PE
-            </button>
+            <button id="manual-ce-btn" class="btn btn-buy-ce">Buy CE</button>
+            <button id="manual-pe-btn" class="btn btn-buy-pe">Buy PE</button>
           </div>
         </div>
-        <div id="tv-chart-container" style="width: 100%; flex: 1; min-height: 400px;"></div>
+        <div id="tv-chart-container" style="width: 100%; height: 100%;"></div>
       </section>
 
       <!-- Position Metrics -->
       <section class="bento-item position-section">
         <div class="bento-header">
           <h2 class="bento-title">Active Position</h2>
-          <span id="position-mode-badge" class="mono" style="font-size: 12px; color: var(--text-secondary); border: 1px solid var(--border-color); padding: 2px 6px; border-radius: 4px;">LIVE</span>
+          <span class="badge live">Synced</span>
         </div>
-        
         <div style="display: flex; flex-direction: column; gap: 16px;">
-          <!-- Primary Metric -->
           <div class="metric-card" style="background: var(--accent-success-bg); border-color: rgba(16, 185, 129, 0.2);">
             <span class="metric-label text-green">Total PnL</span>
             <span id="pos-pnl" class="metric-value text-green">₹0.00</span>
           </div>
-          
-          <!-- Secondary Metrics -->
           <div style="display: flex; gap: 12px;">
               <div class="metric-card" style="flex: 1;">
                 <span class="metric-label">Quantity</span>
-                <span id="pos-qty" class="metric-value" style="font-size: 1.25rem;">0</span>
+                <span id="pos-qty" class="metric-value">0</span>
               </div>
               <div class="metric-card" style="flex: 1;">
                 <span class="metric-label">Avg Price</span>
-                <span id="pos-avg" class="metric-value" style="font-size: 1.25rem;">₹0.00</span>
+                <span id="pos-avg" class="metric-value">₹0.00</span>
               </div>
           </div>
         </div>
       </section>
 
-      <!-- Quant Analytics -->
-      <section class="bento-item analytics-section">
+      <!-- Advanced Bot Intelligence Engine -->
+      <section class="bento-item bot-intel-section">
         <div class="bento-header" style="margin-bottom: 16px;">
-          <h2 class="bento-title">Quant Analytics</h2>
-          <span class="mono" style="font-size: 12px; color: var(--accent-info); border: 1px solid rgba(59, 130, 246, 0.3); padding: 2px 6px; border-radius: 4px; background: rgba(59, 130, 246, 0.1);">1m</span>
+          <h2 class="bento-title">Bot Intelligence</h2>
+          <span class="badge ec2">EC2 Engine</span>
         </div>
         
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; flex-grow: 1; align-content: space-between;">
-          <div class="metric-card" style="padding: 12px;">
-            <span class="metric-label">PCR</span>
-            <span id="metric-pcr" class="metric-value" style="font-size: 1.25rem;">--</span>
+        <div style="display: flex; flex-direction: column; gap: 12px; flex-grow: 1;">
+          <!-- State Engine output -->
+          <div class="metric-card">
+            <span class="metric-label">Market Regime</span>
+            <span id="intel-regime" class="metric-value" style="font-size: 1.1rem; color: var(--accent-info);">Analyzing Variance...</span>
           </div>
-          <div class="metric-card" style="padding: 12px;">
-            <span class="metric-label">MACD Hist</span>
-            <span id="metric-macd" class="metric-value text-green" style="font-size: 1.25rem;">--</span>
+          
+          <!-- Confluence Meter -->
+          <div class="metric-card">
+            <div class="metric-label">
+              <span>Signal Confluence</span>
+              <span id="intel-score-txt" class="mono">0%</span>
+            </div>
+            <div class="progress-bar">
+               <div id="intel-score-fill" class="progress-fill" style="width: 0%; background: var(--text-secondary);"></div>
+            </div>
+            <div style="display: flex; gap: 8px; margin-top: 4px;">
+               <span class="badge" id="badge-macd">MACD</span>
+               <span class="badge" id="badge-vwap">VWAP</span>
+               <span class="badge" id="badge-pcr">PCR</span>
+            </div>
           </div>
-          <div class="metric-card" style="padding: 12px;">
-            <span class="metric-label">ATR (Vol)</span>
-            <span id="metric-atr" class="metric-value" style="font-size: 1.25rem;">--</span>
-          </div>
-          <div class="metric-card" style="padding: 12px;">
-            <span class="metric-label">ADX (Trend)</span>
-            <span id="metric-adx" class="metric-value" style="font-size: 1.25rem;">--</span>
+
+          <!-- Execution Queue / Iceberg -->
+          <div class="metric-card" style="background: rgba(255,255,255,0.01);">
+            <span class="metric-label">Active Task</span>
+            <span id="intel-task" class="mono" style="font-size: 0.85rem; color: var(--text-secondary);">Idle. Waiting for setup.</span>
           </div>
         </div>
       </section>
 
-      <!-- Terminal Logs -->
+      <!-- Differentiated Terminal Logs -->
       <section class="bento-item logs-section">
-        <div class="bento-header">
+        <div class="bento-header" style="margin-bottom: 12px;">
           <h2 class="bento-title">System Execution Logs</h2>
+          <div class="log-tabs">
+            <button class="log-tab active" data-filter="all">All</button>
+            <button class="log-tab" data-filter="trade">Trades</button>
+            <button class="log-tab" data-filter="ec2">EC2 Daemon</button>
+            <button class="log-tab" data-filter="error">Errors</button>
+          </div>
         </div>
         <div id="system-logs" class="terminal">
-          <!-- Initial Boot Log -->
-          <div class="log-line">
-            <span class="log-time">[BOOT]</span>
-            <span class="log-msg" style="color: var(--text-secondary);">Terminal session initialized...</span>
-          </div>
+          <!-- Logs injected by JS -->
         </div>
       </section>
 
@@ -212,64 +205,16 @@ dashboard.get('/', (c) => {
           <table class="data-table">
             <thead>
               <tr>
-                <th>Time</th>
                 <th>Ticker</th>
                 <th>Type</th>
                 <th>Qty</th>
-                <th>Price</th>
                 <th>Status</th>
-                <th>PnL</th>
               </tr>
             </thead>
             <tbody id="ledger-body">
-              <tr>
-                 <td colspan="7" style="text-align: center; color: var(--text-secondary);">Waiting for orders...</td>
-              </tr>
+              <tr><td colspan="4" style="text-align: center; color: var(--text-secondary);">Waiting for orders...</td></tr>
             </tbody>
           </table>
-        </div>
-      </section>
-
-      <!-- System Drawdown -->
-      <section class="bento-item drawdown-section">
-        <div class="bento-header">
-          <h2 class="bento-title">System Drawdown (Peak-to-Trough)</h2>
-          <span class="mono" style="font-size: 12px; color: var(--accent-danger); border: 1px solid var(--accent-danger-bg); padding: 2px 6px; border-radius: 4px;">Psychology Anchor</span>
-        </div>
-        <div style="position: relative; flex: 1; min-height: 300px; width: 100%;">
-          <canvas id="drawdownChart"></canvas>
-        </div>
-      </section>
-
-      <!-- Monte Carlo Risk Simulator -->
-      <section class="bento-item monte-carlo-section">
-        <div class="bento-header">
-          <h2 class="bento-title">Monte Carlo Risk Simulator (30 Trades)</h2>
-          <span id="mc-expectancy-label" class="mono" style="font-size: 12px; color: var(--accent-blue); border: 1px solid var(--border-color); padding: 2px 6px; border-radius: 4px;">Calculating...</span>
-        </div>
-        <div style="position: relative; flex: 1; min-height: 300px; width: 100%;">
-          <canvas id="monteCarloChart"></canvas>
-        </div>
-      </section>
-
-      <!-- Time of Day Analytics -->
-      <section class="bento-item time-of-day-section">
-        <div class="bento-header">
-          <h2 class="bento-title">Time of Day</h2>
-        </div>
-        <div style="position: relative; flex: 1; min-height: 300px; width: 100%;">
-          <canvas id="timeOfDayChart"></canvas>
-        </div>
-      </section>
-
-      <!-- Execution Slippage Heatmap -->
-      <section class="bento-item slippage-section">
-        <div class="bento-header">
-          <h2 class="bento-title">Execution Slippage Heatmap</h2>
-          <div id="slippage-gauge" class="mono" style="font-size: 12px; color: var(--text-secondary); border: 1px solid var(--border-color); padding: 2px 6px; border-radius: 4px;">Loading...</div>
-        </div>
-        <div style="position: relative; flex: 1; min-height: 250px; width: 100%;">
-          <canvas id="slippageChart"></canvas>
         </div>
       </section>
 
