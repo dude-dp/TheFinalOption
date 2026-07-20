@@ -123,7 +123,26 @@ export class CandleAggregator {
   }
 
   /**
-   * 🚀 Returns the real-time order flow imbalance of the active, unfinished candle.
+   * 🔥 Injects real traded volume from the NIFTY Futures feed.
+   *
+   * The index feed has no traded volume (it's a derived index).
+   * The futures WS feed provides LTQ (Last Traded Quantity in lots) which
+   * is the canonical source of real institutional volume for NIFTY.
+   *
+   * This is called by ws-client whenever the futures LTQ changes.
+   * It accumulates the delta (new lots since the last tick) into the
+   * current live candle's volume, replacing the fallback tick-count method.
+   *
+   * @param lots - The number of new lots traded since the last futures tick
+   */
+  public injectFuturesVolume(lots: number): void {
+    if (!this.currentCandle || lots <= 0) return;
+    // Replace tick-count increment with real lot-volume accumulation
+    this.currentCandle.volume += lots;
+  }
+
+  /**
+
    * Positive = Aggressive Buying. Negative = Aggressive Selling.
    */
   public getLiveDelta(): number {

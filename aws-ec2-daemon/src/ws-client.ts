@@ -15,6 +15,8 @@ import { getLatestMACDValues } from './lib/macd.js';
 import { executeEmergencyMarketExit } from './executor.js';
 import { StateEngine } from './state-engine.js';
 import { logInfo, logError } from './logger.js';
+import { resolveNiftyFuturesKey } from './instrument-resolver.js';
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -42,15 +44,24 @@ export class UpstoxWSClient {
   private aggregator = new CandleAggregator();
   private archiver = new TickArchiver();
   private token: string;
-  private instrumentKey = 'NSE_INDEX|Nifty 50'; 
+  // NSE_INDEX|Nifty 50 — used for accurate LTP / spot price
+  private instrumentKey = 'NSE_INDEX|Nifty 50';
+  // NSE_FO futures — resolved dynamically on boot for real volume + depth
+  private futuresKey: string | null = null;
 
   private latestDepth: MarketDepth = { bids: [], asks: [] };
+  // Live futures order book — injected into index ticks for real depth-based delta
+  private latestFuturesDepth: MarketDepth = { bids: [], asks: [] };
+  // Cumulative traded lots from futures feed — delta gives us per-tick volume
+  private lastFuturesCumVolume: number = 0;
   private lastLogTime: number = 0;
   private msgCount: number = 0;
+
 
   constructor(token: string) {
     this.token = token;
   }
+
 
   public updateToken(newToken: string) {
     this.token = newToken;
@@ -69,6 +80,9 @@ export class UpstoxWSClient {
   }
 
   public async connect(onSignal: (signalData: any) => void) {
+    // Resolve the live NIFTY front-month futures key BEFORE connecting
+    this.futuresKey = await resolveNiftyFuturesKey();
+
     const authRes = await fetch('https://api.upstox.com/v3/feed/market-data-feed/authorize', {
       headers: { 'Authorization': `Bearer ${this.token}`, 'Accept': 'application/json' }
     });
@@ -97,14 +111,19 @@ export class UpstoxWSClient {
 
     this.ws.on('open', () => {
       console.log('🟢 Upstox Native WebSocket Connected');
+      // Subscribe BOTH instruments in one payload — index for LTP, futures for volume
+      const keysToSubscribe = [this.instrumentKey];
+      if (this.futuresKey) keysToSubscribe.push(this.futuresKey);
+
       const subPayload = {
-        guid: "nifty_tracker",
+        guid: "nifty_dual_tracker",
         method: "sub",
-        data: { mode: "full", instrumentKeys: [this.instrumentKey] }
+        data: { mode: "full", instrumentKeys: keysToSubscribe }
       };
-      // Send as Binary Frame (Buffer) as required by Upstox V3 API
+      logInfo(`[WS-CLIENT] Subscribing to: ${keysToSubscribe.join(' + ')}`);
       this.ws?.send(Buffer.from(JSON.stringify(subPayload)));
     });
+
 
     this.ws.on('message', (data: WebSocket.RawData) => {
       try {
@@ -183,24 +202,30 @@ export class UpstoxWSClient {
             const ltt = ff?.indexFF?.ltpc?.ltt || ff?.marketFF?.ltpc?.ltt;
             const tickTime = ltt ? Number(ltt) : (msg.currentTs ? Number(msg.currentTs) : Date.now());
 
-            const tick: TickData = {
+            // ── Inject futures depth into the tick so the aggregator can classify
+            // aggressive buys/sells against a real order book, not an empty index book.
+            const enrichedTick: TickData = {
               instrumentToken: this.instrumentKey,
               ltp: ltp,
               timestamp: tickTime,
-              depth: depth
+              depth: this.latestFuturesDepth.bids.length > 0
+                ? this.latestFuturesDepth
+                : depth  // fallback to index depth (usually empty) until futures feed arrives
             };
 
-            this.latestDepth = depth;
-            tracker.setSpotPrice(tick.ltp); 
+            this.latestDepth = enrichedTick.depth;
+            tracker.setSpotPrice(enrichedTick.ltp);
 
-            varianceEngine.evaluateVelocity(tick.timestamp);
-            this.archiver.recordTick(tick);
 
-            const closedCandles = this.aggregator.processTick(tick);
+            varianceEngine.evaluateVelocity(enrichedTick.timestamp);
+            this.archiver.recordTick(enrichedTick);
+
+            const closedCandles = this.aggregator.processTick(enrichedTick);
+
             const liveDelta = this.aggregator.getLiveDelta();
             const liveVolume = this.aggregator.getLiveVolume();
 
-            executor.monitorLiveOrderFlow(liveDelta, liveVolume, tick.ltp);
+            executor.monitorLiveOrderFlow(liveDelta, liveVolume, enrichedTick.ltp);
 
             const liveCandle = this.aggregator.getCurrentCandle();
             const currentClosedCandles = this.aggregator.getClosedCandles();
@@ -208,7 +233,8 @@ export class UpstoxWSClient {
             if (liveCandle) {
               // Calculate live MACD indicator for current minute candle
               const closes = currentClosedCandles.map(c => c.close);
-              closes.push(tick.ltp); // Append the live ltp
+              closes.push(enrichedTick.ltp); // Append the live ltp
+
               const macdResult = getLatestMACDValues(closes);
               const liveMacd = macdResult ? macdResult.current : 0;
 
@@ -217,10 +243,11 @@ export class UpstoxWSClient {
                 open: liveCandle.open,
                 high: liveCandle.high,
                 low: liveCandle.low,
-                ltp: tick.ltp,
+                ltp: enrichedTick.ltp,
                 macd_line: liveMacd
               });
             }
+
 
             if (closedCandles && closedCandles.length > 0) {
               const latestClosedCandle = closedCandles[closedCandles.length - 1];
@@ -245,8 +272,52 @@ export class UpstoxWSClient {
           } else if (this.msgCount <= 5) {
             logInfo(`[WS DEBUG #${this.msgCount}] ⚠️ Feed found for ${this.instrumentKey} but no LTP. Feed structure: ${JSON.stringify(feed).substring(0, 300)}`);
           }
-        } 
-        // 2. Process Active Option Trade Feed (Trailing Stops / Circuit Breakers)
+        }
+
+        // ── 2. NIFTY Futures Feed — Real Volume + Order Book ─────────────────────────
+        // This feed runs in parallel with the index feed.
+        // We DO NOT drive candle timestamps or LTP from here — that stays on the index.
+        // We ONLY extract:
+        //   a) The real bid/ask order book — stored in latestFuturesDepth
+        //   b) LTQ (Last Traded Quantity in lots) — used by aggregator for real volume
+        if (this.futuresKey && msg.feeds && msg.feeds[this.futuresKey]) {
+          const futFeed = msg.feeds[this.futuresKey];
+          const futFF = futFeed.fullFeed || futFeed.FullFeed || futFeed.ff || futFeed.FF;
+          const futMarket = futFF?.marketFF || futFF?.MarketFF;
+
+          if (futMarket) {
+            // Extract real order book depth
+            const rawQuotes = futMarket?.marketLevel?.bidAskQuote;
+            if (rawQuotes && Array.isArray(rawQuotes) && rawQuotes.length > 0) {
+              const newDepth: MarketDepth = { bids: [], asks: [] };
+              rawQuotes.forEach((q: any) => {
+                const bp = q.bidP || q.bp;
+                const bq = q.bidQ || q.bq;
+                const ap = q.askP || q.ap;
+                const aq = q.askQ || q.aq;
+                if (bp > 0) newDepth.bids.push({ price: bp, quantity: Number(bq) || 0, orders: 0 });
+                if (ap > 0) newDepth.asks.push({ price: ap, quantity: Number(aq) || 0, orders: 0 });
+              });
+              // Atomically update so the next index tick picks up the fresh book
+              this.latestFuturesDepth = newDepth;
+            }
+
+            // Extract cumulative traded volume (LTQ delta = lots traded in this tick)
+            const cumVolume = futMarket?.eFeedDetails?.LTQ ||
+                              futMarket?.efeedDetails?.ltq ||
+                              futMarket?.ltq || 0;
+            if (cumVolume > 0 && cumVolume !== this.lastFuturesCumVolume) {
+              const ltqDelta = cumVolume - this.lastFuturesCumVolume;
+              // Only inject if delta is positive (guards against end-of-day reset)
+              if (ltqDelta > 0) {
+                this.aggregator.injectFuturesVolume(ltqDelta);
+              }
+              this.lastFuturesCumVolume = cumVolume;
+            }
+          }
+        }
+
+        // ── 3. Active Option Position Feed (Trailing Stops / Circuit Breakers) ───
         else if (msg.feeds && tracker.activePositionToken && msg.feeds[tracker.activePositionToken]) {
           const feed = msg.feeds[tracker.activePositionToken];
           const ff = feed.fullFeed || feed.FullFeed || feed.ff || feed.FF;
