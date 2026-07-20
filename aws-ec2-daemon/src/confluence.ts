@@ -216,15 +216,16 @@ export function evaluateConfluence(
     volumeRatio: extras?.volumeRatio ?? 0,
   });
 
-  // ── Gate 1: Time Filter (09:30 IST hard lock) ──────────────────────────
-  const istOffset = 5.5 * 60 * 60 * 1000;
-  const ist = new Date(currentTime.getTime() + istOffset);
-  const istHour = ist.getUTCHours();
-  const istMin = ist.getUTCMinutes();
+  // ── Gate 1: Time Filter (09:50 IST hard lock) ──────────────────────────
+  // Market opens at 09:15. We wait 35 minutes for initial volatility
+  // to settle before allowing any setups.
+  const timeLimit = new Date(currentTime);
+  timeLimit.setUTCHours(4, 20, 0, 0); // 04:20 UTC = 09:50 IST
 
-  if (istHour < MARKET_START_HOUR_IST ||
-    (istHour === MARKET_START_HOUR_IST && istMin < MARKET_START_MIN_IST)) {
-    return NONE(`TIME_LOCK: Before 09:30 IST (${istHour}:${String(istMin).padStart(2, '0')})`);
+  if (currentTime.getTime() < timeLimit.getTime()) {
+    const istHour = currentTime.getUTCHours() + 5 + (currentTime.getUTCMinutes() + 30 >= 60 ? 1 : 0);
+    const istMin = (currentTime.getUTCMinutes() + 30) % 60;
+    return NONE(`TIME_LOCK: Before 09:50 IST (${istHour}:${String(istMin).padStart(2, '0')})`);
   }
 
   // ── Gate 2: Minimum data check ─────────────────────────────────────────
