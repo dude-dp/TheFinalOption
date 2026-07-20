@@ -10,6 +10,12 @@ import { ApiTracker, tracker } from './tracker.js';
 import type { ConfluenceSignal } from './confluence.js';
 import { asyncLog } from './async-logger.js';
 import { calculateGrossTargetPoints, NIFTY_LOT_SIZE_2026 } from '../../cloud/src/lib/lot-sizing.js';
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient(
+  process.env.SUPABASE_URL || '',
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || ''
+);
 
 import { liquidityScanner } from './liquidity.js';
 import type { MarketDepth } from './ws-client.js';
@@ -351,7 +357,19 @@ export async function executeOrderStealth(order: any, upstoxToken: string) {
 // --- 🟢 NEW: 100% Native Circuit Breaker Action ---
 
 export async function executeEmergencyMarketExit() {
-  logInfo('🚨 [EXECUTOR] Initiating Native Emergency Market Square-Off...');
+  logInfo('🚨 [EXECUTOR] Initiating Native Emergency Square-Off...');
+
+  if (tracker.tradingMode === 'PAPER') {
+    if (tracker.activePositionQty === 0) {
+      logInfo('✅ [EXECUTOR] [PAPER] No simulated position to square off.');
+      return;
+    }
+    logInfo(`[EXECUTOR] [PAPER] Squaring off simulated position: ${tracker.activePositionSymbol || tracker.activePositionToken}`);
+    const optionLtp = tracker.latestTick?.ltp || tracker.activePositionEntry || 100;
+    await executor.executePaperExit(optionLtp, 'EMERGENCY_EXIT');
+    return;
+  }
+
   if (!StateEngine.activeToken) {
     logError('❌ [EXECUTOR] Cannot exit market: No active token.');
     return;
@@ -383,8 +401,32 @@ export async function executeEmergencyMarketExit() {
     }
     logInfo('✅ [EXECUTOR] Native Emergency Square-Off Complete.');
   } catch (err: any) {
-    logError(`❌ [EXECUTOR] Critical failure during market exit: ${err.message}`);
+    logError(`[EXECUTOR] Critical failure during market exit: ${err.message}`);
   }
+}
+
+export function simulateSlippage(ltp: number, transactionType: 'BUY' | 'SELL'): number {
+  const slippage = 0.5 + Math.random() * 0.5; // random between 0.5 and 1.0 points
+  const executionPrice = transactionType === 'BUY' ? ltp + slippage : ltp - slippage;
+  return parseFloat(executionPrice.toFixed(2));
+}
+
+export async function fetchOptionLtp(instrumentToken: string, accessToken: string): Promise<number> {
+  try {
+    const res = await fetch(`https://api.upstox.com/v2/market-quote/ltp?instrument_key=${encodeURIComponent(instrumentToken)}`, {
+      headers: {
+        'Accept': 'application/json',
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+    if (res.ok) {
+      const json = await res.json() as any;
+      return json.data?.[instrumentToken]?.last_price || 0;
+    }
+  } catch (err) {
+    logError(`[EXECUTOR] Failed to fetch live LTP for paper trade: ${err}`);
+  }
+  return 0;
 }
 
 export class ExecutionEngine {
@@ -518,10 +560,47 @@ export class ExecutionEngine {
         orderPrice: limitPrice,
       };
 
+      if (tracker.tradingMode === 'PAPER') {
+        logInfo(`[PAPER TRADING] Simulating entry for ${orderPayload.tradingSymbol} | ${orderPayload.lots} lots (${orderPayload.quantity} qty)`);
+        const rawLtp = await fetchOptionLtp(instrumentToken, StateEngine.activeToken || '');
+        if (rawLtp === 0) {
+          logError(`[EXECUTOR] [PAPER] Failed to get live option LTP for simulated trade.`);
+          return;
+        }
+
+        const fillPrice = simulateSlippage(rawLtp, 'BUY');
+        logTrade(`[PAPER FILLED] ${direction} @ ₹${fillPrice} | ${orderPayload.lots} lots`);
+
+        tracker.setActivePosition(instrumentToken, orderPayload.quantity, fillPrice, orderPayload.tradingSymbol);
+        if (activeWsClient) activeWsClient.subscribe(instrumentToken);
+
+        // Insert into Supabase
+        const { error } = await supabase
+          .from('order_ledger')
+          .insert({
+            correlation_id: orderPayload.correlationId,
+            trading_symbol: orderPayload.tradingSymbol,
+            transaction_type: 'BUY',
+            option_type: direction,
+            strike_price: atmStrike,
+            quantity: orderPayload.quantity,
+            order_status: 'FILLED',
+            upstox_order_id: `PAPER-${Date.now()}`,
+            execution_price: fillPrice,
+            trading_mode: 'PAPER',
+            pnl: 0
+          });
+
+        if (error) {
+          logError(`[PAPER DB ERROR] Failed to log paper trade: ${error.message}`);
+        }
+        return;
+      }
+
       const res = await executeOrderStealth(orderPayload, StateEngine.activeToken);
 
       if (res.success || res.filledLots > 0) {
-        tracker.setActivePosition(instrumentToken, res.filledLots * lotSize, limitPrice);
+        tracker.setActivePosition(instrumentToken, res.filledLots * lotSize, limitPrice, orderPayload.tradingSymbol);
         if (activeWsClient) activeWsClient.subscribe(instrumentToken);
       }
     } catch (err: any) {
@@ -564,10 +643,47 @@ export class ExecutionEngine {
         orderPrice: 0,
       };
 
+      if (tracker.tradingMode === 'PAPER') {
+        logInfo(`[PAPER TRADING] Simulating MANUAL BUY entry for ${orderPayload.tradingSymbol} | ${lotsToBuy} lots (${quantity} qty)`);
+        const rawLtp = await fetchOptionLtp(instrumentToken, StateEngine.activeToken || '');
+        if (rawLtp === 0) {
+          logError(`[EXECUTOR] [PAPER] Failed to get live option LTP for manual entry.`);
+          return;
+        }
+
+        const fillPrice = simulateSlippage(rawLtp, 'BUY');
+        logTrade(`[PAPER FILLED] MANUAL ${direction} @ ₹${fillPrice} | ${lotsToBuy} lots`);
+
+        tracker.setActivePosition(instrumentToken, quantity, fillPrice, orderPayload.tradingSymbol);
+        if (activeWsClient) activeWsClient.subscribe(instrumentToken);
+
+        // Insert into Supabase
+        const { error } = await supabase
+          .from('order_ledger')
+          .insert({
+            correlation_id: orderPayload.correlationId,
+            trading_symbol: orderPayload.tradingSymbol,
+            transaction_type: 'BUY',
+            option_type: direction,
+            strike_price: atmStrike,
+            quantity: quantity,
+            order_status: 'FILLED',
+            upstox_order_id: `PAPER-${Date.now()}`,
+            execution_price: fillPrice,
+            trading_mode: 'PAPER',
+            pnl: 0
+          });
+
+        if (error) {
+          logError(`[PAPER DB ERROR] Failed to log manual paper trade: ${error.message}`);
+        }
+        return;
+      }
+
       const res = await executeOrderStealth(orderPayload, StateEngine.activeToken);
 
       if (res.success || res.filledLots > 0) {
-        tracker.setActivePosition(instrumentToken, res.filledLots * lotSize, spotPrice);
+        tracker.setActivePosition(instrumentToken, res.filledLots * lotSize, spotPrice, orderPayload.tradingSymbol);
         if (activeWsClient) activeWsClient.subscribe(instrumentToken);
       }
     } catch (err: any) {
@@ -636,6 +752,71 @@ export class ExecutionEngine {
       if (lots < 1) lots = 1;
       if (lots > 36) lots = 36;
       const quantity = lots * NIFTY_LOT_SIZE_2026;
+      const tradingSymbol = `NIFTY_${atmStrike}_${direction}`;
+
+      if (tracker.tradingMode === 'PAPER') {
+        logInfo(`[PAPER TRADING] Simulating BUY entry for ${tradingSymbol} | ${lots} lots (${quantity} qty)`);
+        const rawLtp = await fetchOptionLtp(instrumentToken, accessToken);
+        if (rawLtp === 0) {
+          logError(`[EXECUTOR] [PAPER] Failed to get live option LTP. Aborting simulated trade.`);
+          return;
+        }
+
+        const fillPrice = simulateSlippage(rawLtp, 'BUY');
+        logTrade(`[PAPER FILLED] ${direction} @ ₹${fillPrice} | ${lots} lots (Simulated Slippage applied: ${fillPrice - rawLtp > 0 ? '+' : ''}${(fillPrice - rawLtp).toFixed(2)} pts)`);
+
+        // Register active position in tracker
+        tracker.setActivePosition(instrumentToken, quantity, fillPrice, tradingSymbol);
+        if (activeWsClient) activeWsClient.subscribe(instrumentToken);
+
+        const state = tracker.getState();
+        const netProfitTarget = state.startingCapital * 0.02;
+        const grossPoints = calculateGrossTargetPoints(fillPrice, lots, netProfitTarget, NIFTY_LOT_SIZE_2026);
+        const targetPrice = parseFloat((fillPrice + grossPoints).toFixed(2));
+        const stopLossPrice = parseFloat((fillPrice - 1.5).toFixed(2));
+        tracker.paperTargetPrice = targetPrice;
+        tracker.paperStopLossPrice = stopLossPrice;
+
+        logTrade(`[🔒 GTT OCO PAPER] Target: ₹${targetPrice} | SL: ₹${stopLossPrice}`);
+
+        // Insert into Supabase
+        const { error } = await supabase
+          .from('order_ledger')
+          .insert({
+            correlation_id: `CONF-PAPER-${Date.now()}`,
+            trading_symbol: tradingSymbol,
+            transaction_type: 'BUY',
+            option_type: direction,
+            strike_price: atmStrike,
+            quantity: quantity,
+            order_status: 'FILLED',
+            upstox_order_id: `PAPER-${Date.now()}`,
+            execution_price: fillPrice,
+            trading_mode: 'PAPER',
+            pnl: 0
+          });
+
+        if (error) {
+          logError(`[PAPER DB ERROR] Failed to log paper trade: ${error.message}`);
+        }
+
+        asyncLog({
+          type: 'trade_fill',
+          signal: signal.signal,
+          direction,
+          orderId: `PAPER-${Date.now()}`,
+          fillPrice,
+          lots,
+          quantity,
+          instrumentToken,
+          vwap: signal.vwap,
+          rsi: signal.rsi,
+          ema9: signal.ema9,
+          ema21: signal.ema21,
+          trading_mode: 'PAPER'
+        });
+        return;
+      }
 
       // Step 4: Build HFT V3 payload
       const hftPayload = {
@@ -855,6 +1036,58 @@ export class ExecutionEngine {
     } catch (err: any) {
       logError(`[GTT-OCO] Critical failure anchoring bracket: ${err.message}`);
       logWarn('[GTT-OCO] Position is UNPROTECTED. Manual intervention required.');
+    }
+  }
+
+  public async executePaperExit(ltp: number, reason: string): Promise<void> {
+    const token = tracker.activePositionToken;
+    const qty = tracker.activePositionQty;
+    const entry = tracker.activePositionEntry;
+    const symbol = tracker.activePositionSymbol;
+    if (!token || qty === 0) return;
+
+    try {
+      const fillPrice = simulateSlippage(ltp, 'SELL');
+      const pnl = parseFloat(((fillPrice - entry) * qty).toFixed(2));
+      const correlationId = `PAPER-EXIT-${Date.now()}`;
+      
+      logTrade(`[PAPER EXIT] 🚨 Exiting position ${symbol || token} @ ₹${fillPrice} | PnL: ₹${pnl.toFixed(2)} | Reason: ${reason}`);
+
+      // Insert into Supabase order_ledger
+      const { error } = await supabase
+        .from('order_ledger')
+        .insert({
+          correlation_id: correlationId,
+          trading_symbol: symbol || token.replace('NSE_FO|', ''),
+          transaction_type: 'SELL',
+          option_type: (symbol || token).includes('CE') ? 'CE' : 'PE',
+          strike_price: parseInt((symbol || token).match(/\d+/)?.[0] || '0'),
+          quantity: qty,
+          order_status: 'FILLED',
+          upstox_order_id: `PAPER-${Date.now()}`,
+          execution_price: fillPrice,
+          pnl: pnl,
+          trading_mode: 'PAPER',
+          rejection_reason: reason
+        });
+
+      if (error) {
+        logError(`[PAPER DB ERROR] Failed to log paper exit: ${error.message}`);
+      }
+
+      // Record trade outcome to tracker (was stop-loss?)
+      const isStopLoss = reason === 'STOPLOSS' || pnl < 0;
+      tracker.recordTradeOutcome(isStopLoss);
+
+      // Update realized PnL
+      const state = tracker.getState();
+      tracker.setRealizedPnL(parseFloat((state.dailyRealizedPnL + pnl).toFixed(2)));
+
+      // Clear position
+      tracker.clearActivePosition();
+      logInfo(`[PAPER EXIT] Simulated position cleared.`);
+    } catch (err: any) {
+      logError(`[PAPER EXIT ERROR] Failed to execute simulated exit: ${err.message}`);
     }
   }
 }

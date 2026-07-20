@@ -56,6 +56,7 @@ export class UpstoxWSClient {
   private lastFuturesCumVolume: number = 0;
   private lastLogTime: number = 0;
   private msgCount: number = 0;
+  private isPaperExitProcessing: boolean = false;
 
 
   constructor(token: string) {
@@ -331,18 +332,42 @@ export class UpstoxWSClient {
           if (ltp) {
             tracker.updateUnrealizedPnLFromLtp(ltp);
             
+            // Paper GTT targets monitoring
+            if (StateEngine.tradingMode === 'PAPER' && !this.isPaperExitProcessing) {
+              const target = tracker.paperTargetPrice;
+              const sl = tracker.paperStopLossPrice;
+              if ((target > 0 && ltp >= target) || (sl > 0 && ltp <= sl)) {
+                this.isPaperExitProcessing = true;
+                const reason = (target > 0 && ltp >= target) ? 'TARGET' : 'STOPLOSS';
+                logInfo(`[PAPER GTT] ${reason} Hit! LTP: ${ltp} (Target: ${target}, SL: ${sl})`);
+                executor.executePaperExit(ltp, reason).finally(() => {
+                  this.isPaperExitProcessing = false;
+                });
+              }
+            }
+            
             const cbReason = tracker.evaluateCircuitBreaker();
             if (cbReason && !tracker.getState().isHalted) {
                console.log(`\n🛡️ [CIRCUIT BREAKER] TRIGGERED: ${cbReason}`);
                tracker.haltTrading(cbReason);
-               executeEmergencyMarketExit().then(async () => {
-                 tracker.clearActivePosition();
-                 const supabase = createClient(
-                   process.env.SUPABASE_URL || '', 
-                   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || ''
-                 );
-                 await supabase.from('system_state').update({ bot_status: 'EMERGENCY_HALT' }).eq('id', 1);
-               });
+               
+               if (StateEngine.tradingMode === 'PAPER') {
+                 if (!this.isPaperExitProcessing) {
+                   this.isPaperExitProcessing = true;
+                   executor.executePaperExit(ltp, 'CIRCUIT_BREAKER').finally(() => {
+                     this.isPaperExitProcessing = false;
+                   });
+                 }
+               } else {
+                 executeEmergencyMarketExit().then(async () => {
+                   tracker.clearActivePosition();
+                   const supabase = createClient(
+                     process.env.SUPABASE_URL || '', 
+                     process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || ''
+                   );
+                   await supabase.from('system_state').update({ bot_status: 'EMERGENCY_HALT' }).eq('id', 1);
+                 });
+               }
             }
           }
         } else if (this.msgCount <= 10) {

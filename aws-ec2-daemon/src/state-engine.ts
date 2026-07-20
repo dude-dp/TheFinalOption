@@ -16,6 +16,7 @@ const supabase = createClient(
 export class StateEngine {
   public static activeToken: string | null = null;
   public static botStatus: string = 'STOPPED';
+  public static tradingMode: 'LIVE' | 'PAPER' = 'PAPER';
   private static telemetryInterval: NodeJS.Timeout | null = null;
 
   public static async initialize(onTokenRefresh: (newToken: string) => void) {
@@ -23,7 +24,7 @@ export class StateEngine {
 
     const { data, error } = await supabase
       .from('system_state')
-      .select('upstox_access_token, bot_status')
+      .select('upstox_access_token, bot_status, trading_mode')
       .eq('id', 1)
       .single();
 
@@ -32,7 +33,9 @@ export class StateEngine {
     } else if (data) {
       this.activeToken = data.upstox_access_token;
       this.botStatus = data.bot_status;
-      logInfo(`[STATE-ENGINE] Baseline Status: ${this.botStatus}`);
+      this.tradingMode = data.trading_mode || 'PAPER';
+      tracker.tradingMode = this.tradingMode;
+      logInfo(`[STATE-ENGINE] Baseline Status: ${this.botStatus} | Mode: ${this.tradingMode}`);
       
       if (this.activeToken) {
         onTokenRefresh(this.activeToken);
@@ -42,7 +45,7 @@ export class StateEngine {
     }
 
     supabase.channel('system_state_channel')
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'system_state' }, (payload) => {
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'system_state' }, async (payload) => {
         const newState = payload.new;
 
         if (newState.bot_status && newState.bot_status !== this.botStatus) {
@@ -56,6 +59,21 @@ export class StateEngine {
           onTokenRefresh(this.activeToken as string);
           this.startTelemetryReporting(this.activeToken as string);
           this.startLifecycleWatchdog(this.activeToken as string);
+        }
+
+        if (newState.trading_mode && newState.trading_mode !== this.tradingMode) {
+          if (tracker.hasActivePosition()) {
+            logWarn(`[STATE-ENGINE] ⚠️ Mode switch rejected: Cannot change mode from ${this.tradingMode} to ${newState.trading_mode} while position is active.`);
+            // Revert state in database
+            await supabase.from('system_state').update({
+              trading_mode: this.tradingMode
+            }).eq('id', 1);
+            return;
+          }
+          logInfo(`[STATE-ENGINE] 🛡️ Trading Mode Switched: ${this.tradingMode} ➔ ${newState.trading_mode}`);
+          this.tradingMode = newState.trading_mode;
+          tracker.tradingMode = this.tradingMode;
+          tracker.clearActivePosition();
         }
       })
       .subscribe();
@@ -110,7 +128,7 @@ export class StateEngine {
             instrumentToken: tracker.activePositionToken,
             quantity: tracker.activePositionQty,
             entryPrice: tracker.activePositionEntry,
-            optionType: tracker.activePositionToken.includes('CE') ? 'CE' : 'PE'
+            optionType: tracker.activePositionSymbol.includes('CE') ? 'CE' : 'PE'
         } : null;
 
         const latestTick = tracker.latestTick;
@@ -242,21 +260,23 @@ export class StateEngine {
         if (state.isHalted) return; // Already halted, watchdog keeps running for teardown only
 
         // ── P&L Sync from broker ────────────────────────────────────────
-        try {
-          const posRes = await fetch(
-            'https://api.upstox.com/v2/portfolio/short-term-positions',
-            { headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' } }
-          );
-          if (posRes.ok) {
-            const posData = await posRes.json() as any;
-            const positions = posData?.data ?? [];
-            const realizedPnL = positions.reduce(
-              (sum: number, p: any) => sum + (p.realised_profit ?? p.realized_pnl ?? 0), 0
+        if (this.tradingMode === 'LIVE') {
+          try {
+            const posRes = await fetch(
+              'https://api.upstox.com/v2/portfolio/short-term-positions',
+              { headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' } }
             );
-            tracker.setRealizedPnL(realizedPnL);
+            if (posRes.ok) {
+              const posData = await posRes.json() as any;
+              const positions = posData?.data ?? [];
+              const realizedPnL = positions.reduce(
+                (sum: number, p: any) => sum + (p.realised_profit ?? p.realized_pnl ?? 0), 0
+              );
+              tracker.setRealizedPnL(realizedPnL);
+            }
+          } catch (e: any) {
+            logWarn(`[WATCHDOG] P&L sync failed: ${e.message}`);
           }
-        } catch (e: any) {
-          logWarn(`[WATCHDOG] P&L sync failed: ${e.message}`);
         }
 
         const freshState = tracker.getState();
@@ -319,18 +339,22 @@ export class StateEngine {
     tracker.haltTrading(reason);
     this.botStatus = 'EMERGENCY_HALT';
 
-    try {
-      const res = await fetch('https://api.upstox.com/v2/user/kill-switch?session_type=day', {
-        method: 'PUT',
-        headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
-      });
-      if (res.ok) {
-        logWarn(`[WATCHDOG] ✅ Kill Switch ACTIVATED. Reason: ${reason}`);
-      } else {
-        logError(`[WATCHDOG] Kill Switch API returned ${res.status}. Manual intervention needed!`);
+    if (this.tradingMode === 'LIVE') {
+      try {
+        const res = await fetch('https://api.upstox.com/v2/user/kill-switch?session_type=day', {
+          method: 'PUT',
+          headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
+        });
+        if (res.ok) {
+          logWarn(`[WATCHDOG] ✅ Kill Switch ACTIVATED. Reason: ${reason}`);
+        } else {
+          logError(`[WATCHDOG] Kill Switch API returned ${res.status}. Manual intervention needed!`);
+        }
+      } catch (e: any) {
+        logError(`[WATCHDOG] Kill switch API failed: ${e.message}`);
       }
-    } catch (e: any) {
-      logError(`[WATCHDOG] Kill switch API failed: ${e.message}`);
+    } else {
+      logWarn(`[WATCHDOG] [PAPER] Kill Switch simulated. Reason: ${reason}`);
     }
 
     asyncLog({ type: 'system_event', event: 'kill_switch_activated', reason });
@@ -346,35 +370,40 @@ export class StateEngine {
     this.botStatus = 'STOPPED';
     tracker.haltTrading('15:15 IST Hard Teardown');
 
-    // Cancel active GTT if registered
-    const gttId = tracker.getActiveGttId();
-    if (gttId) {
+    if (this.tradingMode === 'LIVE') {
+      // Cancel active GTT if registered
+      const gttId = tracker.getActiveGttId();
+      if (gttId) {
+        try {
+          await fetch(`https://api.upstox.com/v3/order/gtt/${gttId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
+          });
+          logInfo(`[WATCHDOG] GTT ${gttId} cancelled.`);
+          tracker.clearActiveGtt();
+        } catch (e: any) {
+          logWarn(`[WATCHDOG] Failed to cancel GTT: ${e.message}`);
+        }
+      }
+
+      // Force-exit all positions
       try {
-        await fetch(`https://api.upstox.com/v3/order/gtt/${gttId}`, {
-          method: 'DELETE',
+        const exitRes = await fetch('https://api.upstox.com/v3/order/exit-all-positions', {
+          method: 'POST',
           headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
         });
-        logInfo(`[WATCHDOG] GTT ${gttId} cancelled.`);
-        tracker.clearActiveGtt();
+        if (exitRes.ok) {
+          logInfo('[WATCHDOG] ✅ All positions liquidated. Flat book confirmed.');
+        } else {
+          logWarn('[WATCHDOG] Exit-all-positions returned non-200. Falling back to native exit...');
+          await executeEmergencyMarketExit();
+        }
       } catch (e: any) {
-        logWarn(`[WATCHDOG] Failed to cancel GTT: ${e.message}`);
-      }
-    }
-
-    // Force-exit all positions
-    try {
-      const exitRes = await fetch('https://api.upstox.com/v3/order/exit-all-positions', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
-      });
-      if (exitRes.ok) {
-        logInfo('[WATCHDOG] ✅ All positions liquidated. Flat book confirmed.');
-      } else {
-        logWarn('[WATCHDOG] Exit-all-positions returned non-200. Falling back to native exit...');
+        logError(`[WATCHDOG] Teardown exit failed: ${e.message}. Attempting native fallback...`);
         await executeEmergencyMarketExit();
       }
-    } catch (e: any) {
-      logError(`[WATCHDOG] Teardown exit failed: ${e.message}. Attempting native fallback...`);
+    } else {
+      logInfo('[WATCHDOG] [PAPER] Teardown. Exiting simulated positions.');
       await executeEmergencyMarketExit();
     }
 

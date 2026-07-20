@@ -179,6 +179,7 @@ class BrokerAdapter {
    * Fetches absolute truth from the exchange and forcefully overrides local memory.
    */
   private async reconcileState(): Promise<void> {
+    if (tracker.tradingMode === 'PAPER') return; // Skip reconciliation in Paper mode
     if (this.isSyncing) return; // Prevent network pile-up if Upstox takes > 3s to respond
     this.isSyncing = true;
 
@@ -206,7 +207,7 @@ class BrokerAdapter {
       // 🟢 NEW: Ensure local memory matches Upstox EXACTLY
       const activePos = positions.find(p => p.netQuantity !== 0);
       if (activePos) {
-        tracker.setActivePosition(activePos.instrumentToken, activePos.netQuantity, activePos.averagePrice || 0);
+        tracker.setActivePosition(activePos.instrumentToken, activePos.netQuantity, activePos.averagePrice || 0, activePos.tradingSymbol);
       } else {
         tracker.clearActivePosition();
       }
@@ -285,6 +286,11 @@ class BrokerAdapter {
    * Utilized by the Iceberg and Emergency Exit systems.
    */
   public async placeOrder(params: OrderParams): Promise<any> {
+    if (tracker.tradingMode === 'PAPER') {
+      logWarn(`[CRITICAL] Broker adapter blocked a live order placement attempt for ${params.tradingSymbol} while in PAPER mode.`);
+      return null;
+    }
+
     logInfo(`[BROKER] Transmitting ${params.orderType} ${params.transactionType} for ${params.quantity} qty of ${params.tradingSymbol}`);
 
     try {

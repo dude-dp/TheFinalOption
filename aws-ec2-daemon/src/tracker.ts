@@ -78,9 +78,19 @@ class PortfolioTracker {
   private activeGttId: string | null = null;
 
   // Compatibility properties for active position tracking
+  public tradingMode: 'LIVE' | 'PAPER' = 'PAPER';
   public activePositionToken: string = "";
   public activePositionQty: number = 0;
   public activePositionEntry: number = 0;
+  public activePositionSymbol: string = "";
+
+  // Paper GTT targets
+  public paperTargetPrice: number = 0;
+  public paperStopLossPrice: number = 0;
+
+  public hasActivePosition(): boolean {
+    return this.activePositionQty !== 0;
+  }
 
   // 🟢 NEW: Live Nifty Price tracker
   public liveSpotPrice: number = 0;
@@ -254,17 +264,21 @@ class PortfolioTracker {
 
   // --- Compatibility Methods ---
   
-  public setActivePosition(token: string, qty: number, entryPrice: number): void {
+  public setActivePosition(token: string, qty: number, entryPrice: number, symbol: string = ""): void {
     this.activePositionToken = token;
     this.activePositionQty = qty;
     this.activePositionEntry = entryPrice;
+    this.activePositionSymbol = symbol;
   }
 
   public clearActivePosition(): void {
     this.activePositionToken = "";
     this.activePositionQty = 0;
     this.activePositionEntry = 0;
+    this.activePositionSymbol = "";
     this.state.activeUnrealizedPnL = 0;
+    this.paperTargetPrice = 0;
+    this.paperStopLossPrice = 0;
   }
 
   public updateUnrealizedPnLFromLtp(ltp: number): void {
