@@ -184,7 +184,7 @@ function detectVwapRejection(candles: LocalCandle[], vwap: number): boolean {
 // ============================================
 
 const MARKET_START_HOUR_IST = 9;
-const MARKET_START_MIN_IST = 50;
+const MARKET_START_MIN_IST = 30;
 
 const CE_RSI_MIN = 55;
 const CE_RSI_MAX = 65;
@@ -216,15 +216,15 @@ export function evaluateConfluence(
     volumeRatio: extras?.volumeRatio ?? 0,
   });
 
-  // ── Gate 1: Time Filter (09:50 IST hard lock) ──────────────────────────
+  // ── Gate 1: Time Filter (09:30 IST hard lock) ──────────────────────────
   const istOffset = 5.5 * 60 * 60 * 1000;
   const ist = new Date(currentTime.getTime() + istOffset);
   const istHour = ist.getUTCHours();
   const istMin = ist.getUTCMinutes();
 
   if (istHour < MARKET_START_HOUR_IST ||
-      (istHour === MARKET_START_HOUR_IST && istMin < MARKET_START_MIN_IST)) {
-    return NONE(`TIME_LOCK: Before 09:50 IST (${istHour}:${String(istMin).padStart(2, '0')})`);
+    (istHour === MARKET_START_HOUR_IST && istMin < MARKET_START_MIN_IST)) {
+    return NONE(`TIME_LOCK: Before 09:30 IST (${istHour}:${String(istMin).padStart(2, '0')})`);
   }
 
   // ── Gate 2: Minimum data check ─────────────────────────────────────────

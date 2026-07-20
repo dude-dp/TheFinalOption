@@ -121,9 +121,9 @@ export class UpstoxWSClient {
         }
 
         this.msgCount++;
-        if (this.msgCount <= 5 || this.msgCount % 100 === 0) {
-          logInfo(`[WS MESSAGE #${this.msgCount}] Received packet: ${buffer.length} bytes (type: ${typeof data}, isBuffer: ${Buffer.isBuffer(data)})`);
-        }
+        // if (this.msgCount <= 5 || this.msgCount % 100 === 0) {
+        //   logInfo(`[WS MESSAGE #${this.msgCount}] Received packet: ${buffer.length} bytes (type: ${typeof data}, isBuffer: ${Buffer.isBuffer(data)})`);
+        // }
 
         const decoded = FeedResponse.decode(buffer);
         
