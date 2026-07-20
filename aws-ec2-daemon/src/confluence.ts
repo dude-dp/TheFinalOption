@@ -253,9 +253,6 @@ export function evaluateConfluence(
 
   // ── Bullish Truth Table (CE Signal) ───────────────────────────────────
   if (spotPrice > vwap) {
-    if (!detectVwapReclaim(candles, vwap)) {
-      return NONE('CE_ABORT: No VWAP Reclaim pattern in last 5 candles', indicators);
-    }
     if (ema9 < ema21) {
       return NONE(`CE_ABORT: 9EMA (${ema9.toFixed(2)}) below 21EMA (${ema21.toFixed(2)})`, indicators);
     }
@@ -274,9 +271,6 @@ export function evaluateConfluence(
 
   // ── Bearish Truth Table (PE Signal) ───────────────────────────────────
   if (spotPrice < vwap) {
-    if (!detectVwapRejection(candles, vwap)) {
-      return NONE('PE_ABORT: No VWAP Rejection pattern detected', indicators);
-    }
     if (ema9 > ema21) {
       return NONE(`PE_ABORT: 9EMA (${ema9.toFixed(2)}) above 21EMA (${ema21.toFixed(2)})`, indicators);
     }
