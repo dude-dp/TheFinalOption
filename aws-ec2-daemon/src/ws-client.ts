@@ -16,6 +16,7 @@ import { executeEmergencyMarketExit } from './executor.js';
 import { StateEngine } from './state-engine.js';
 import { logInfo, logError } from './logger.js';
 import { resolveNiftyFuturesKey } from './instrument-resolver.js';
+import { eventBus } from './event-bus.js';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -57,10 +58,27 @@ export class UpstoxWSClient {
   private lastLogTime: number = 0;
   private msgCount: number = 0;
   private isPaperExitProcessing: boolean = false;
+  private _intentionalClose: boolean = false;
 
 
   constructor(token: string) {
     this.token = token;
+
+    // Listen for system:shutdown from StateEngine (EventBus decoupling pattern)
+    eventBus.once('system:shutdown', () => {
+      logInfo('[WS-CLIENT] system:shutdown received. Closing WebSocket cleanly.');
+      this.disconnect();
+    });
+  }
+
+  /** Cleanly closes the WebSocket and suppresses auto-reconnect. */
+  public disconnect(): void {
+    this._intentionalClose = true;
+    if (this.ws) {
+      try { this.ws.close(); } catch (_) {}
+      this.ws = null;
+    }
+    logInfo('[WS-CLIENT] Disconnected. Auto-reconnect suppressed.');
   }
 
 
@@ -388,6 +406,10 @@ export class UpstoxWSClient {
     });
 
     this.ws.on('close', () => {
+      if (this._intentionalClose) {
+        logInfo('[WS-CLIENT] Connection closed intentionally. No reconnect.');
+        return;
+      }
       console.log('🔴 WS Closed. Entering auto-reconnect sequence...');
       const attemptReconnect = async () => {
         try {

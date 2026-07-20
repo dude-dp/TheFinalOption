@@ -4,8 +4,10 @@ import { brokerAdapter } from './broker-adapter.js';
 import { executor } from './executor.js';
 import { executeEmergencyMarketExit } from './executor.js';
 import { tracker } from './tracker.js';
-import { evaluateConfluence } from './confluence.js';
+import { evaluateConfluence, loadConfluenceConfig } from './confluence.js';
 import { asyncLog } from './async-logger.js';
+import { eventBus } from './event-bus.js';
+import { varianceEngine } from './variance.js';
 import type { LocalCandle } from './aggregator.js';
 
 const supabase = createClient(
@@ -18,9 +20,13 @@ export class StateEngine {
   public static botStatus: string = 'STOPPED';
   public static tradingMode: 'LIVE' | 'PAPER' = 'PAPER';
   private static telemetryInterval: NodeJS.Timeout | null = null;
+  private static haltRecoveryInterval: NodeJS.Timeout | null = null;
 
   public static async initialize(onTokenRefresh: (newToken: string) => void) {
     logInfo('[STATE-ENGINE] Booting up PostgreSQL Realtime synchronization...');
+
+    // Load LLM-tuned confluence thresholds for today (Phase 4)
+    await loadConfluenceConfig();
 
     const { data, error } = await supabase
       .from('system_state')
@@ -173,7 +179,9 @@ export class StateEngine {
     _spotPrice: number,
     token: string
   ): Promise<void> {
-    const signal = evaluateConfluence(candles, new Date());
+    // Pass live TPS velocity multiplier so confluence can widen gates during spikes
+    const volatilityState = varianceEngine.evaluateVelocity(Date.now());
+    const signal = evaluateConfluence(candles, new Date(), volatilityState.velocityMultiplier);
 
     // ── Compute Bot Intelligence for UI ──
     let regime = 'Analyzing Variance...';
@@ -219,6 +227,8 @@ export class StateEngine {
       rsi: signal.rsi,
       volumeRatio: signal.volumeRatio,
       candleCount: candles.length,
+      velocityMultiplier: volatilityState.velocityMultiplier,
+      isHighVolatility: volatilityState.isHighVolatilityRegime,
     });
 
     if (signal.signal === 'NONE') {
@@ -361,6 +371,9 @@ export class StateEngine {
 
     // Also liquidate any open positions
     await executeEmergencyMarketExit();
+
+    // Start the HALT recovery watcher so the user can re-enable RUNNING without restarting the daemon
+    this.startHaltRecoveryWatcher(token);
   }
 
   /**
@@ -369,6 +382,9 @@ export class StateEngine {
   private static async executeFlatBookTeardown(token: string): Promise<void> {
     this.botStatus = 'STOPPED';
     tracker.haltTrading('15:15 IST Hard Teardown');
+
+    // Signal WS client to close cleanly (EventBus — no circular deps)
+    eventBus.emit('system:shutdown');
 
     if (this.tradingMode === 'LIVE') {
       // Cancel active GTT if registered
@@ -409,5 +425,56 @@ export class StateEngine {
 
     asyncLog({ type: 'system_event', event: '1515_teardown_complete' });
     logInfo('[WATCHDOG] 15:15 Teardown complete. Bot is flat and halted.');
+  }
+
+  /**
+   * HALT Recovery Watcher
+   *
+   * After an EMERGENCY_HALT, the daemon enters a monitor-only state.
+   * This watcher polls Supabase every 60s to detect if the user has
+   * manually re-enabled RUNNING from the dashboard.
+   *
+   * On detection:
+   *   1. Resets the tracker's halt flag
+   *   2. Restarts the lifecycle watchdog
+   *   3. Stops this recovery watcher
+   *
+   * This allows recovery WITHOUT a full daemon restart.
+   */
+  private static startHaltRecoveryWatcher(token: string): void {
+    if (this.haltRecoveryInterval) clearInterval(this.haltRecoveryInterval);
+
+    logInfo('[HALT-RECOVERY] Watcher started. Polling every 60s for manual RUNNING re-enable...');
+
+    this.haltRecoveryInterval = setInterval(async () => {
+      try {
+        const { data, error } = await supabase
+          .from('system_state')
+          .select('bot_status')
+          .eq('id', 1)
+          .single();
+
+        if (error || !data) return;
+
+        if (data.bot_status === 'RUNNING') {
+          logInfo('[HALT-RECOVERY] ✅ User re-enabled RUNNING. Recovering from HALT...');
+          clearInterval(this.haltRecoveryInterval!);
+          this.haltRecoveryInterval = null;
+
+          // Reset internal state
+          this.botStatus = 'RUNNING';
+          this.teardownFired = false;
+          tracker.resetHalt();
+
+          // Restart lifecycle watchdog
+          this.startLifecycleWatchdog(token);
+
+          logInfo('[HALT-RECOVERY] ✅ Daemon fully recovered. Confluence engine re-armed.');
+          asyncLog({ type: 'system_event', event: 'halt_recovery_success' });
+        }
+      } catch (err: any) {
+        logWarn(`[HALT-RECOVERY] Poll failed: ${err.message}`);
+      }
+    }, 60000); // check every 60 seconds
   }
 }

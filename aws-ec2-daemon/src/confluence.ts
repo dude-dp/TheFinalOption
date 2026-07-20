@@ -8,6 +8,7 @@
 // ============================================
 
 import type { LocalCandle } from './aggregator.js';
+import { createClient } from '@supabase/supabase-js';
 
 // ============================================
 // Output Types
@@ -186,10 +187,52 @@ function detectVwapRejection(candles: LocalCandle[], vwap: number): boolean {
 const MARKET_START_HOUR_IST = 9;
 const MARKET_START_MIN_IST = 30;
 
-const CE_RSI_MIN = 55;
-const CE_RSI_MAX = 65;
-const PE_RSI_MIN = 35;
-const PE_RSI_MAX = 45;
+// Mutable so loadConfluenceConfig() can override with LLM-tuned values at boot
+let CE_RSI_MIN = 55;
+let CE_RSI_MAX = 65;
+let PE_RSI_MIN = 35;
+let PE_RSI_MAX = 45;
+let BASE_VOLUME_MULTIPLIER = 1.0; // base volume SMA multiplier (tuned daily)
+
+/**
+ * Load LLM-tuned thresholds from the confluence_config Supabase table.
+ *
+ * Called once during StateEngine.initialize() on daemon boot.
+ * If no row exists for today, the static defaults above remain in effect.
+ * If the LLM has produced yesterday's config, it is NOT used — only today's row.
+ */
+export async function loadConfluenceConfig(): Promise<void> {
+  try {
+    const supabase = createClient(
+      process.env.SUPABASE_URL || '',
+      process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || ''
+    );
+
+    const today = new Date().toISOString().split('T')[0];
+    const { data, error } = await supabase
+      .from('confluence_config')
+      .select('ce_rsi_min, ce_rsi_max, pe_rsi_min, pe_rsi_max, volume_multiplier')
+      .eq('date', today)
+      .single();
+
+    if (error || !data) {
+      console.log('[CONFLUENCE-CONFIG] No LLM config for today. Using static defaults.');
+      return;
+    }
+
+    // Apply bounds validation before overriding
+    CE_RSI_MIN = Math.max(40, Math.min(60, Number(data.ce_rsi_min)));
+    CE_RSI_MAX = Math.max(60, Math.min(80, Number(data.ce_rsi_max)));
+    PE_RSI_MIN = Math.max(20, Math.min(40, Number(data.pe_rsi_min)));
+    PE_RSI_MAX = Math.max(40, Math.min(60, Number(data.pe_rsi_max)));
+    BASE_VOLUME_MULTIPLIER = Math.max(0.5, Math.min(1.5, Number(data.volume_multiplier ?? 1.0)));
+
+    console.log(`[CONFLUENCE-CONFIG] ✅ LLM-tuned thresholds loaded for ${today}:`);
+    console.log(`  CE RSI: [${CE_RSI_MIN}, ${CE_RSI_MAX}] | PE RSI: [${PE_RSI_MIN}, ${PE_RSI_MAX}] | Vol×: ${BASE_VOLUME_MULTIPLIER}`);
+  } catch (err: any) {
+    console.warn(`[CONFLUENCE-CONFIG] Config load failed (non-critical): ${err.message}. Using defaults.`);
+  }
+}
 
 /**
  * Evaluate the full multi-layer confluence matrix against the closed candle array.
@@ -199,12 +242,18 @@ const PE_RSI_MAX = 45;
  *
  * Minimum candles required: 25 (21-EMA needs 21, RSI needs 15, reclaim pattern needs 6)
  *
- * @param candles     - Closed 1-minute LocalCandle array (oldest first)
- * @param currentTime - Current wall-clock time (UTC); offset to IST internally
+ * @param candles             - Closed 1-minute LocalCandle array (oldest first)
+ * @param currentTime         - Current wall-clock time (UTC); offset to IST internally
+ * @param volatilityMultiplier - TPS velocity multiplier from VarianceEngine (default 1.0).
+ *                               At 1.0x (normal market): bounds are static defaults.
+ *                               At 3.0x (spike regime): RSI bounds widen by min(15, 2×10)=20→capped at ±15.
+ *                               Formula: RSI_dynamic = RSI_static ± min(MAX_DELTA, (λ - 1) × 10)
+ *                               Volume threshold: smaVolume × max(0.5, 1 / λ)
  */
 export function evaluateConfluence(
   candles: LocalCandle[],
-  currentTime: Date
+  currentTime: Date,
+  volatilityMultiplier: number = 1.0
 ): ConfluenceSignal {
 
   const NONE = (reason: string, extras?: Partial<ConfluenceSignal>): ConfluenceSignal => ({
@@ -249,6 +298,28 @@ export function evaluateConfluence(
 
   const indicators = { vwap, ema9, ema21, rsi, volumeRatio };
 
+  // ── Dynamic Threshold Widening (Variance-Aware) ───────────────────────
+  // Clamp expansion to ±15 RSI points from static center regardless of λ.
+  // Formula: bound ± min(MAX_DELTA, (λ - 1) × 10)
+  // At λ=1.0: no change. At λ=2.0: ±10 pts. At λ=2.5: ±15 pts (capped).
+  const MAX_RSI_DELTA = 15;
+  const λ = Math.max(1.0, volatilityMultiplier); // floor at 1.0
+  const rsiExpansion = Math.min(MAX_RSI_DELTA, (λ - 1) * 10);
+
+  const dynCeRsiMin = CE_RSI_MIN - rsiExpansion;  // Widens downward
+  const dynCeRsiMax = CE_RSI_MAX + rsiExpansion;  // Widens upward
+  const dynPeRsiMin = PE_RSI_MIN - rsiExpansion;
+  const dynPeRsiMax = PE_RSI_MAX + rsiExpansion;
+
+  // Volume gate: at high λ, thin order books are normal — lower the bar
+  // Never drop below 50% of SMA to prevent trading on noise
+  const volumeThreshold = smaVolume * Math.max(0.5, 1 / λ);
+
+  if (rsiExpansion > 0) {
+    // Log so post-market analyzer can see correlation
+    // (not using logInfo here to avoid flooding — asyncLog handles it)
+  }
+
   if (vwap === 0) return NONE('VWAP_INVALID: No volume data to anchor VWAP', indicators);
 
   // ── Bullish Truth Table (CE Signal) ───────────────────────────────────
@@ -256,15 +327,15 @@ export function evaluateConfluence(
     if (ema9 < ema21) {
       return NONE(`CE_ABORT: 9EMA (${ema9.toFixed(2)}) below 21EMA (${ema21.toFixed(2)})`, indicators);
     }
-    if (rsi < CE_RSI_MIN || rsi > CE_RSI_MAX) {
-      return NONE(`CE_ABORT: RSI ${rsi.toFixed(1)} outside [${CE_RSI_MIN}, ${CE_RSI_MAX}]`, indicators);
+    if (rsi < dynCeRsiMin || rsi > dynCeRsiMax) {
+      return NONE(`CE_ABORT: RSI ${rsi.toFixed(1)} outside [${dynCeRsiMin.toFixed(0)}, ${dynCeRsiMax.toFixed(0)}]${rsiExpansion > 0 ? ` (widened ${rsiExpansion.toFixed(0)}pts at ${λ.toFixed(1)}x TPS)` : ''}`, indicators);
     }
-    if (currentCandle.volume <= smaVolume) {
-      return NONE(`CE_ABORT: Volume ${currentCandle.volume} not above SMA ${smaVolume.toFixed(1)}`, indicators);
+    if (currentCandle.volume <= volumeThreshold) {
+      return NONE(`CE_ABORT: Volume ${currentCandle.volume} not above threshold ${volumeThreshold.toFixed(1)}${rsiExpansion > 0 ? ` (lowered at ${λ.toFixed(1)}x TPS)` : ''}`, indicators);
     }
     return {
       signal: 'BUY_CE',
-      reason: `CE_CONFIRMED: Spot>${vwap.toFixed(2)} | 9EMA=${ema9.toFixed(2)}>${ema21.toFixed(2)} | RSI=${rsi.toFixed(1)} | Vol=${volumeRatio.toFixed(2)}x`,
+      reason: `CE_CONFIRMED: Spot>${vwap.toFixed(2)} | 9EMA=${ema9.toFixed(2)}>${ema21.toFixed(2)} | RSI=${rsi.toFixed(1)} | Vol=${volumeRatio.toFixed(2)}x${rsiExpansion > 0 ? ` | λ=${λ.toFixed(1)}x` : ''}`,
       ...indicators,
     };
   }
@@ -274,15 +345,15 @@ export function evaluateConfluence(
     if (ema9 > ema21) {
       return NONE(`PE_ABORT: 9EMA (${ema9.toFixed(2)}) above 21EMA (${ema21.toFixed(2)})`, indicators);
     }
-    if (rsi < PE_RSI_MIN || rsi > PE_RSI_MAX) {
-      return NONE(`PE_ABORT: RSI ${rsi.toFixed(1)} outside [${PE_RSI_MIN}, ${PE_RSI_MAX}]`, indicators);
+    if (rsi < dynPeRsiMin || rsi > dynPeRsiMax) {
+      return NONE(`PE_ABORT: RSI ${rsi.toFixed(1)} outside [${dynPeRsiMin.toFixed(0)}, ${dynPeRsiMax.toFixed(0)}]${rsiExpansion > 0 ? ` (widened ${rsiExpansion.toFixed(0)}pts at ${λ.toFixed(1)}x TPS)` : ''}`, indicators);
     }
-    if (currentCandle.volume <= smaVolume) {
-      return NONE(`PE_ABORT: Volume ${currentCandle.volume} not above SMA ${smaVolume.toFixed(1)}`, indicators);
+    if (currentCandle.volume <= volumeThreshold) {
+      return NONE(`PE_ABORT: Volume ${currentCandle.volume} not above threshold ${volumeThreshold.toFixed(1)}${rsiExpansion > 0 ? ` (lowered at ${λ.toFixed(1)}x TPS)` : ''}`, indicators);
     }
     return {
       signal: 'BUY_PE',
-      reason: `PE_CONFIRMED: Spot<${vwap.toFixed(2)} | 9EMA=${ema9.toFixed(2)}<${ema21.toFixed(2)} | RSI=${rsi.toFixed(1)} | Vol=${volumeRatio.toFixed(2)}x`,
+      reason: `PE_CONFIRMED: Spot<${vwap.toFixed(2)} | 9EMA=${ema9.toFixed(2)}<${ema21.toFixed(2)} | RSI=${rsi.toFixed(1)} | Vol=${volumeRatio.toFixed(2)}x${rsiExpansion > 0 ? ` | λ=${λ.toFixed(1)}x` : ''}`,
       ...indicators,
     };
   }

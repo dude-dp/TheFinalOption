@@ -260,6 +260,73 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/**
+ * Reconciliation Circuit Breaker
+ *
+ * Called when pollOrderStatus times out (PARTIALLY_FILLED) — meaning the
+ * broker's order API was unresponsive. This function cross-checks the actual
+ * position book to determine the true state.
+ *
+ * Strategy:
+ *   - 3 retries × 1s apart against GET /v2/portfolio/short-term-positions
+ *   - If a matching position exists: returns fill price and qty from broker truth
+ *   - If all 3 retries fail or no position found: returns null → caller defaults to FLAT
+ *
+ * @param instrumentToken  The instrument we attempted to buy
+ * @param accessToken      Current Upstox OAuth token
+ * @returns { fillPrice, quantity } if confirmed, null if broker unreachable or flat
+ */
+async function reconcilePositionAfterTimeout(
+  instrumentToken: string,
+  accessToken: string
+): Promise<{ fillPrice: number; quantity: number } | null> {
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY_MS = 1000;
+
+  logWarn(`[RECONCILE] Poll timeout detected. Starting position reconciliation for ${instrumentToken}...`);
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    await sleep(RETRY_DELAY_MS);
+    try {
+      const res = await fetch(
+        'https://api.upstox.com/v2/portfolio/short-term-positions',
+        { headers: { 'Authorization': `Bearer ${accessToken}`, 'Accept': 'application/json' } }
+      );
+
+      if (!res.ok) {
+        logWarn(`[RECONCILE] Attempt ${attempt}/${MAX_RETRIES}: positions API returned ${res.status}`);
+        continue;
+      }
+
+      const posData = await res.json() as any;
+      const positions: any[] = posData?.data ?? [];
+
+      const match = positions.find((p: any) =>
+        p.instrument_token === instrumentToken && (p.net_quantity ?? p.netQuantity ?? 0) > 0
+      );
+
+      if (match) {
+        const fillPrice = match.average_price ?? match.avgPrice ?? 0;
+        const quantity  = Math.abs(match.net_quantity ?? match.netQuantity ?? 0);
+        logInfo(`[RECONCILE] ✅ Position confirmed by broker: ${quantity} qty @ ₹${fillPrice}`);
+        return { fillPrice, quantity };
+      }
+
+      // Positions API responded but no matching instrument → flat book confirmed
+      logInfo(`[RECONCILE] Broker confirms flat book for ${instrumentToken}. No position.`);
+      return null;
+
+    } catch (err: any) {
+      logWarn(`[RECONCILE] Attempt ${attempt}/${MAX_RETRIES} failed: ${err.message}`);
+    }
+  }
+
+  // All 3 retries exhausted — broker API appears fully down
+  logError(`[RECONCILE] ❌ All ${MAX_RETRIES} reconciliation attempts failed. Defaulting to FLAT. Admin alert needed.`);
+  asyncLog({ type: 'system_event', event: 'reconciliation_failed', instrumentToken });
+  return null;
+}
+
 import { generateIcebergSlices } from './iceberg.js';
 
 // Standard NIFTY configuration. 
@@ -873,6 +940,21 @@ export class ExecutionEngine {
       ApiTracker.recordCall();
       const result = await pollOrderStatus(orderId, accessToken, `CONF-${orderId}`);
       if (result.status !== 'FILLED' || !result.executionPrice) {
+        if (result.status === 'PARTIALLY_FILLED') {
+          // Poll timed out — broker API was slow/down. Cross-check real positions.
+          const reconciled = await reconcilePositionAfterTimeout(instrumentToken, accessToken);
+          if (!reconciled) {
+            logError(`[EXECUTOR] Reconciliation confirms FLAT book. Aborting position registration.`);
+            return;
+          }
+          // Broker confirms a real position — register it from reconciliation truth
+          const { fillPrice: reconFill, quantity: reconQty } = reconciled;
+          logInfo(`[EXECUTOR] Reconciled fill: ${reconQty} qty @ ₹${reconFill}. Registering position.`);
+          tracker.setActivePosition(instrumentToken, reconQty, reconFill);
+          if (activeWsClient) activeWsClient.subscribe(instrumentToken);
+          await this.anchorGttOcoBracket(orderId, instrumentToken, reconFill, lots, reconQty, accessToken);
+          return;
+        }
         logError(`[EXECUTOR] Order not filled. Status: ${result.status}`);
         return;
       }

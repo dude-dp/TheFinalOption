@@ -262,6 +262,18 @@ class PortfolioTracker {
     logWarn(`[TRACKER] Trading Circuit Breaker Tripped. Reason: ${reason}`);
   }
 
+  /**
+   * Clears the operational halt flag.
+   * Called by StateEngine's HALT recovery watcher when the user
+   * manually re-enables RUNNING from the dashboard.
+   */
+  public resetHalt(): void {
+    this.state.isHalted = false;
+    this.state.haltReason = '';
+    logWarn(`[TRACKER] Halt flag cleared. Engine re-armed by user.`);
+  }
+
+
   // --- Compatibility Methods ---
   
   public setActivePosition(token: string, qty: number, entryPrice: number, symbol: string = ""): void {
