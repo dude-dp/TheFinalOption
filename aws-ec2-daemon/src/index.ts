@@ -140,7 +140,8 @@ async function bootstrapEngine() {
   (wsClient as any).aggregator.seedHistoricalData(historicalData);
 
   const onSignal = async (signalPayload: any) => {
-    logInfo(`[SIGNAL] Candle Closed. MACD: ${signalPayload.currentMacd.toFixed(2)} | Signal: ${signalPayload.signal}`);
+    logInfo(`[SIGNAL] Candle Closed. MACD: ${signalPayload.currentMacd.toFixed(2)} | Vol: ${signalPayload.volume} | Signal: ${signalPayload.signal}`);
+
 
     // 🗑️ DELETED the duplicate DataEngine.recordLiveCandle here.
     // ws-client.ts natively handles pushing the candle to Supabase!

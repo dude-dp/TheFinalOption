@@ -302,18 +302,18 @@ export class UpstoxWSClient {
               this.latestFuturesDepth = newDepth;
             }
 
-            // Extract cumulative traded volume (LTQ delta = lots traded in this tick)
-            const cumVolume = futMarket?.eFeedDetails?.LTQ ||
-                              futMarket?.efeedDetails?.ltq ||
-                              futMarket?.ltq || 0;
+            // Extract cumulative traded volume (VTT delta = lots traded in this tick)
+            // VTT = Volume Traded Today (monotonically increasing)
+            const cumVolume = Number(futMarket?.vtt) || Number(futMarket?.VTT) || 0;
             if (cumVolume > 0 && cumVolume !== this.lastFuturesCumVolume) {
-              const ltqDelta = cumVolume - this.lastFuturesCumVolume;
-              // Only inject if delta is positive (guards against end-of-day reset)
-              if (ltqDelta > 0) {
-                this.aggregator.injectFuturesVolume(ltqDelta);
+              const vttDelta = cumVolume - this.lastFuturesCumVolume;
+              // Only inject if delta is positive and we have a previous value
+              if (vttDelta > 0 && this.lastFuturesCumVolume !== 0) {
+                this.aggregator.injectFuturesVolume(vttDelta);
               }
               this.lastFuturesCumVolume = cumVolume;
             }
+
           }
         }
 
@@ -394,6 +394,7 @@ export class UpstoxWSClient {
       prevMacd,
       spotPrice: crossoverCandle.close,
       crossoverDelta: crossoverCandle.delta, 
+      volume: crossoverCandle.volume,
       depth: this.latestDepth,
       timestamp: new Date().toISOString()
     });
