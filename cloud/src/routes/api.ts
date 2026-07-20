@@ -549,7 +549,8 @@ api.get('/api/status', async (c) => {
       activePosition: sysState.active_position || null,
       activeHedgePosition: null,
       lockTimestamp: null,
-      latestTick: sysState.account_margin?.latestTick || null
+      latestTick: sysState.account_margin?.latestTick || null,
+      botIntelligence: sysState.account_margin?.botIntelligence || null
     });
   } catch (err: any) {
     return c.json({ error: `Failed to compile UI telemetry: ${err.message}` }, 500);

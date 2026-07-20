@@ -96,6 +96,14 @@ class PortfolioTracker {
     this.latestTick = tick;
   }
 
+  // 🟢 NEW: Live bot intelligence
+  public latestIntelligence: { regime: string, confluenceScore: number, activeTask: string } | null = null;
+
+  public setLatestIntelligence(intel: { regime: string, confluenceScore: number, activeTask: string }): void {
+    this.latestIntelligence = intel;
+  }
+
+
   /**
    * Initializes or reconciles the daily structural boundaries.
    * Should be invoked at 09:15 AM IST or immediately upon daemon boot sequence.

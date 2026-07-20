@@ -601,6 +601,10 @@
       }
     }
 
+    if (data.botIntelligence && window.updateBotIntelligence) {
+      window.updateBotIntelligence(data.botIntelligence);
+    }
+
     // Toggle button (Icon Morphing)
     const toggleBtn = document.getElementById('toggle-bot-btn');
     if (toggleBtn) {

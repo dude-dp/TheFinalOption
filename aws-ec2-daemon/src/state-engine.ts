@@ -120,7 +120,8 @@ export class StateEngine {
             active_position_ltp: tracker.liveSpotPrice || 0,
             account_margin: {
               ...marginData,
-              latestTick: latestTick
+              latestTick: latestTick,
+              botIntelligence: tracker.latestIntelligence
             },
             active_position: activePos,
             daemon_last_heartbeat: new Date().toISOString()
@@ -154,9 +155,40 @@ export class StateEngine {
     _spotPrice: number,
     token: string
   ): Promise<void> {
-    if (this.botStatus !== 'RUNNING') return;
-
     const signal = evaluateConfluence(candles, new Date());
+
+    // ── Compute Bot Intelligence for UI ──
+    let regime = 'Analyzing Variance...';
+    if (signal.vwap > 0) {
+       if (signal.ema9 > signal.ema21 && _spotPrice > signal.vwap) regime = 'Bullish Trend';
+       else if (signal.ema9 < signal.ema21 && _spotPrice < signal.vwap) regime = 'Bearish Trend';
+       else regime = 'Chop / Range';
+    }
+
+    let score = 0;
+    if (signal.vwap > 0) {
+      if (signal.rsi >= 40 && signal.rsi <= 60) score += 25;
+      else if (signal.rsi > 60 || signal.rsi < 40) score += 50;
+      
+      if (signal.volumeRatio > 1.2) score += 50;
+      else if (signal.volumeRatio > 0.8) score += 25;
+      
+      score = Math.min(100, score);
+    }
+
+    let activeTask = signal.reason || 'Idle. Waiting for setup.';
+    if (this.botStatus !== 'RUNNING') {
+       activeTask = `Bot is ${this.botStatus}. Engine paused.`;
+    }
+
+    tracker.setLatestIntelligence({
+      regime,
+      confluenceScore: score,
+      activeTask
+    });
+
+    // ── Stop Execution if Bot is not RUNNING ──
+    if (this.botStatus !== 'RUNNING') return;
 
     // Always log signal evaluations asynchronously for post-market analysis
     asyncLog({
