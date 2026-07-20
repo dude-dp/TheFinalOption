@@ -300,6 +300,8 @@ export class UpstoxWSClient {
               });
               // Atomically update so the next index tick picks up the fresh book
               this.latestFuturesDepth = newDepth;
+            } else if (this.msgCount % 100 === 0) {
+              logInfo(`[WS DEBUG] Futures raw quotes missing or empty. futMarket keys: ${Object.keys(futMarket).join(', ')}`);
             }
 
             // Extract cumulative traded volume (VTT delta = lots traded in this tick)
@@ -312,6 +314,8 @@ export class UpstoxWSClient {
                 this.aggregator.injectFuturesVolume(vttDelta);
               }
               this.lastFuturesCumVolume = cumVolume;
+            } else if (this.msgCount % 100 === 0) {
+              logInfo(`[WS DEBUG] Futures cumVolume is 0 or unchanged. futMarket.vtt: ${futMarket?.vtt}, lastFuturesCumVolume: ${this.lastFuturesCumVolume}`);
             }
 
           }

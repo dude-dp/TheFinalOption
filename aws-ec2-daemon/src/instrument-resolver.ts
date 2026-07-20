@@ -10,7 +10,7 @@
 import { logInfo, logError, logWarn } from './logger.js';
 import zlib from 'zlib';
 
-const INSTRUMENTS_URL = 'https://assets.upstox.com/market-assets/instruments/v1/NSE_FO.json.gz';
+const INSTRUMENTS_URL = 'https://assets.upstox.com/market-quote/instruments/exchange/complete.json.gz';
 
 interface UpstoxInstrument {
   instrument_key: string;
@@ -60,15 +60,15 @@ export async function resolveNiftyFuturesKey(): Promise<string> {
     const instruments: UpstoxInstrument[] = JSON.parse(decompressed.toString('utf-8'));
 
     // Filter: NIFTY front-month futures only (not NIFTYMINI, not BANKNIFTY)
-    const todayStr = new Date().toISOString().split('T')[0]; // 'YYYY-MM-DD'
+    const now = Date.now();
 
     const niftyFutures = instruments
       .filter(i =>
         i.instrument_type === 'FUT' &&
         i.name === 'NIFTY' &&
-        i.expiry >= todayStr  // Only non-expired contracts
+        new Date(i.expiry).getTime() >= now  // Only non-expired contracts
       )
-      .sort((a, b) => a.expiry.localeCompare(b.expiry)); // Nearest expiry first
+      .sort((a, b) => new Date(a.expiry).getTime() - new Date(b.expiry).getTime()); // Nearest expiry first
 
     if (niftyFutures.length === 0) {
       throw new Error('No active NIFTY futures contracts found in instrument master');
