@@ -25,36 +25,74 @@ export class CandleAggregator {
   private closedCandles: LocalCandle[] = [];
   private currentMinute: number | null = null;
   private previousLtp: number = 0; // Fallback for determining tick direction
+  private lastClosedCandleTimestamp: string | null = null;
+
+  private rolloverTimer: NodeJS.Timeout | null = null;
+  private onCandleClose: (candles: LocalCandle[]) => void;
+
+  constructor(onCandleCloseCallback: (candles: LocalCandle[]) => void) {
+    this.onCandleClose = onCandleCloseCallback;
+    this.syncToSystemClock();
+  }
+
+  /**
+   * ⏰ Aligns the aggregator to the exact top of the minute using the system clock.
+   * This guarantees confluence evaluates at XX:XX:00.000 even if the WS feed pauses.
+   */
+  private syncToSystemClock() {
+    const now = new Date();
+    const msUntilNextMinute = 60000 - (now.getSeconds() * 1000 + now.getMilliseconds());
+
+    setTimeout(() => {
+      this.forceCloseCurrentCandle();
+      // Once aligned, run exactly every 60,000ms
+      this.rolloverTimer = setInterval(() => this.forceCloseCurrentCandle(), 60000);
+    }, msUntilNextMinute);
+  }
+
+  public forceCloseCurrentCandle() {
+    if (!this.currentCandle) return;
+
+    this.closedCandles.push(this.currentCandle);
+    if (this.closedCandles.length > 100) this.closedCandles.shift();
+
+    const finalizedCandles = [...this.closedCandles];
+    this.lastClosedCandleTimestamp = this.currentCandle.timestamp; // Track the closed timestamp
+    this.currentCandle = null; // Reset for the new minute
+    this.currentMinute = new Date().getMinutes();
+
+    // Fire directly to the callback inmediatamente
+    this.onCandleClose(finalizedCandles);
+  }
 
   // 1. Seed the engine with historical data on boot so indicators can calculate immediately
   public seedHistoricalData(candles: LocalCandle[]) {
     // Note: Historical candles won't have exact delta, we initialize standard OHLC
     this.closedCandles = candles;
+    if (candles.length > 0) {
+      this.lastClosedCandleTimestamp = candles[candles.length - 1].timestamp;
+    }
     console.log(`[AGGREGATOR] Seeded ${candles.length} historical candles.`);
   }
 
   // 2. Process live ticks
-  public processTick(tick: Tick): LocalCandle[] | null {
+  public processTick(tick: Tick): void {
     const tickDate = new Date(tick.timestamp);
     const tickMinute = tickDate.getMinutes();
 
-    // If the minute has rolled over, close the current candle
+    const tickCandleTime = new Date(tickDate);
+    tickCandleTime.setSeconds(0, 0);
+    tickCandleTime.setMilliseconds(0);
+    const tickCandleTimestampStr = tickCandleTime.toISOString();
+
+    if (this.lastClosedCandleTimestamp && tickCandleTimestampStr <= this.lastClosedCandleTimestamp) {
+      // Discard late ticks belonging to an already closed candle
+      return;
+    }
+
+    // Fallback: If system clock drift occurs or timer lags behind tick, rely on tick timestamp
     if (this.currentMinute !== null && tickMinute !== this.currentMinute) {
-      if (this.currentCandle) {
-        this.closedCandles.push(this.currentCandle);
-        
-        // Keep memory lean (keep last 100 candles for indicator math)
-        if (this.closedCandles.length > 100) this.closedCandles.shift();
-        
-        const finalizedCandles = [...this.closedCandles];
-        
-        // Reset for the new minute
-        this.currentCandle = null;
-        this.currentMinute = tickMinute;
-        
-        // Return the array so the daemon can calculate MACD & evaluate Order Flow
-        return finalizedCandles; 
-      }
+      this.forceCloseCurrentCandle();
     }
 
     this.currentMinute = tickMinute;
@@ -62,7 +100,7 @@ export class CandleAggregator {
     // 3. Build or update the current 1-minute candle
     if (!this.currentCandle) {
       this.currentCandle = {
-        timestamp: new Date(tickDate.setSeconds(0, 0)).toISOString(),
+        timestamp: tickCandleTimestampStr,
         open: tick.ltp,
         high: tick.ltp,
         low: tick.ltp,
@@ -118,8 +156,6 @@ export class CandleAggregator {
     }
 
     this.previousLtp = tick.ltp; // Store for next tick comparison
-
-    return null; // Candle not closed yet, continue aggregating
   }
 
   /**
@@ -142,7 +178,6 @@ export class CandleAggregator {
   }
 
   /**
-
    * Positive = Aggressive Buying. Negative = Aggressive Selling.
    */
   public getLiveDelta(): number {
@@ -169,5 +204,15 @@ export class CandleAggregator {
    */
   public getClosedCandles(): LocalCandle[] {
     return this.closedCandles;
+  }
+
+  /**
+   * Clean up timer resources on shutdown.
+   */
+  public destroy() {
+    if (this.rolloverTimer) {
+      clearInterval(this.rolloverTimer);
+      this.rolloverTimer = null;
+    }
   }
 }

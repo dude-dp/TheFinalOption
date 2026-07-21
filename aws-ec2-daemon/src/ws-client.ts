@@ -5,7 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 import { fileURLToPath } from 'url';
 import path from 'path';
 
-import { CandleAggregator } from './aggregator.js';
+import { CandleAggregator, LocalCandle } from './aggregator.js';
 import { TickArchiver } from './archiver.js';
 import { tracker } from './tracker.js';
 import { varianceEngine } from './variance.js';
@@ -42,9 +42,10 @@ export interface TickData {
 
 export class UpstoxWSClient {
   private ws: WebSocket | null = null;
-  private aggregator = new CandleAggregator();
+  private aggregator: CandleAggregator;
   private archiver = new TickArchiver();
   private token: string;
+  private onSignalCallback: ((signalData: any) => void) | null = null;
   // NSE_INDEX|Nifty 50 — used for accurate LTP / spot price
   private instrumentKey = 'NSE_INDEX|Nifty 50';
   // NSE_FO futures — resolved dynamically on boot for real volume + depth
@@ -63,6 +64,9 @@ export class UpstoxWSClient {
 
   constructor(token: string) {
     this.token = token;
+    this.aggregator = new CandleAggregator((closedCandles) => {
+      this.handleClosedCandles(closedCandles);
+    });
 
     // Listen for system:shutdown from StateEngine (EventBus decoupling pattern)
     eventBus.once('system:shutdown', () => {
@@ -78,6 +82,7 @@ export class UpstoxWSClient {
       try { this.ws.close(); } catch (_) {}
       this.ws = null;
     }
+    this.aggregator.destroy();
     logInfo('[WS-CLIENT] Disconnected. Auto-reconnect suppressed.');
   }
 
@@ -99,6 +104,7 @@ export class UpstoxWSClient {
   }
 
   public async connect(onSignal: (signalData: any) => void) {
+    this.onSignalCallback = onSignal;
     // Resolve the live NIFTY front-month futures key BEFORE connecting
     this.futuresKey = await resolveNiftyFuturesKey();
 
@@ -239,7 +245,7 @@ export class UpstoxWSClient {
             varianceEngine.evaluateVelocity(enrichedTick.timestamp);
             this.archiver.recordTick(enrichedTick);
 
-            const closedCandles = this.aggregator.processTick(enrichedTick);
+            this.aggregator.processTick(enrichedTick);
 
             const liveDelta = this.aggregator.getLiveDelta();
             const liveVolume = this.aggregator.getLiveVolume();
@@ -266,31 +272,10 @@ export class UpstoxWSClient {
                 macd_line: liveMacd
               });
             }
-
-
-            if (closedCandles && closedCandles.length > 0) {
-              const latestClosedCandle = closedCandles[closedCandles.length - 1];
-              DataEngine.recordLiveCandle(latestClosedCandle);
-              this.evaluateAndPushSignal(closedCandles, onSignal);
-
-              // ─── Confluence Signal Evaluation ─────────────────────────
-              // Non-blocking: StateEngine.evaluateAndRoute returns a Promise
-              // that we intentionally do NOT await here so the WS handler
-              // returns in microseconds.
-              const allCandles = this.aggregator.getClosedCandles();
-              const token = this.token;
-              if (StateEngine.activeToken) {
-                StateEngine.evaluateAndRoute(
-                  allCandles,
-                  latestClosedCandle.close,
-                  StateEngine.activeToken
-                ).catch((err: Error) => logError(`[SIGNAL] Unhandled error in evaluateAndRoute: ${err.message}`));
-              }
-              // ──────────────────────────────────────────────────────────
-            }
           } else if (this.msgCount <= 5) {
             logInfo(`[WS DEBUG #${this.msgCount}] ⚠️ Feed found for ${this.instrumentKey} but no LTP. Feed structure: ${JSON.stringify(feed).substring(0, 300)}`);
           }
+
         }
 
         // ── 2. NIFTY Futures Feed — Real Volume + Order Book ─────────────────────────
@@ -421,6 +406,30 @@ export class UpstoxWSClient {
       };
       setTimeout(attemptReconnect, 5000);
     });
+  }
+
+  private handleClosedCandles(closedCandles: LocalCandle[]) {
+    if (!closedCandles || closedCandles.length === 0) return;
+    const latestClosedCandle = closedCandles[closedCandles.length - 1];
+    logInfo(`[WS-CLIENT] ⏰ Clock-driven candle close for ${latestClosedCandle.timestamp}. Evaluating signal...`);
+
+    // 1. Save live candle to Supabase DB (asynchronously, non-blocking)
+    DataEngine.recordLiveCandle(latestClosedCandle);
+
+    // 2. Evaluate and push legacy MACD signal if callback exists
+    if (this.onSignalCallback) {
+      this.evaluateAndPushSignal(closedCandles, this.onSignalCallback);
+    }
+
+    // 3. Evaluate and route via the new confluence engine (StateEngine)
+    const allCandles = this.aggregator.getClosedCandles();
+    if (StateEngine.activeToken) {
+      StateEngine.evaluateAndRoute(
+        allCandles,
+        latestClosedCandle.close,
+        StateEngine.activeToken
+      ).catch((err: Error) => logError(`[SIGNAL] Unhandled error in evaluateAndRoute: ${err.message}`));
+    }
   }
 
   private evaluateAndPushSignal(candles: any[], onSignal: (signalData: any) => void) {
