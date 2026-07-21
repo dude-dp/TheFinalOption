@@ -8,8 +8,9 @@ interface CircuitBreakerState {
 }
 
 export class AIManager {
-  private static apiKey = process.env.OPENROUTER_API_KEY || '';
-  private static baseUrl = 'https://openrouter.ai/api/v1';
+  // Switched to GROQ configurations
+  private static apiKey = process.env.GROQ_API_KEY || '';
+  private static baseUrl = 'https://api.groq.com/openai/v1';
   public static availableModels: OpenRouterModel[] = [];
 
   // In-memory circuit breaker
@@ -19,13 +20,13 @@ export class AIManager {
 
   /**
    * Task 1.2: Discovery & Filtering
-   * Fetches models, filters for free pricing, and ensures context length >= 32000
+   * Fetches models from Groq and filters for the best reasoning/JSON models
    */
   public static async fetchAvailableModels(): Promise<void> {
-    logInfo('[AI-MANAGER] Syncing model leaderboard from Supabase...');
+    logInfo('[AI-MANAGER] Syncing Groq model leaderboard from Supabase...');
     try {
       if (!supabase) throw new Error('Supabase client not initialized');
-      // Fetch the top 10 models sorted by our benchmark score and latency
+      
       const { data, error } = await supabase
         .from('ai_model_health')
         .select('model_id, success_rate, latency_ms')
@@ -35,33 +36,44 @@ export class AIManager {
       if (error) throw error;
 
       if (data && data.length > 0) {
-        // Map the DB rows back into the OpenRouterModel array structure expected by the engine
         this.availableModels = data.map(dbModel => ({
           id: dbModel.model_id,
-          name: dbModel.model_id.split('/')[1] || dbModel.model_id,
-          context_length: 32000, // Assumed valid since they passed Phase 1 discovery
-          pricing: { prompt: 0, completion: 0 }
+          name: dbModel.model_id.split('-')[0] || dbModel.model_id,
+          context_length: 8192, 
+          pricing: { prompt: 0, completion: 0 } // Groq tier is rate-limit based, cost is 0
         }));
         
         logInfo(`[AI-MANAGER] Loaded ${this.availableModels.length} models. Top Pick: ${this.availableModels[0].id} (Score: ${data[0].success_rate})`);
       } else {
-        logWarn('[AI-MANAGER] DB leaderboard is empty. Bootstrapping initial OpenRouter network fetch...');
-        // Fallback to the original OpenRouter fetch logic if DB is empty
-        const res = await fetch(`${this.baseUrl}/models`);
+        logWarn('[AI-MANAGER] DB leaderboard is empty. Bootstrapping initial Groq network fetch...');
+        
+        // Fetch from Groq's OpenAI-compatible models endpoint
+        const res = await fetch(`${this.baseUrl}/models`, {
+          headers: { 'Authorization': `Bearer ${this.apiKey}` }
+        });
+        
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         
-        const fetchData = await res.json() as { data: OpenRouterModel[] };
+        const fetchData = await res.json() as { data: any[] };
         
-        this.availableModels = fetchData.data.filter(model => {
-          const isFree = Number(model.pricing.prompt) === 0 && Number(model.pricing.completion) === 0;
-          const hasContext = model.context_length >= 32000;
-          // Avoid known deprecated or highly experimental tags if necessary
-          const isStable = !model.name.toLowerCase().includes('deprecated');
-          
-          return isFree && hasContext && isStable;
-        });
+        // Hardcoded whitelist of the fastest and smartest models on Groq for algorithmic trading
+        const topTradingModels = [
+          'llama-3.3-70b-versatile',
+          'llama-3.1-8b-instant',
+          'gemma2-9b-it',
+          'mixtral-8x7b-32768'
+        ];
+        
+        this.availableModels = fetchData.data
+          .filter(model => topTradingModels.includes(model.id))
+          .map(model => ({
+            id: model.id,
+            name: model.id,
+            context_length: 8192,
+            pricing: { prompt: 0, completion: 0 }
+          }));
 
-        logInfo(`[AI-MANAGER] Discovered ${this.availableModels.length} viable free models.`);
+        logInfo(`[AI-MANAGER] Discovered ${this.availableModels.length} top-tier Groq models.`);
         if (this.availableModels.length > 0) {
             logInfo(`[AI-MANAGER] Top candidate: ${this.availableModels[0].id}`);
         }
@@ -71,9 +83,6 @@ export class AIManager {
     }
   }
 
-  /**
-   * Safe getter that excludes models currently in cooldown.
-   */
   public static getHealthyModels(): OpenRouterModel[] {
     const now = Date.now();
     return this.availableModels.filter(model => {
@@ -83,10 +92,6 @@ export class AIManager {
     });
   }
 
-  /**
-   * Phase 2: The Retry Matrix
-   * Attempts to get a valid decision, falling back to the next model on failure.
-   */
   public static async askWithFallback(prompt: string, taskType: 'trading' | 'analysis' = 'trading'): Promise<AIResponse & { parsed?: TradingDecision }> {
     const healthyModels = this.getHealthyModels();
     
@@ -95,7 +100,6 @@ export class AIManager {
       return this.generateEmergencyFallback();
     }
 
-    // Try all available healthy models before giving up entirely for this tick
     const maxAttempts = healthyModels.length;
 
     for (let i = 0; i < maxAttempts; i++) {
@@ -109,14 +113,14 @@ export class AIManager {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://staq.shop',
-            'X-Title': 'NIFTY Scalper Edge',
+            'Content-Type': 'application/json'
           },
           body: JSON.stringify({
             model: targetModel,
-            messages: [{ role: 'user', content: prompt }],
-            temperature: 0.1
+            // Pre-append JSON instructions to ensure Groq respects the json_object flag
+            messages: [{ role: 'user', content: prompt + "\n\nRespond ONLY with a valid JSON object." }],
+            temperature: 0.1,
+            response_format: { type: "json_object" } // ENFORCE STRICT JSON OUTPUT
           })
         });
 
@@ -128,10 +132,8 @@ export class AIManager {
         const latency = Date.now() - startTime;
         const rawContent = result.choices[0].message.content;
 
-        // Attempt to parse the schema immediately to verify json_validity
         const parsedDecision = this.parseTradingDecision(rawContent);
 
-        // ✅ Success: Update health, reset failures, and return
         this.updateModelHealth(targetModel, latency, true, true);
         this.resetCircuitBreaker(targetModel);
 
@@ -148,11 +150,8 @@ export class AIManager {
         const latency = Date.now() - startTime;
         const isParseError = error.message.includes('Invalid action') || error.message.includes('JSON');
         
-        // ❌ Failure: Update health, increment strikes
         this.updateModelHealth(targetModel, latency, false, !isParseError);
         this.recordFailure(targetModel);
-        
-        // Loop immediately continues to the next model in the array
       }
     }
 
@@ -160,10 +159,6 @@ export class AIManager {
     return this.generateEmergencyFallback();
   }
 
-  /**
-   * Phase 3 Helper: Bypasses the fallback loop to hit a specific model directly.
-   * Used strictly for parallel ensemble execution.
-   */
   public static async askSpecificModel(prompt: string, targetModel: string): Promise<AIResponse & { parsed?: TradingDecision }> {
     const startTime = Date.now();
     try {
@@ -171,14 +166,13 @@ export class AIManager {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://staq.shop',
-          'X-Title': 'NIFTY Scalper Edge',
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           model: targetModel,
-          messages: [{ role: 'user', content: prompt }],
-          temperature: 0.1
+          messages: [{ role: 'user', content: prompt + "\n\nRespond ONLY with a valid JSON object." }],
+          temperature: 0.1,
+          response_format: { type: "json_object" } // ENFORCE STRICT JSON OUTPUT
         })
       });
 
@@ -234,11 +228,7 @@ export class AIManager {
     this.circuitBreaker.delete(modelId);
   }
 
-  /**
-   * Async fire-and-forget to Supabase to keep long-term statistics for the Dashboard
-   */
   private static async updateModelHealth(modelId: string, latency: number, isSuccess: boolean, isValidJson: boolean) {
-    // Fire asynchronously so it doesn't block the trading loop
     setImmediate(async () => {
       try {
         if (!supabase) return;
@@ -250,12 +240,9 @@ export class AIManager {
         });
 
         if (error) {
-           // Fallback if RPC isn't created yet: Simple UPSERT logic or manual fetch/update
            logError(`[AI-MANAGER] DB Health Update failed: ${error.message}`);
         }
-      } catch (e) {
-         // Silently catch to prevent daemon disruption
-      }
+      } catch (e) {}
     });
   }
 
@@ -276,29 +263,15 @@ export class AIManager {
     };
   }
 
-  /**
-   * Safely parses the LLM output into the strict TradingDecision schema.
-   * Strips markdown backticks if the model hallucinates them.
-   */
   public static parseTradingDecision(rawContent: string): TradingDecision {
     try {
-      // Extract ONLY the JSON object from raw content to bypass preambles (e.g. "User Safety: safe") and markdown wrappers
       const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
-        if (rawContent.includes("User Safety: safe")) {
-          return {
-            action: 'WAIT',
-            confidence: 0,
-            reasoning: 'Model returned safety check without JSON',
-            risk_level: 'LOW'
-          };
-        }
         throw new Error("No JSON object found in response");
       }
 
       const parsed = JSON.parse(jsonMatch[0]);
 
-      // Validate required fields
       if (!['BUY_CE', 'BUY_PE', 'WAIT'].includes(parsed.action)) {
         throw new Error(`Invalid action returned: ${parsed.action}`);
       }
@@ -311,7 +284,6 @@ export class AIManager {
     } catch (error: any) {
       logError(`[AI-MANAGER] Failed to parse JSON payload: ${error.message}. Raw output: ${rawContent}`);
       
-      // Fail-safe fallback to prevent execution halts
       return {
         action: 'WAIT',
         confidence: 0,
