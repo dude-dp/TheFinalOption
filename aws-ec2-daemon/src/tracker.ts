@@ -113,11 +113,20 @@ class PortfolioTracker {
     this.latestIntelligence = intel;
   }
 
-  // 🟢 NEW: AI Ensemble Votes
+  // 🟢 NEW: AI Ensemble Votes & Reasoning
   public latestVotes: any[] = [];
+  public latestConsensusReasoning: string = '';
 
-  public setLatestVotes(votes: any[]) {
+  public setLatestVotes(votes: any[], reasoning: string = '') {
     this.latestVotes = votes;
+    this.latestConsensusReasoning = reasoning;
+  }
+
+  // 🟢 NEW: OI Data
+  public oiData: { callOI: number, putOI: number } = { callOI: 0, putOI: 0 };
+
+  public setOIData(callOI: number, putOI: number) {
+    this.oiData = { callOI, putOI };
   }
 
   /**

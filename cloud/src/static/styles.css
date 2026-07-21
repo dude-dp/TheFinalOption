@@ -77,6 +77,9 @@ body {
 .bot-intel-section { grid-column: span 4; }
 .logs-section { grid-column: span 7; height: 380px; }
 .ledger-section { grid-column: span 5; height: 380px; }
+.equity-section { grid-column: span 7; height: 380px; }
+.leaderboard-section { grid-column: span 5; height: 380px; }
+.persona-section { grid-column: span 12; }
 
 /* Typography & Badges */
 .mono { font-family: var(--font-mono); }
@@ -120,6 +123,10 @@ body {
   .chart-section { grid-column: span 12; grid-row: span 1; min-height: 500px; }
   .position-section, .bot-intel-section { grid-column: span 6; }
 }
+@media (max-width: 900px) {
+  .topbar { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .controls { width: 100%; flex-wrap: wrap; }
+}
 @media (max-width: 768px) {
-  .logs-section, .ledger-section, .position-section, .bot-intel-section { grid-column: span 12; }
+  .logs-section, .ledger-section, .position-section, .bot-intel-section, .equity-section, .leaderboard-section { grid-column: span 12; }
 }

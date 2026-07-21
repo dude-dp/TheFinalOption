@@ -33,9 +33,14 @@ dashboard.get('/', (c) => {
       </div>
       
       <div class="brand-metrics">
-        <div style="display: flex; align-items: center; gap: 4px;">
-          <span style="letter-spacing: 0.05em; color: var(--text-secondary);">MARG</span>
-          <span id="margin-value" style="font-weight: 600; color: var(--text-primary);">---</span>
+        <div style="display: flex; flex-direction: column; justify-content: center; min-width: 120px;">
+          <div style="display: flex; justify-content: space-between; font-size: 10px; margin-bottom: 3px; font-family: var(--font-mono);">
+            <span style="letter-spacing: 0.05em; color: var(--text-secondary);">MARG</span>
+            <span id="margin-value" style="font-weight: 600; color: var(--text-primary);">---</span>
+          </div>
+          <div style="width: 100%; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden;">
+            <div id="margin-util-fill" style="width: 0%; height: 100%; background: var(--accent-success); transition: width 0.3s ease, background 0.3s ease;"></div>
+          </div>
         </div>
         <span style="color: var(--border-color);">|</span>
         <div style="display: flex; align-items: center; gap: 6px;">
@@ -49,6 +54,11 @@ dashboard.get('/', (c) => {
         <div style="display: flex; align-items: center; gap: 6px;">
           <span id="status-dot" style="width: 6px; height: 6px; border-radius: 50%; background: var(--text-secondary); transition: background 0.3s ease;"></span>
           <span id="status-text" style="font-weight: 500; color: var(--text-primary);">STOPPED</span>
+        </div>
+        <span style="color: var(--border-color);">|</span>
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <span id="health-ping-dot" style="width: 6px; height: 6px; border-radius: 50%; background: var(--text-secondary); transition: background 0.3s ease;" title="WebSocket/API Latency"></span>
+          <span id="session-timer" style="font-weight: 500; color: var(--text-primary); font-family: var(--font-mono); font-size: 0.8rem;">--:--:--</span>
         </div>
       </div>
     </div>
@@ -78,7 +88,7 @@ dashboard.get('/', (c) => {
 
   <div class="dashboard-wrapper">
     <!-- Quant Analytics Ratios Banner -->
-    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 0 auto 16px auto; width: 100%; max-width: 1600px; padding: 0 24px; box-sizing: border-box;">
+    <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin: 0 auto 16px auto; width: 100%; max-width: 1600px; padding: 0 24px; box-sizing: border-box;">
       <div class="metric-card" style="display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 12px 16px;">
         <span class="metric-label" style="text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px;">Sharpe Ratio</span>
         <div style="display: flex; align-items: baseline; gap: 8px;">
@@ -102,6 +112,26 @@ dashboard.get('/', (c) => {
           <span id="badge-calmar" style="font-size: 10px; font-family: var(--font-mono); padding: 2px 6px; border-radius: 4px; background: rgba(255,255,255,0.05); color: var(--text-secondary); font-weight: 700;">WAITING</span>
         </div>
       </div>
+
+      <div class="metric-card" style="display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 12px 16px;">
+        <span class="metric-label" style="text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px;">Win Rate</span>
+        <div style="display: flex; align-items: baseline; gap: 8px;">
+          <span id="metric-winrate" class="metric-value" style="font-size: 1.5rem; font-family: var(--font-mono);">0%</span>
+        </div>
+      </div>
+
+      <div class="metric-card" style="display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 12px 16px;">
+        <span class="metric-label" style="text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px;">Profit Factor</span>
+        <div style="display: flex; align-items: baseline; gap: 8px;">
+          <span id="metric-profitfactor" class="metric-value" style="font-size: 1.5rem; font-family: var(--font-mono);">0.0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Drawdown Alert Banner -->
+    <div id="drawdown-alert" style="display: none; background: rgba(255, 59, 48, 0.1); border: 1px solid var(--accent-danger); color: var(--accent-danger); padding: 12px 24px; border-radius: 8px; margin: 0 auto 16px auto; max-width: 1600px; width: calc(100% - 48px); font-weight: 600; align-items: center; gap: 8px; box-sizing: border-box;">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      <span><strong>DRAWDOWN ALERT:</strong> Max drawdown threshold exceeded. PnL has dropped <span id="dd-value">0%</span> from the daily peak.</span>
     </div>
 
     <!-- Main Content -->
@@ -138,6 +168,10 @@ dashboard.get('/', (c) => {
                 <span class="metric-label">Avg Price</span>
                 <span id="pos-avg" class="metric-value">₹0.00</span>
               </div>
+              <div class="metric-card" style="flex: 1;">
+                <span class="metric-label">Time in Trade</span>
+                <span id="pos-time" class="metric-value mono" style="font-size: 1.2rem;">--:--</span>
+              </div>
           </div>
         </div>
       </section>
@@ -172,10 +206,44 @@ dashboard.get('/', (c) => {
             </div>
           </div>
 
+          <!-- Intraday Signal Heatmap -->
+          <div class="metric-card">
+            <span class="metric-label">Intraday Signal Heatmap</span>
+            <div id="signal-heatmap" style="display: flex; gap: 4px; margin-top: 8px; height: 24px;">
+              <!-- Injected via dashboard.js -->
+            </div>
+          </div>
+
+          <!-- Open Interest Profile -->
+          <div class="metric-card">
+            <span class="metric-label">ATM Open Interest (OI) Profile</span>
+            <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px;">
+              <span id="oi-put-label" style="color: var(--accent-sell); font-size: 11px; font-family: var(--font-mono); font-weight: bold; width: 40px; text-align: right;">PE 0%</span>
+              <div style="flex-grow: 1; height: 8px; border-radius: 4px; display: flex; overflow: hidden; background: rgba(255,255,255,0.1);">
+                <div id="oi-put-fill" style="width: 50%; background: var(--accent-sell); transition: width 0.5s ease;"></div>
+                <div id="oi-call-fill" style="width: 50%; background: var(--accent-buy); transition: width 0.5s ease;"></div>
+              </div>
+              <span id="oi-call-label" style="color: var(--accent-buy); font-size: 11px; font-family: var(--font-mono); font-weight: bold; width: 40px;">0% CE</span>
+            </div>
+          </div>
+
           <!-- Execution Queue / Iceberg -->
           <div class="metric-card" style="background: rgba(255,255,255,0.01);">
             <span class="metric-label">Active Task</span>
             <span id="intel-task" class="mono" style="font-size: 0.85rem; color: var(--text-secondary);">Idle. Waiting for setup.</span>
+          </div>
+
+          <!-- 🟢 AI Consensus Gauge 🟢 -->
+          <div class="metric-card" id="consensus-gauge-card" style="display: none;">
+            <span class="metric-label">Ensemble Consensus</span>
+            <div id="consensus-gauge" style="margin-top: 8px; width: 100%; height: 16px; border-radius: 4px; overflow: hidden; display: flex; background: rgba(255,255,255,0.05);">
+               <!-- Injected via dashboard.js -->
+            </div>
+            <div id="consensus-gauge-labels" style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-secondary); margin-top: 4px; font-family: var(--font-mono);">
+            </div>
+            <!-- Reasoning snippet -->
+            <div id="consensus-reasoning" style="margin-top: 8px; font-size: 11px; color: var(--text-muted); font-style: italic; border-left: 2px solid rgba(255,255,255,0.1); padding-left: 8px;">
+            </div>
           </div>
 
           <!-- 🟢 AI Ensemble Visualizer 🟢 -->
@@ -192,13 +260,18 @@ dashboard.get('/', (c) => {
 
       <!-- Differentiated Terminal Logs -->
       <section class="bento-item logs-section">
-        <div class="bento-header" style="margin-bottom: 12px;">
+        <div class="bento-header" style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
           <h2 class="bento-title">System Execution Logs</h2>
-          <div class="log-tabs">
-            <button class="log-tab active" data-filter="all">All</button>
-            <button class="log-tab" data-filter="trade">Trades</button>
-            <button class="log-tab" data-filter="ec2">EC2 Daemon</button>
-            <button class="log-tab" data-filter="error">Errors</button>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <div class="log-tabs">
+              <button class="log-tab active" data-filter="all">All</button>
+              <button class="log-tab" data-filter="trade">Trades</button>
+              <button class="log-tab" data-filter="ec2">EC2 Daemon</button>
+              <button class="log-tab" data-filter="error">Errors</button>
+            </div>
+            <button id="log-export-btn" class="btn btn-outline" style="padding: 4px 8px; font-size: 11px;" title="Export Logs to CSV">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            </button>
           </div>
         </div>
         <div id="system-logs" class="terminal">
@@ -225,6 +298,16 @@ dashboard.get('/', (c) => {
               <tr><td colspan="4" style="text-align: center; color: var(--text-secondary);">Waiting for orders...</td></tr>
             </tbody>
           </table>
+        </div>
+      </section>
+
+      <!-- Equity Curve -->
+      <section class="bento-item equity-section">
+        <div class="bento-header">
+          <h2 class="bento-title">Equity Curve</h2>
+        </div>
+        <div style="width: 100%; height: 100%; position: relative; min-height: 200px;">
+          <canvas id="equity-chart"></canvas>
         </div>
       </section>
 
@@ -279,6 +362,9 @@ dashboard.get('/', (c) => {
       </div>
     </div>
   </div>
+
+  <!-- Heatmap Tooltip -->
+  <div id="heatmap-tooltip" style="position: absolute; display: none; z-index: 10000; background: rgba(10,10,10,0.9); border: 1px solid var(--border-color); padding: 8px 12px; border-radius: 6px; font-size: 12px; pointer-events: none; color: var(--text-primary); backdrop-filter: blur(4px);"></div>
 
   <script src="/chart.js"></script>
   <script src="/dashboard.js"></script>

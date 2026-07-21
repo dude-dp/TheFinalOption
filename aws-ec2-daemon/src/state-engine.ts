@@ -150,6 +150,8 @@ export class StateEngine {
             },
             active_position: activePos,
             ensemble_votes: tracker.latestVotes,
+            consensus_reasoning: tracker.latestConsensusReasoning,
+            oi_data: tracker.oiData,
             daemon_last_heartbeat: new Date().toISOString()
         }).eq('id', 1);
 
@@ -205,7 +207,7 @@ export class StateEngine {
     const ensembleResult = await EnsembleEngine.getConsensus(prompt, 2);
     
     // Store the raw vote array in the tracker for the next heartbeat
-    tracker.setLatestVotes(ensembleResult.votes);
+    tracker.setLatestVotes(ensembleResult.votes, ensembleResult.decision.reasoning);
 
     const decision = ensembleResult.decision;
 
