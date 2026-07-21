@@ -20,6 +20,7 @@ const supabase = createClient(
 import { liquidityScanner } from './liquidity.js';
 import type { MarketDepth } from './ws-client.js';
 import { activeWsClient } from './index.js'; // 🟢 NEW IMPORT
+import { isPreMarket } from './lib/market-gate.js';
 
 /** V3 HFT endpoint — requires whitelisted static IP (EC2 Elastic IP: 13.205.66.82) */
 const HFT_URL = 'https://api-hft.upstox.com';
@@ -509,6 +510,9 @@ export class ExecutionEngine {
   }
 
   private async evaluateCircuitBreakers(): Promise<boolean> {
+    if (isPreMarket()) {
+      return false;
+    }
     const state = tracker.getState();
     if (state.isHalted) return false;
 
@@ -541,6 +545,7 @@ export class ExecutionEngine {
   }
 
   public async monitorLiveOrderFlow(liveDelta: number, liveVolume: number, currentLtp: number): Promise<void> {
+    if (isPreMarket()) return;
     const token = tracker.activePositionToken;
     if (!token) return;
 

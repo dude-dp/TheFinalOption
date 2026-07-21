@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { logInfo, logError, logWarn } from './logger.js';
+import { isPreMarket } from './lib/market-gate.js';
 
 const supabase = createClient(
   process.env.SUPABASE_URL || '',
@@ -13,6 +14,11 @@ export class DataEngine {
    * 🟢 LIVE INGESTION: Writes a newly closed 1-minute candle directly to Supabase.
    */
   public static async recordLiveCandle(candle: { timestamp: string, open: number, high: number, low: number, close: number, volume: number }) {
+    if (isPreMarket(new Date(candle.timestamp))) {
+      logInfo('[DATA-ENGINE] [WAIT] Ignoring pre-market candle recording...');
+      return;
+    }
+
     try {
       const { error } = await supabase.from('nifty_candles').upsert({
         timestamp: new Date(candle.timestamp).toISOString(),

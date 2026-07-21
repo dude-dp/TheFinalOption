@@ -38,3 +38,7 @@ pm2 start ecosystem.config.cjs
 
 # 4. Save the clean state so it boots correctly on server restarts
 pm2 save --force
+
+
+git fetch --all
+git reset --hard origin/main

@@ -285,9 +285,13 @@ export class AIManager {
    */
   public static parseTradingDecision(rawContent: string): TradingDecision {
     try {
-      // Strip markdown code blocks if present
-      const cleaned = rawContent.replace(/```json/g, '').replace(/```/g, '').trim();
-      const parsed = JSON.parse(cleaned);
+      // Extract ONLY the JSON object from raw content to bypass preambles (e.g. "User Safety: safe") and markdown wrappers
+      const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        throw new Error("No JSON object found in response");
+      }
+
+      const parsed = JSON.parse(jsonMatch[0]);
 
       // Validate required fields
       if (!['BUY_CE', 'BUY_PE', 'WAIT'].includes(parsed.action)) {

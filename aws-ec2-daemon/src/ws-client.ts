@@ -17,6 +17,7 @@ import { StateEngine } from './state-engine.js';
 import { logInfo, logError } from './logger.js';
 import { resolveNiftyFuturesKey } from './instrument-resolver.js';
 import { eventBus } from './event-bus.js';
+import { isPreMarket } from './lib/market-gate.js';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -241,6 +242,10 @@ export class UpstoxWSClient {
             this.latestDepth = enrichedTick.depth;
             tracker.setSpotPrice(enrichedTick.ltp);
 
+            // 🛑 Pre-market time gate: Do not process ticks or signals before 09:15 AM IST (03:45 AM UTC)
+            if (isPreMarket(enrichedTick.timestamp)) {
+              return;
+            }
 
             varianceEngine.evaluateVelocity(enrichedTick.timestamp);
             this.archiver.recordTick(enrichedTick);
@@ -333,6 +338,9 @@ export class UpstoxWSClient {
                    || ff?.IndexFF?.ltpc?.ltp || ff?.MarketFF?.ltpc?.ltp;
           
           if (ltp) {
+            if (isPreMarket(Date.now())) {
+              return;
+            }
             tracker.updateUnrealizedPnLFromLtp(ltp);
             
             // Paper GTT targets monitoring
