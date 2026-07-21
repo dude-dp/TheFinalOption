@@ -1042,6 +1042,14 @@
     if (data.required_consensus !== undefined) {
       updatePersonaSettings(data.required_consensus);
     }
+    
+    // Update Paper Margin Setting Input
+    if (data.paperMargin !== undefined) {
+      const pmInput = document.getElementById('setting-paper-margin');
+      if (pmInput && document.activeElement !== pmInput) {
+        pmInput.value = data.paperMargin;
+      }
+    }
 
     // Toggle button (Icon Morphing)
     const toggleBtn = document.getElementById('toggle-bot-btn');
@@ -1540,6 +1548,36 @@
   // ==================== CONTROLS ====================
   function bindControls() {
 
+    const savePaperMarginBtn = document.getElementById('save-paper-margin-btn');
+    if (savePaperMarginBtn) {
+      savePaperMarginBtn.addEventListener('click', async () => {
+        const input = document.getElementById('setting-paper-margin');
+        if (!input || !input.value) return;
+        
+        const originalText = savePaperMarginBtn.textContent;
+        savePaperMarginBtn.textContent = 'Saving...';
+        
+        try {
+          const res = await fetch('/api/config/paper-margin', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paper_margin: parseFloat(input.value) })
+          });
+          
+          if (res.ok) {
+            showToast('Simulated Margin updated successfully');
+          } else {
+            const data = await res.json();
+            showToast(data.error || 'Failed to update margin', true);
+          }
+        } catch (e) {
+          showToast('Failed to update margin', true);
+        }
+        
+        savePaperMarginBtn.textContent = originalText;
+      });
+    }
+
     // 1. Toggle Bot (Play/Stop Icon morphing)
     const btnStart = document.getElementById('toggle-bot-btn');
     if (btnStart) {
@@ -1547,6 +1585,7 @@
         const isRunning = currentStatus === 'RUNNING';
 
         if (!confirm(isRunning ? 'Stop Autonomous Trading?' : 'Start Autonomous Trading?')) return;
+
 
         await fetch('/api/control', {
           method: 'POST',

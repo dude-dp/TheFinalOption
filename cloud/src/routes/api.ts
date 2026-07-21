@@ -552,7 +552,8 @@ api.get('/api/status', async (c) => {
       latestTick: sysState.account_margin?.latestTick || null,
       botIntelligence: sysState.account_margin?.botIntelligence || null,
       ensemble_votes: sysState.ensemble_votes || [],
-      required_consensus: sysState.required_consensus || 2
+      required_consensus: sysState.required_consensus || 2,
+      paperMargin: sysState.paper_margin || 0
     });
   } catch (err: any) {
     return c.json({ error: `Failed to compile UI telemetry: ${err.message}` }, 500);
@@ -634,6 +635,30 @@ api.post('/api/config/persona', dashboardAuth, async (c) => {
     return c.json({ success: true, required_consensus });
   } catch (err: any) {
     return c.json({ error: `Persona update failed: ${err.message}` }, 500);
+  }
+});
+
+/** POST /api/config/paper-margin — Update Simulated Paper Margin */
+api.post('/api/config/paper-margin', dashboardAuth, async (c) => {
+  try {
+    const { paper_margin } = await c.req.json<{ paper_margin: number }>();
+    if (paper_margin === undefined || isNaN(paper_margin) || paper_margin < 0) {
+      return c.json({ error: 'Invalid paper margin value' }, 400);
+    }
+
+    const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY as string);
+    const { error } = await supabase
+      .from('system_state')
+      .update({ paper_margin, updated_at: new Date().toISOString() })
+      .eq('id', 1);
+
+    if (error) {
+      return c.json({ error: error.message }, 500);
+    }
+
+    return c.json({ success: true, paper_margin });
+  } catch (err: any) {
+    return c.json({ error: `Paper margin update failed: ${err.message}` }, 500);
   }
 });
 

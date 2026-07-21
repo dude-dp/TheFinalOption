@@ -30,8 +30,7 @@ export class AIManager {
         .from('ai_model_health')
         .select('model_id, success_rate, latency_ms')
         .order('success_rate', { ascending: false })
-        .order('latency_ms', { ascending: true })
-        .limit(10);
+        .order('latency_ms', { ascending: true });
 
       if (error) throw error;
 
@@ -96,8 +95,8 @@ export class AIManager {
       return this.generateEmergencyFallback();
     }
 
-    // Try up to 3 models before giving up entirely for this tick
-    const maxAttempts = Math.min(3, healthyModels.length);
+    // Try all available healthy models before giving up entirely for this tick
+    const maxAttempts = healthyModels.length;
 
     for (let i = 0; i < maxAttempts; i++) {
       const targetModel = healthyModels[i].id;

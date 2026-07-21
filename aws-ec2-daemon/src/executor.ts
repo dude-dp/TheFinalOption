@@ -1173,6 +1173,18 @@ export class ExecutionEngine {
       // Clear position
       tracker.clearActivePosition();
       logInfo(`[PAPER EXIT] Simulated position cleared.`);
+
+      // Update paper_margin dynamically
+      try {
+        const { data } = await supabase.from('system_state').select('paper_margin').single();
+        if (data && data.paper_margin !== undefined) {
+          const newMargin = Number(data.paper_margin) + pnl;
+          await supabase.from('system_state').update({ paper_margin: newMargin }).eq('id', 1);
+          logInfo(`[EXECUTOR] Updated Paper Margin by ₹${pnl}. New Margin: ₹${newMargin}`);
+        }
+      } catch (err: any) {
+        logError(`[PAPER DB ERROR] Failed to update paper_margin: ${err.message}`);
+      }
     } catch (err: any) {
       logError(`[PAPER EXIT ERROR] Failed to execute simulated exit: ${err.message}`);
     }

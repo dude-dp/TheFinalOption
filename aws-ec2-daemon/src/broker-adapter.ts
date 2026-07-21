@@ -2,6 +2,7 @@
 
 import { tracker } from './tracker.js';
 import { logInfo, logWarn, logError } from './logger.js';
+import { supabase } from './database.js';
 
 export interface OrderParams {
   tradingSymbol: string;
@@ -45,6 +46,24 @@ class BrokerAdapter {
    * Serves from cache unless 60 seconds have passed or forceRefresh is true.
    */
   public async getFundsAndMargin(forceRefresh = false): Promise<any> {
+    // 🛑 INTERCEPT: Fetch simulated margin from database if in Paper Mode
+    if (tracker.tradingMode === 'PAPER') {
+      if (!supabase) {
+        logWarn("[BROKER] [MARGIN] Supabase not initialized. Defaulting to ₹1,00,000");
+        return { available_margin: 100000, used_margin: 0, payin: 0 };
+      }
+      const { data, error } = await supabase
+        .from('system_state')
+        .select('paper_margin')
+        .single();
+        
+      if (error || !data) {
+        logWarn("[BROKER] [MARGIN] Failed to fetch paper_margin from DB. Defaulting to ₹1,00,000");
+        return { available_margin: 100000, used_margin: 0, payin: 0 }; 
+      }
+      return { available_margin: Number(data.paper_margin), used_margin: 0, payin: 0 };
+    }
+
     if (!this.apiToken) return this.marginCache;
     
     const now = Date.now();

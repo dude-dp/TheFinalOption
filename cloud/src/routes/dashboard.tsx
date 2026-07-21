@@ -330,6 +330,23 @@ dashboard.get('/', (c) => {
         <div id="persona-settings" style="display: flex; flex-direction: column; gap: 8px;">
            <!-- Injected via dashboard.js -->
         </div>
+
+        <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.1);">
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <label style="font-size: 0.85rem; color: var(--text-primary); font-weight: 600;">Simulated Paper Margin (₹)</label>
+            <div style="display: flex; gap: 8px;">
+              <input 
+                type="number" 
+                id="setting-paper-margin"
+                class="modal-input" 
+                style="flex: 1;"
+                placeholder="e.g. 100000"
+              />
+              <button id="save-paper-margin-btn" class="btn btn-outline" style="padding: 0 16px;">Save</button>
+            </div>
+            <span style="font-size: 0.75rem; color: var(--text-muted);">Only applies when Bot is in Paper Mode. Overrides Upstox ledger.</span>
+          </div>
+        </div>
       </section>
 
     </main>
