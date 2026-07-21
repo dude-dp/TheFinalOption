@@ -7,7 +7,7 @@
 //
 // Step 1: Pull today's signal_eval logs from Supabase (aborts + executed trades)
 // Step 2: Build a structured LLM prompt with both failure AND success telemetry
-// Step 3: Call OpenRouter (gemini-2.5-flash) for threshold recommendations
+// Step 3: Call Groq (llama-3.1-8b-instant) for threshold recommendations
 // Step 4: Upsert tuned config to confluence_config table for next-day boot
 // ============================================
 
@@ -19,7 +19,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || ''
 );
 
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
+const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 
 function todayISO(): string {
   return new Date().toISOString().split('T')[0];
@@ -108,20 +108,20 @@ function buildAbortSummary(evals: SignalEvalLog[]): Record<string, AbortCategory
   return summary;
 }
 
-// ── Step 3: Call OpenRouter ──────────────────────────────────────────────────
+// ── Step 3: Call Groq ──────────────────────────────────────────────────
 
-async function callOpenRouter(prompt: string): Promise<string> {
-  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+async function callGroq(prompt: string): Promise<string> {
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+      'Authorization': `Bearer ${GROQ_API_KEY}`,
       'Content-Type': 'application/json',
       'HTTP-Referer': 'https://thefinaloption.com',
       'X-Title': 'TheFinalOption Post-Market Analyzer',
     },
     body: JSON.stringify({
-      model: 'google/gemini-2.5-flash',
-      messages: [{ role: 'user', content: prompt }],
+      model: 'llama-3.1-8b-instant',
+      messages: [{ role: 'user', content: prompt + "\n\nRespond ONLY with a valid JSON object." }],
       response_format: { type: 'json_object' },
       temperature: 0.2, // low temperature for deterministic financial recommendations
     }),
@@ -129,7 +129,7 @@ async function callOpenRouter(prompt: string): Promise<string> {
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`OpenRouter API error ${res.status}: ${err.substring(0, 200)}`);
+    throw new Error(`Groq API error ${res.status}: ${err.substring(0, 200)}`);
   }
 
   const json = await res.json() as any;
@@ -142,8 +142,8 @@ async function run() {
   const today = todayISO();
   console.log(`[POST-MARKET-ANALYZER] ${new Date().toISOString()} — Starting analysis for ${today}`);
 
-  if (!OPENROUTER_API_KEY) {
-    throw new Error('OPENROUTER_API_KEY is not set. Aborting analysis.');
+  if (!GROQ_API_KEY) {
+    throw new Error('GROQ_API_KEY is not set. Aborting analysis.');
   }
 
   // ── 1. Fetch data ────────────────────────────────────────────────────────
@@ -221,14 +221,14 @@ Return ONLY a valid JSON object with exactly these keys:
 Ensure ce_rsi_min >= 40, ce_rsi_max <= 80, pe_rsi_min >= 20, pe_rsi_max <= 60, volume_multiplier between 0.5 and 1.5.
 `;
 
-  console.log('[POST-MARKET-ANALYZER] Calling OpenRouter gemini-2.5-flash...');
-  const rawResponse = await callOpenRouter(prompt);
+  console.log('[POST-MARKET-ANALYZER] Calling Groq llama-3.1-8b-instant...');
+  const rawResponse = await callGroq(prompt);
 
   let config: any;
   try {
     config = JSON.parse(rawResponse);
   } catch (e) {
-    throw new Error(`OpenRouter returned invalid JSON: ${rawResponse.substring(0, 200)}`);
+    throw new Error(`Groq returned invalid JSON: ${rawResponse.substring(0, 200)}`);
   }
 
   // ── 4. Validate bounds ───────────────────────────────────────────────────

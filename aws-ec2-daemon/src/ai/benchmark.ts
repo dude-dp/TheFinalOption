@@ -18,12 +18,12 @@ Analyze the above constraints. Do institutional delta and velocity imply an imme
 
 export class AIBenchmarker {
   /**
-   * Runs the daily evaluation suite against all available OpenRouter free models.
+   * Runs the daily evaluation suite against all available Groq models.
    */
   public static async runDailyBenchmark(): Promise<void> {
     logInfo('[BENCHMARK] 🚀 Initiating Nightly AI Model Benchmarking...');
 
-    // 1. Fetch fresh list of all free models from OpenRouter
+    // 1. Fetch fresh list of all free models from Groq
     await AIManager.fetchAvailableModels();
     const candidates = AIManager.availableModels;
 
@@ -36,7 +36,7 @@ export class AIBenchmarker {
 
     for (const model of candidates) {
       await this.evaluateModel(model.id);
-      // Brief pause to avoid hitting aggressive rate limits on OpenRouter during the test loop
+      // Brief pause to avoid hitting aggressive rate limits on Groq during the test loop
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
 
@@ -49,10 +49,10 @@ export class AIBenchmarker {
     let isValidJson = false;
 
     try {
-      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
           'Content-Type': 'application/json',
           'HTTP-Referer': 'https://staq.shop',
         },

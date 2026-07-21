@@ -1,4 +1,4 @@
-export interface OpenRouterModel {
+export interface AIModel {
   id: string;
   name: string;
   context_length: number;

@@ -1,4 +1,4 @@
-import { OpenRouterModel, AIResponse, TradingDecision } from './types.js';
+import { AIModel, AIResponse, TradingDecision } from './types.js';
 import { logInfo, logError, logWarn } from '../logger.js';
 import { supabase } from '../database.js';
 
@@ -11,7 +11,7 @@ export class AIManager {
   // Switched to GROQ configurations
   private static apiKey = process.env.GROQ_API_KEY || '';
   private static baseUrl = 'https://api.groq.com/openai/v1';
-  public static availableModels: OpenRouterModel[] = [];
+  public static availableModels: AIModel[] = [];
 
   // In-memory circuit breaker
   private static circuitBreaker = new Map<string, CircuitBreakerState>();
@@ -83,7 +83,7 @@ export class AIManager {
     }
   }
 
-  public static getHealthyModels(): OpenRouterModel[] {
+  public static getHealthyModels(): AIModel[] {
     const now = Date.now();
     return this.availableModels.filter(model => {
       const state = this.circuitBreaker.get(model.id);
