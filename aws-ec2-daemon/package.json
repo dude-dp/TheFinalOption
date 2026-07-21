@@ -16,12 +16,14 @@
     "@supabase/supabase-js": "^2.110.2",
     "dotenv": "^16.4.0",
     "hono": "^4.12.30",
+    "node-cron": "^4.6.0",
     "protobufjs": "^8.7.0",
     "upstox-js-sdk": "^2.29.0",
     "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",
+    "@types/node-cron": "^3.0.11",
     "@types/ws": "^8.18.1",
     "tsx": "^4.19.0",
     "typescript": "^5.9.3"

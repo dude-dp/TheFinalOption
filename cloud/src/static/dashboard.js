@@ -129,6 +129,199 @@
       }
   };
 
+  function updateEnsembleVisualizer(votes) {
+    const container = document.getElementById('ensemble-visualizer');
+    if (!container) return;
+
+    if (!votes || votes.length === 0) {
+      container.style.display = 'block';
+      container.innerHTML = `<div style="color: var(--text-muted); font-size: 0.85rem; padding: 12px; border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; text-align: center;">Awaiting first options chain analysis...</div>`;
+      
+      const termContainer = document.getElementById('thought-process-terminal');
+      if (termContainer) termContainer.style.display = 'none';
+      return;
+    }
+
+    container.style.display = 'flex';
+    container.style.flexDirection = 'column';
+    
+    const termContainer = document.getElementById('thought-process-terminal');
+    if (termContainer) {
+      termContainer.style.display = 'flex';
+      termContainer.style.flexDirection = 'column';
+    }
+    
+    const ceVotes = votes.filter(v => v.action === 'BUY_CE').length;
+    const peVotes = votes.filter(v => v.action === 'BUY_PE').length;
+    const waitVotes = votes.filter(v => v.action === 'WAIT').length;
+    const total = votes.length;
+
+    const cePct = (ceVotes / total) * 100;
+    const pePct = (peVotes / total) * 100;
+    const waitPct = (waitVotes / total) * 100;
+
+    let logsHtml = '';
+    votes.forEach(vote => {
+      const modelName = vote.modelId ? (vote.modelId.split('/')[1] || vote.modelId) : 'Unknown Model';
+      let badgeColor = 'background: rgba(255,255,255,0.05); color: var(--text-secondary); border-color: rgba(255,255,255,0.1);';
+      if (vote.action === 'BUY_CE') badgeColor = 'background: rgba(16, 185, 129, 0.15); color: var(--accent-buy); border-color: rgba(16, 185, 129, 0.3);';
+      if (vote.action === 'BUY_PE') badgeColor = 'background: rgba(239, 68, 68, 0.15); color: var(--accent-sell); border-color: rgba(239, 68, 68, 0.3);';
+
+      logsHtml += `
+        <div style="display: flex; flex-direction: column; font-size: 0.75rem; background: rgba(0,0,0,0.3); border-radius: 4px; padding: 8px; border: 1px solid rgba(255,255,255,0.05);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <span style="font-family: var(--font-mono); color: var(--accent-info); font-weight: 600;">${modelName}</span>
+            <span style="color: var(--text-muted);">${vote.latencyMs || 0}ms</span>
+          </div>
+          <div style="display: flex; align-items: flex-start; gap: 8px;">
+            <span style="padding: 2px 6px; border-radius: 4px; border: 1px solid transparent; font-weight: 700; font-size: 0.7rem; white-space: nowrap; ${badgeColor}">
+              ${vote.action} (${vote.confidence || 0}%)
+            </span>
+            <span style="color: var(--text-secondary); font-style: italic; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;">
+              ${vote.reasoning || ''}
+            </span>
+          </div>
+        </div>
+      `;
+    });
+
+    let terminalHtml = '';
+    votes.forEach(vote => {
+      const modelName = vote.modelId ? (vote.modelId.split('/')[1] || vote.modelId) : 'Unknown Model';
+      terminalHtml += `
+        <div style="margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.05);">
+          <div style="color: var(--accent-info); font-family: var(--font-mono); font-size: 0.75rem; margin-bottom: 4px;">
+            > ${modelName} stdout:
+          </div>
+          <div style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 0.75rem; line-height: 1.4;">
+            ${vote.reasoning || 'No reasoning provided.'}
+          </div>
+        </div>
+      `;
+    });
+
+    if (termContainer) {
+      termContainer.innerHTML = `
+        <div style="background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 12px; max-height: 300px; overflow-y: auto;">
+          <h3 style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">Terminal Output</h3>
+          ${terminalHtml}
+        </div>
+      `;
+    }
+
+    container.innerHTML = `
+      <div style="background: rgba(255,255,255,0.01); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 12px; margin-top: 8px;">
+        <h3 style="font-size: 0.85rem; font-weight: 700; color: var(--text-primary); margin-bottom: 12px; display: flex; align-items: center; gap: 6px;">🧠 Live AI Consensus</h3>
+        
+        <div style="width: 100%; height: 8px; border-radius: 4px; background: rgba(255,255,255,0.05); display: flex; overflow: hidden; margin-bottom: 16px;">
+          <div style="width: ${cePct}%; background: var(--accent-buy); transition: width 0.5s ease;"></div>
+          <div style="width: ${waitPct}%; background: var(--text-muted); transition: width 0.5s ease;"></div>
+          <div style="width: ${pePct}%; background: var(--accent-sell); transition: width 0.5s ease;"></div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          ${logsHtml}
+        </div>
+      </div>
+    `;
+  }
+
+  function updateAILeaderboard(models) {
+    const container = document.getElementById('ai-leaderboard');
+    if (!container) return;
+    
+    if (!models || models.length === 0) {
+      container.innerHTML = '<p style="color: var(--text-secondary); text-align: center; padding: 20px;">No benchmark data available yet.</p>';
+      return;
+    }
+
+    let html = `
+      <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.8rem;">
+        <thead>
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.1); color: var(--text-muted);">
+            <th style="padding: 8px 4px;">Model</th>
+            <th style="padding: 8px 4px;">Success</th>
+            <th style="padding: 8px 4px;">JSON</th>
+            <th style="padding: 8px 4px;">Latency</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    models.forEach((m, i) => {
+      const name = m.model_id.split('/')[1] || m.model_id;
+      const rankColor = i === 0 ? 'color: #fbbf24; font-weight: bold;' : 'color: var(--text-primary);'; // Gold for #1
+      const successColor = m.success_rate >= 95 ? 'color: var(--accent-success);' : (m.success_rate >= 80 ? 'color: var(--accent-warning);' : 'color: var(--accent-danger);');
+      
+      html += `
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+          <td style="padding: 8px 4px; ${rankColor}">${i + 1}. ${name.substring(0, 15)}${name.length > 15 ? '...' : ''}</td>
+          <td style="padding: 8px 4px; ${successColor}">${m.success_rate}%</td>
+          <td style="padding: 8px 4px; color: var(--text-secondary);">${m.json_validity}%</td>
+          <td style="padding: 8px 4px; color: var(--accent-info); font-family: var(--font-mono);">${m.latency_ms}ms</td>
+        </tr>
+      `;
+    });
+
+    html += `</tbody></table>`;
+    container.innerHTML = html;
+  }
+
+  function updatePersonaSettings(currentConsensus) {
+    const container = document.getElementById('persona-settings');
+    if (!container) return;
+
+    // Prevent re-rendering if value hasn't changed (so we don't lose focus/click state)
+    if (container.dataset.consensus === String(currentConsensus)) return;
+    container.dataset.consensus = String(currentConsensus);
+
+    const options = [
+      { val: 1, icon: '⚡', name: 'Aggressive (Speed)', desc: '1 Vote: Executes on first confirmation. Maximum slippage capture.' },
+      { val: 2, icon: '⚖️', name: 'Balanced (Standard)', desc: '2 Votes: Requires consensus. Filters noise.' },
+      { val: 3, icon: '🛡️', name: 'Conservative (Safe)', desc: '3 Votes: Unanimous agreement only. Minimal false positives.' }
+    ];
+
+    let html = '';
+    options.forEach(opt => {
+      const isSelected = currentConsensus === opt.val;
+      const bg = isSelected ? 'rgba(59, 130, 246, 0.15)' : 'rgba(255,255,255,0.02)';
+      const border = isSelected ? 'border-color: var(--accent-blue);' : 'border-color: rgba(255,255,255,0.1);';
+      
+      html += `
+        <div class="persona-option" onclick="window.setPersona(${opt.val})" style="background: ${bg}; border: 1px solid transparent; ${border} padding: 10px; border-radius: 8px; cursor: pointer; transition: all 0.2s;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 1.1rem;">${opt.icon}</span>
+              <span style="font-weight: 600; font-size: 0.85rem; color: ${isSelected ? 'var(--text-primary)' : 'var(--text-secondary)'};">${opt.name}</span>
+            </div>
+            ${isSelected ? '<span style="color: var(--accent-blue);">✓</span>' : ''}
+          </div>
+          <div style="font-size: 0.75rem; color: var(--text-muted); margin-left: 28px;">
+            ${opt.desc}
+          </div>
+        </div>
+      `;
+    });
+
+    container.innerHTML = html;
+  }
+
+  window.setPersona = async function(val) {
+    try {
+      const res = await fetch('/api/config/persona', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ required_consensus: val })
+      });
+      if (res.ok) {
+        window.addLog(`Bot Persona updated to ${val} required votes.`, 'success');
+        updatePersonaSettings(val); // Optimistic UI update
+      }
+    } catch (e) {
+      console.error('Failed to set persona:', e);
+    }
+  };
+
   const POLL_INTERVAL = 3000;
   const HEARTBEAT_TIMEOUT = 6000;
 
@@ -533,9 +726,22 @@
         fetchTelemetry(),
         fetchOrders(),
         fetchQuantMetrics(),
+        fetchAILeaderboard(),
       ]);
     } catch (e) {
       console.error('Poll error:', e);
+    }
+  }
+
+  async function fetchAILeaderboard() {
+    try {
+      const res = await fetch('/api/ai-leaderboard');
+      const json = await res.json();
+      if (json.data) {
+        updateAILeaderboard(json.data);
+      }
+    } catch (e) {
+      // silent fail
     }
   }
 
@@ -603,6 +809,14 @@
 
     if (data.botIntelligence && window.updateBotIntelligence) {
       window.updateBotIntelligence(data.botIntelligence);
+    }
+
+    if (data.ensemble_votes) {
+      updateEnsembleVisualizer(data.ensemble_votes);
+    }
+
+    if (data.required_consensus !== undefined) {
+      updatePersonaSettings(data.required_consensus);
     }
 
     // Toggle button (Icon Morphing)

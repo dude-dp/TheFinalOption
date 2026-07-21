@@ -517,7 +517,7 @@ api.get('/api/status', async (c) => {
     const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY as string);
     const { data: sysState, error } = await supabase
       .from('system_state')
-      .select('*')
+      .select('*, required_consensus')
       .eq('id', 1)
       .single();
 
@@ -550,7 +550,9 @@ api.get('/api/status', async (c) => {
       activeHedgePosition: null,
       lockTimestamp: null,
       latestTick: sysState.account_margin?.latestTick || null,
-      botIntelligence: sysState.account_margin?.botIntelligence || null
+      botIntelligence: sysState.account_margin?.botIntelligence || null,
+      ensemble_votes: sysState.ensemble_votes || [],
+      required_consensus: sysState.required_consensus || 2
     });
   } catch (err: any) {
     return c.json({ error: `Failed to compile UI telemetry: ${err.message}` }, 500);
@@ -590,6 +592,51 @@ api.post('/api/control', async (c) => {
 
   return c.json({ success: true, status: newStatus });
 });
+
+/** GET /api/ai-leaderboard — Fetch the AI model leaderboard */
+api.get('/api/ai-leaderboard', dashboardAuth, async (c) => {
+  try {
+    const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY as string);
+    const { data, error } = await supabase
+      .from('ai_model_health')
+      .select('*')
+      .order('success_rate', { ascending: false })
+      .order('latency_ms', { ascending: true })
+      .limit(5);
+
+    if (error) {
+      return c.json({ error: error.message }, 500);
+    }
+    return c.json({ data: data || [] });
+  } catch (err: any) {
+    return c.json({ error: `Leaderboard fetch failed: ${err.message}` }, 500);
+  }
+});
+
+/** POST /api/config/persona — Update the Bot Persona (required_consensus) */
+api.post('/api/config/persona', dashboardAuth, async (c) => {
+  try {
+    const { required_consensus } = await c.req.json<{ required_consensus: number }>();
+    if (![1, 2, 3].includes(required_consensus)) {
+      return c.json({ error: 'Invalid consensus value' }, 400);
+    }
+
+    const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY as string);
+    const { error } = await supabase
+      .from('system_state')
+      .update({ required_consensus, updated_at: new Date().toISOString() })
+      .eq('id', 1);
+
+    if (error) {
+      return c.json({ error: error.message }, 500);
+    }
+
+    return c.json({ success: true, required_consensus });
+  } catch (err: any) {
+    return c.json({ error: `Persona update failed: ${err.message}` }, 500);
+  }
+});
+
 /** 
  * POST /api/position/sl-override 
  * Accepts manual drag-and-drop Stop Loss updates from the UI 

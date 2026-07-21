@@ -177,6 +177,16 @@ dashboard.get('/', (c) => {
             <span class="metric-label">Active Task</span>
             <span id="intel-task" class="mono" style="font-size: 0.85rem; color: var(--text-secondary);">Idle. Waiting for setup.</span>
           </div>
+
+          <!-- 🟢 AI Ensemble Visualizer 🟢 -->
+          <div id="ensemble-visualizer" style="display: none;">
+             <!-- Injected via dashboard.js -->
+          </div>
+
+          <!-- Thought Process Terminal -->
+          <div id="thought-process-terminal" style="display: none; margin-top: 12px;">
+             <!-- Injected via dashboard.js -->
+          </div>
         </div>
       </section>
 
@@ -215,6 +225,27 @@ dashboard.get('/', (c) => {
               <tr><td colspan="4" style="text-align: center; color: var(--text-secondary);">Waiting for orders...</td></tr>
             </tbody>
           </table>
+        </div>
+      </section>
+
+      <!-- AI Leaderboard -->
+      <section class="bento-item leaderboard-section">
+        <div class="bento-header">
+          <h2 class="bento-title">🌐 AI Leaderboard</h2>
+        </div>
+        <div id="ai-leaderboard" style="overflow-x: auto; width: 100%;">
+           <!-- Injected via dashboard.js -->
+           <p style="color: var(--text-secondary); text-align: center; padding: 20px;">Loading leaderboard...</p>
+        </div>
+      </section>
+
+      <!-- Persona Settings -->
+      <section class="bento-item persona-section">
+        <div class="bento-header">
+          <h2 class="bento-title">⚙️ Bot Persona & Risk Matrix</h2>
+        </div>
+        <div id="persona-settings" style="display: flex; flex-direction: column; gap: 8px;">
+           <!-- Injected via dashboard.js -->
         </div>
       </section>
 

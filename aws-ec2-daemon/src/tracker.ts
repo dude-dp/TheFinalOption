@@ -113,6 +113,12 @@ class PortfolioTracker {
     this.latestIntelligence = intel;
   }
 
+  // 🟢 NEW: AI Ensemble Votes
+  public latestVotes: any[] = [];
+
+  public setLatestVotes(votes: any[]) {
+    this.latestVotes = votes;
+  }
 
   /**
    * Initializes or reconciles the daily structural boundaries.

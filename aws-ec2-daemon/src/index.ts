@@ -15,6 +15,8 @@ import { executeEmergencyMarketExit } from './executor.js';
 import { tracker } from './tracker.js';
 import { UpstoxWSClient } from './ws-client.js';
 import { brokerAdapter } from './broker-adapter.js';
+import { AIManager } from './ai/ai-manager.js';
+import { initializeCronJobs } from './cron-prewarmer.js';
 
 import { createClient } from '@supabase/supabase-js';
 
@@ -72,7 +74,11 @@ async function bootstrapEngine() {
   logInfo('  TheFinalOption — Local Execution Daemon  ');
   logInfo('═══════════════════════════════════════════');
 
-  // 1. Initialize Realtime Engine 
+  // 1. Pre-warm AI Subsystem
+  await AIManager.fetchAvailableModels();
+  initializeCronJobs();
+
+  // 2. Initialize Realtime Engine 
   let activeToken: string = '';
   await StateEngine.initialize(async (newToken) => {
     activeToken = newToken;

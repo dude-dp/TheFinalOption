@@ -4,11 +4,13 @@ import { brokerAdapter } from './broker-adapter.js';
 import { executor } from './executor.js';
 import { executeEmergencyMarketExit } from './executor.js';
 import { tracker } from './tracker.js';
-import { evaluateConfluence, loadConfluenceConfig } from './confluence.js';
+import { evaluateConfluence } from './confluence.js';
 import { asyncLog } from './async-logger.js';
 import { eventBus } from './event-bus.js';
 import { varianceEngine } from './variance.js';
 import type { LocalCandle } from './aggregator.js';
+import { EnsembleEngine } from './ai/ensemble.js';
+import { TRADING_SYSTEM_PROMPT } from './ai/prompts.js';
 
 const supabase = createClient(
   process.env.SUPABASE_URL || '',
@@ -25,8 +27,7 @@ export class StateEngine {
   public static async initialize(onTokenRefresh: (newToken: string) => void) {
     logInfo('[STATE-ENGINE] Booting up PostgreSQL Realtime synchronization...');
 
-    // Load LLM-tuned confluence thresholds for today (Phase 4)
-    await loadConfluenceConfig();
+    // Phase 4: AI Ensemble configuration (No longer loading static confluence config)
 
     const { data, error } = await supabase
       .from('system_state')
@@ -148,6 +149,7 @@ export class StateEngine {
               botIntelligence: tracker.latestIntelligence
             },
             active_position: activePos,
+            ensemble_votes: tracker.latestVotes,
             daemon_last_heartbeat: new Date().toISOString()
         }).eq('id', 1);
 
@@ -181,7 +183,44 @@ export class StateEngine {
   ): Promise<void> {
     // Pass live TPS velocity multiplier so confluence can widen gates during spikes
     const volatilityState = varianceEngine.evaluateVelocity(Date.now());
-    const signal = evaluateConfluence(candles, new Date(), volatilityState.velocityMultiplier);
+    
+    // Evaluate confluence to get precomputed indicators (VWAP, EMA, RSI, etc.)
+    const indicatorSignal = evaluateConfluence(candles, new Date(), volatilityState.velocityMultiplier);
+
+    const marketSnapshot = {
+      timestamp: new Date().toISOString(),
+      spotPrice: _spotPrice,
+      candles: candles.slice(-5), // Only pass last 5 candles to save tokens
+      indicators: {
+        vwap: indicatorSignal.vwap,
+        ema9: indicatorSignal.ema9,
+        ema21: indicatorSignal.ema21,
+        rsi: indicatorSignal.rsi,
+        volumeRatio: indicatorSignal.volumeRatio
+      },
+      volatilityState
+    };
+
+    const prompt = `${TRADING_SYSTEM_PROMPT}\n\nLive Snapshot:\n${JSON.stringify(marketSnapshot, null, 2)}`;
+    const ensembleResult = await EnsembleEngine.getConsensus(prompt, 2);
+    
+    // Store the raw vote array in the tracker for the next heartbeat
+    tracker.setLatestVotes(ensembleResult.votes);
+
+    const decision = ensembleResult.decision;
+
+    // Synthesize a signal object to match existing pipeline
+    const signal: any = {
+      signal: decision.action === 'WAIT' ? 'NONE' : decision.action,
+      reason: decision.reasoning,
+      vwap: indicatorSignal.vwap,
+      ema9: indicatorSignal.ema9,
+      ema21: indicatorSignal.ema21,
+      rsi: indicatorSignal.rsi,
+      volumeRatio: indicatorSignal.volumeRatio,
+      aiConfidence: decision.confidence,
+      aiRiskLevel: decision.risk_level
+    };
 
     // ── Compute Bot Intelligence for UI ──
     let regime = 'Analyzing Variance...';
@@ -191,17 +230,6 @@ export class StateEngine {
        else regime = 'Chop / Range';
     }
 
-    let score = 0;
-    if (signal.vwap > 0) {
-      if (signal.rsi >= 40 && signal.rsi <= 60) score += 25;
-      else if (signal.rsi > 60 || signal.rsi < 40) score += 50;
-      
-      if (signal.volumeRatio > 1.2) score += 50;
-      else if (signal.volumeRatio > 0.8) score += 25;
-      
-      score = Math.min(100, score);
-    }
-
     let activeTask = signal.reason || 'Idle. Waiting for setup.';
     if (this.botStatus !== 'RUNNING') {
        activeTask = `Bot is ${this.botStatus}. Engine paused.`;
@@ -209,7 +237,7 @@ export class StateEngine {
 
     tracker.setLatestIntelligence({
       regime,
-      confluenceScore: score,
+      confluenceScore: decision.confidence, // Use AI confidence directly
       activeTask
     });
 
@@ -229,6 +257,9 @@ export class StateEngine {
       candleCount: candles.length,
       velocityMultiplier: volatilityState.velocityMultiplier,
       isHighVolatility: volatilityState.isHighVolatilityRegime,
+      aiConfidence: decision.confidence,
+      aiRiskLevel: decision.risk_level,
+      aiVotes: ensembleResult.votes
     });
 
     if (signal.signal === 'NONE') {
