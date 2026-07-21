@@ -288,6 +288,14 @@ export class AIManager {
       // Extract ONLY the JSON object from raw content to bypass preambles (e.g. "User Safety: safe") and markdown wrappers
       const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
+        if (rawContent.includes("User Safety: safe")) {
+          return {
+            action: 'WAIT',
+            confidence: 0,
+            reasoning: 'Model returned safety check without JSON',
+            risk_level: 'LOW'
+          };
+        }
         throw new Error("No JSON object found in response");
       }
 

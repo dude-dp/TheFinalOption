@@ -200,6 +200,7 @@ export class StateEngine {
         rsi: indicatorSignal.rsi,
         volumeRatio: indicatorSignal.volumeRatio
       },
+      oiData: tracker.oiData,
       volatilityState
     };
 
