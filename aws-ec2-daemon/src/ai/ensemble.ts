@@ -58,7 +58,8 @@ export class EnsembleEngine {
         actionCounts[decision.action]++;
         actionConfidence[decision.action].push(decision.confidence);
       } else {
-         logWarn(`[ENSEMBLE] ❌ Model ${modelId} failed to return a valid vote.`);
+         const errorMsg = res.status === 'fulfilled' ? res.value.error : res.reason;
+         logWarn(`[ENSEMBLE] ❌ Model ${modelId} failed to return a valid vote. Error: ${errorMsg}`);
       }
     }
 

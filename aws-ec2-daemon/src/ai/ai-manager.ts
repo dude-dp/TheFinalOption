@@ -117,8 +117,7 @@ export class AIManager {
           body: JSON.stringify({
             model: targetModel,
             messages: [{ role: 'user', content: prompt }],
-            temperature: 0.1,
-            response_format: { type: 'json_object' }
+            temperature: 0.1
           })
         });
 
@@ -180,8 +179,7 @@ export class AIManager {
         body: JSON.stringify({
           model: targetModel,
           messages: [{ role: 'user', content: prompt }],
-          temperature: 0.1,
-          response_format: { type: 'json_object' }
+          temperature: 0.1
         })
       });
 
