@@ -27,57 +27,87 @@ export class AIManager {
     try {
       if (!supabase) throw new Error('Supabase client not initialized');
       
-      const { data, error } = await supabase
-        .from('ai_model_health')
-        .select('model_id, success_rate, latency_ms')
-        .order('success_rate', { ascending: false })
-        .order('latency_ms', { ascending: true });
-
-      if (error) throw error;
-
-      if (data && data.length > 0) {
-        this.availableModels = data.map(dbModel => ({
-          id: dbModel.model_id,
-          name: dbModel.model_id.split('-')[0] || dbModel.model_id,
-          context_length: 8192, 
-          pricing: { prompt: 0, completion: 0 } // Groq tier is rate-limit based, cost is 0
-        }));
-        
-        logInfo(`[AI-MANAGER] Loaded ${this.availableModels.length} models. Top Pick: ${this.availableModels[0].id} (Score: ${data[0].success_rate})`);
-      } else {
-        logWarn('[AI-MANAGER] DB leaderboard is empty. Bootstrapping initial Groq network fetch...');
-        
+      let groqModelIds: string[] = [];
+      try {
         // Fetch from Groq's OpenAI-compatible models endpoint
         const res = await fetch(`${this.baseUrl}/models`, {
           headers: { 'Authorization': `Bearer ${this.apiKey}` }
         });
         
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        
-        const fetchData = await res.json() as { data: any[] };
-        
-        // Hardcoded whitelist of the fastest and smartest models on Groq for algorithmic trading
-        const topTradingModels = [
-          'llama-3.3-70b-versatile',
-          'llama-3.1-8b-instant',
-          'gemma2-9b-it',
-          'mixtral-8x7b-32768'
-        ];
-        
-        this.availableModels = fetchData.data
-          .filter(model => topTradingModels.includes(model.id))
-          .map(model => ({
-            id: model.id,
-            name: model.id,
-            context_length: 8192,
-            pricing: { prompt: 0, completion: 0 }
-          }));
+        if (res.ok) {
+          const fetchData = await res.json() as { data: any[] };
+          groqModelIds = fetchData.data.map((m: any) => m.id);
+        } else {
+          logWarn(`[AI-MANAGER] Failed to fetch Groq models HTTP ${res.status}`);
+        }
+      } catch (err) {
+        logWarn(`[AI-MANAGER] Failed to fetch Groq models: ${err}`);
+      }
 
-        logInfo(`[AI-MANAGER] Discovered ${this.availableModels.length} top-tier Groq models.`);
-        if (this.availableModels.length > 0) {
-            logInfo(`[AI-MANAGER] Top candidate: ${this.availableModels[0].id}`);
+      // Hardcoded whitelist of the fastest and smartest models on Groq for algorithmic trading
+      const topTradingModels = [
+        'llama-3.3-70b-versatile',
+        'llama-3.1-8b-instant',
+        'gemma2-9b-it',
+        'mixtral-8x7b-32768'
+      ];
+      
+      // Use whitelist, but if we successfully fetched from Groq, ensure they exist on Groq
+      const validModels = groqModelIds.length > 0 
+        ? topTradingModels.filter(m => groqModelIds.includes(m))
+        : topTradingModels;
+
+      // Clean up old OpenRouter models from the DB so the frontend leaderboard is correct
+      const { data: allModels } = await supabase.from('ai_model_health').select('model_id');
+      if (allModels) {
+        const toDelete = allModels.map(m => m.model_id).filter(id => !validModels.includes(id));
+        if (toDelete.length > 0) {
+          logInfo(`[AI-MANAGER] Deleting ${toDelete.length} old non-Groq models from DB...`);
+          await supabase.from('ai_model_health').delete().in('model_id', toDelete);
         }
       }
+
+      const { data, error } = await supabase
+        .from('ai_model_health')
+        .select('model_id, success_rate, latency_ms')
+        .in('model_id', validModels)
+        .order('success_rate', { ascending: false })
+        .order('latency_ms', { ascending: true });
+
+      if (error) throw error;
+
+      this.availableModels = [];
+      const dbModelIds = new Set<string>();
+
+      if (data && data.length > 0) {
+        this.availableModels = data.map(dbModel => {
+          dbModelIds.add(dbModel.model_id);
+          return {
+            id: dbModel.model_id,
+            name: dbModel.model_id.split('-')[0] || dbModel.model_id,
+            context_length: 8192, 
+            pricing: { prompt: 0, completion: 0 } // Groq tier is rate-limit based, cost is 0
+          };
+        });
+        
+        logInfo(`[AI-MANAGER] Loaded ${data.length} models from DB. Top Pick: ${this.availableModels[0].id} (Score: ${data[0].success_rate})`);
+      } else {
+        logWarn('[AI-MANAGER] DB leaderboard is empty for Groq models.');
+      }
+      
+      // Add any valid models that are not in the DB yet
+      for (const modelId of validModels) {
+        if (!dbModelIds.has(modelId)) {
+          this.availableModels.push({
+            id: modelId,
+            name: modelId.split('-')[0] || modelId,
+            context_length: 8192,
+            pricing: { prompt: 0, completion: 0 }
+          });
+        }
+      }
+      
+      logInfo(`[AI-MANAGER] Final active models count: ${this.availableModels.length}`);
     } catch (error: any) {
       logError(`[AI-MANAGER] Failed to sync leaderboard: ${error.message}`);
     }
