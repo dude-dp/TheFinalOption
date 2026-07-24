@@ -489,7 +489,17 @@ export async function fetchOptionLtp(instrumentToken: string, accessToken: strin
     });
     if (res.ok) {
       const json = await res.json() as any;
-      return json.data?.[instrumentToken]?.last_price || 0;
+      if (json.data) {
+        for (const key of Object.keys(json.data)) {
+          if (json.data[key]?.instrument_token === instrumentToken || key.includes(instrumentToken.replace('|', ':'))) {
+            return json.data[key].last_price || 0;
+          }
+        }
+        const firstVal = Object.values(json.data)[0] as any;
+        if (firstVal && firstVal.last_price) {
+          return firstVal.last_price;
+        }
+      }
     }
   } catch (err) {
     logError(`[EXECUTOR] Failed to fetch live LTP for paper trade: ${err}`);
