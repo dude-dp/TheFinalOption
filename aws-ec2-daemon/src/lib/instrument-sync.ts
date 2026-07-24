@@ -43,11 +43,11 @@ export async function syncUpstoxInstrumentMaster() {
       const row = line.split(',');
       if (row.length < 10) continue;
 
-      const instrument_key = row[0];   // e.g., NSE_EQ|INE002A01018
-      const tradingsymbol = row[2];    // e.g., RELIANCE
-      const instrument_type = row[9];  // e.g., EQ
+      const instrument_key = row[0].replace(/"/g, '');   // e.g., NSE_EQ|INE002A01018
+      const tradingsymbol = row[2].replace(/"/g, '');    // e.g., RELIANCE
+      const instrument_type = row[9].replace(/"/g, '');  // e.g., EQUITY
 
-      if (instrument_type === 'EQ') {
+      if (instrument_type === 'EQUITY' || instrument_type === 'EQ') {
         instrumentsToSave.push({
           instrument_token: instrument_key,
           tradingsymbol: tradingsymbol,

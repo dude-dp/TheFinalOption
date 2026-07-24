@@ -62,13 +62,17 @@ export const MTFScreenerPage = () => (
         {/* RIGHT: Telemetry & Status */}
         <div class="flex items-center gap-4">
           {/* API Fuel Gauge */}
-          <div class="flex flex-col items-end mr-2">
-            <span class="text-[9px] font-black text-gray-400 uppercase tracking-widest">API Fuel</span>
-            <div class="flex items-center gap-2 mt-0.5">
-              <div class="w-20 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                <div class="h-full bg-emerald-500 transition-all duration-300" style="width: 95%"></div>
+          <div class="group flex items-center gap-3 px-3 py-1.5 bg-white border border-gray-200 rounded-full shadow-[0_2px_10px_-3px_rgba(0,0,0,0.05)] hover:border-emerald-300 hover:shadow-[0_2px_15px_-3px_rgba(16,185,129,0.15)] transition-all duration-300 cursor-default">
+            <span class="text-[10px] font-black text-gray-400 uppercase tracking-widest group-hover:text-emerald-600 transition-colors">API Fuel</span>
+            <div class="flex items-center gap-2">
+              <div class="relative w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden shadow-inner">
+                <div class="absolute top-0 left-0 h-full bg-gradient-to-r from-emerald-400 to-emerald-600 rounded-full transition-all duration-1000 ease-out" style="width: 95%">
+                  <div class="absolute top-0 left-0 w-full h-full bg-white/30 animate-pulse"></div>
+                </div>
               </div>
-              <span class="text-[10px] font-mono text-gray-600 font-bold">190/200</span>
+              <span class="text-[10px] font-mono font-black text-gray-700 tabular-nums">
+                190<span class="text-gray-400 font-semibold">/200</span>
+              </span>
             </div>
           </div>
 
