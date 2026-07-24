@@ -17,6 +17,7 @@ import { UpstoxWSClient } from './ws-client.js';
 import { brokerAdapter } from './broker-adapter.js';
 import { AIManager } from './ai/ai-manager.js';
 import { initializeCronJobs } from './cron-prewarmer.js';
+import { OptionChainFetcher } from './option-chain-fetcher.js';
 
 import { createClient } from '@supabase/supabase-js';
 
@@ -86,6 +87,7 @@ async function bootstrapEngine() {
     if (activeWsClient) {
       activeWsClient.updateToken(newToken);
     }
+    OptionChainFetcher.updateToken(newToken);
     await DataEngine.autoRecoverGaps(newToken);
   });
 
@@ -184,7 +186,13 @@ async function bootstrapEngine() {
   }
 };
 
-connectWithRetry().catch(e => logError(`Fatal WS loop: ${e.message}`));
+connectWithRetry().then(() => {
+  // Start option chain fetcher AFTER WS is connected (needs spot price)
+  // Small delay to let WS feed initialize and populate tracker.liveSpotPrice
+  setTimeout(() => {
+    OptionChainFetcher.start(activeToken);
+  }, 10000);
+}).catch(e => logError(`Fatal WS loop: ${e.message}`));
 
 process.on('SIGINT', () => process.exit(0));
 process.on('SIGTERM', () => process.exit(0));

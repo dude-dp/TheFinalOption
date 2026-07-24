@@ -26,6 +26,51 @@ export class ApiTracker {
   }
 }
 
+// ============================================
+// Option Chain Snapshot (fed by OptionChainFetcher)
+// ============================================
+
+export interface NearbyStrike {
+  strike: number;
+  callOI: number;
+  putOI: number;
+  callIV: number;
+  putIV: number;
+  callDelta: number;
+  putDelta: number;
+}
+
+export interface OptionChainSnapshot {
+  timestamp: string;
+  atmStrike: number;
+  // Aggregate OI across ATM ± 5 strikes
+  callOI: number;
+  putOI: number;
+  // OI Change since previous poll (0 on first boot to prevent fake spikes)
+  callOIChange: number;
+  putOIChange: number;
+  // ATM Implied Volatility
+  callIV: number;
+  putIV: number;
+  // ATM Bid/Ask (for spread quality assessment)
+  callBid: number;
+  callAsk: number;
+  putBid: number;
+  putAsk: number;
+  // Derived metrics
+  pcr: number;           // Put-Call Ratio
+  maxPainStrike: number; // True max pain (lowest total payout)
+  // ATM Greeks (free from Upstox API)
+  atmCallDelta: number;
+  atmCallTheta: number;
+  atmPutDelta: number;
+  atmPutTheta: number;
+  atmCallGamma: number;
+  atmCallVega: number;
+  // Strike-level breakdown
+  nearbyStrikes: NearbyStrike[];
+}
+
 export interface DailyState {
   startingCapital: number;
 
@@ -122,11 +167,11 @@ class PortfolioTracker {
     this.latestConsensusReasoning = reasoning;
   }
 
-  // 🟢 NEW: OI Data
-  public oiData: { callOI: number, putOI: number } = { callOI: 0, putOI: 0 };
+  // 🟢 Live Option Chain Snapshot (enriched by OptionChainFetcher)
+  public oiData: OptionChainSnapshot | null = null;
 
-  public setOIData(callOI: number, putOI: number) {
-    this.oiData = { callOI, putOI };
+  public setOIData(snapshot: OptionChainSnapshot) {
+    this.oiData = snapshot;
   }
 
   /**

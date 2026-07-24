@@ -11,6 +11,7 @@ import { varianceEngine } from './variance.js';
 import type { LocalCandle } from './aggregator.js';
 import { EnsembleEngine } from './ai/ensemble.js';
 import { TRADING_SYSTEM_PROMPT } from './ai/prompts.js';
+import { OptionChainFetcher } from './option-chain-fetcher.js';
 
 const supabase = createClient(
   process.env.SUPABASE_URL || '',
@@ -151,7 +152,18 @@ export class StateEngine {
             active_position: activePos,
             ensemble_votes: tracker.latestVotes,
             consensus_reasoning: tracker.latestConsensusReasoning,
-            oi_data: tracker.oiData,
+            oi_data: tracker.oiData ? {
+              atmStrike: tracker.oiData.atmStrike,
+              callOI: tracker.oiData.callOI,
+              putOI: tracker.oiData.putOI,
+              callOIChange: tracker.oiData.callOIChange,
+              putOIChange: tracker.oiData.putOIChange,
+              pcr: tracker.oiData.pcr,
+              maxPainStrike: tracker.oiData.maxPainStrike,
+              callIV: tracker.oiData.callIV,
+              putIV: tracker.oiData.putIV,
+              timestamp: tracker.oiData.timestamp
+            } : null,
             daemon_last_heartbeat: new Date().toISOString()
         }).eq('id', 1);
 
@@ -189,6 +201,20 @@ export class StateEngine {
     // Evaluate confluence to get precomputed indicators (VWAP, EMA, RSI, etc.)
     const indicatorSignal = evaluateConfluence(candles, new Date(), volatilityState.velocityMultiplier);
 
+    // Enhancement 4: Stale OI Data Circuit Breaker
+    // If option chain data is older than 60 seconds, the AI would trade on bad data.
+    const oiSnapshot = tracker.oiData;
+    let oiDataForAI: any = null;
+    if (oiSnapshot) {
+      const oiAgeMs = Date.now() - new Date(oiSnapshot.timestamp).getTime();
+      if (oiAgeMs > 60000) {
+        logWarn(`[SIGNAL] ⚠️ OI data is ${Math.round(oiAgeMs / 1000)}s stale. Marking as stale for AI.`);
+        oiDataForAI = { ...oiSnapshot, _stale: true, _ageMs: oiAgeMs };
+      } else {
+        oiDataForAI = oiSnapshot;
+      }
+    }
+
     const marketSnapshot = {
       timestamp: new Date().toISOString(),
       spotPrice: _spotPrice,
@@ -200,7 +226,31 @@ export class StateEngine {
         rsi: indicatorSignal.rsi,
         volumeRatio: indicatorSignal.volumeRatio
       },
-      oiData: tracker.oiData,
+      optionChain: oiDataForAI ? {
+        atmStrike: oiDataForAI.atmStrike,
+        callOI: oiDataForAI.callOI,
+        putOI: oiDataForAI.putOI,
+        callOIChange: oiDataForAI.callOIChange,
+        putOIChange: oiDataForAI.putOIChange,
+        callIV: oiDataForAI.callIV,
+        putIV: oiDataForAI.putIV,
+        callBid: oiDataForAI.callBid,
+        callAsk: oiDataForAI.callAsk,
+        putBid: oiDataForAI.putBid,
+        putAsk: oiDataForAI.putAsk,
+        pcr: oiDataForAI.pcr,
+        maxPainStrike: oiDataForAI.maxPainStrike,
+        greeks: {
+          atmCallDelta: oiDataForAI.atmCallDelta,
+          atmCallTheta: oiDataForAI.atmCallTheta,
+          atmPutDelta: oiDataForAI.atmPutDelta,
+          atmPutTheta: oiDataForAI.atmPutTheta,
+          atmCallGamma: oiDataForAI.atmCallGamma,
+          atmCallVega: oiDataForAI.atmCallVega
+        },
+        nearbyStrikes: oiDataForAI.nearbyStrikes,
+        isStale: oiDataForAI._stale ?? false
+      } : null,
       volatilityState
     };
 
@@ -419,6 +469,9 @@ export class StateEngine {
 
     // Signal WS client to close cleanly (EventBus — no circular deps)
     eventBus.emit('system:shutdown');
+
+    // Stop OI chain fetcher
+    OptionChainFetcher.stop();
 
     if (this.tradingMode === 'LIVE') {
       // Cancel active GTT if registered
