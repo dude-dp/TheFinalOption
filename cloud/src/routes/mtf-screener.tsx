@@ -20,10 +20,10 @@ export const MTFScreenerPage = () => (
       `}</style>
     </head>
     <body class="min-h-screen bg-gray-50 text-gray-900 selection:bg-blue-100">
-      
+
       {/* --- INSTITUTIONAL LIGHT NAVBAR --- */}
       <header class="sticky top-0 z-50 w-full bg-white/95 backdrop-blur-md border-b border-gray-200 px-6 py-3 flex justify-between items-center transition-all duration-300 shadow-sm">
-        
+
         {/* LEFT: Branding */}
         <div class="flex items-center gap-4">
           <h1 class="text-xl font-black tracking-tight text-blue-900 font-sans">
@@ -47,10 +47,10 @@ export const MTFScreenerPage = () => (
 
           {/* Quick Search */}
           <div class="relative">
-            <input 
+            <input
               id="search-input"
-              type="text" 
-              placeholder="Filter ticker..." 
+              type="text"
+              placeholder="Filter ticker..."
               class="bg-gray-50 border border-gray-200 text-sm rounded-full pl-8 pr-4 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all w-48 placeholder-gray-400 font-medium"
             />
             <svg class="w-4 h-4 text-gray-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -74,9 +74,8 @@ export const MTFScreenerPage = () => (
 
           {/* Mode Indicator */}
           <div class="flex items-center gap-2 pl-4 border-l border-gray-200 hidden md:flex">
-            <span class="text-[9px] font-black text-gray-400 uppercase tracking-widest">Mode</span>
             <span class="px-2 py-1 rounded bg-gray-100 text-gray-700 text-[10px] font-mono font-bold border border-gray-200">
-              MANUAL
+              MANUAL MODE
             </span>
           </div>
 
@@ -96,7 +95,7 @@ export const MTFScreenerPage = () => (
 
           {/* Manual Run Scan Button */}
           <div class="flex items-center gap-4 border-l border-gray-200 pl-4">
-            <button 
+            <button
               id="trigger-scan-btn"
               type="button"
               onclick="window.triggerManualScan && window.triggerManualScan()"
@@ -113,24 +112,24 @@ export const MTFScreenerPage = () => (
 
       {/* --- MAIN DATA TABLE --- */}
       <main class="max-w-7xl mx-auto px-6 py-8">
-        
+
         {/* Statistics Bar */}
         <div class="flex gap-4 mb-6">
           <div class="bg-white px-5 py-4 rounded-xl border border-gray-200 shadow-sm flex-1">
-             <div class="text-xs text-gray-500 font-bold uppercase tracking-wider">Active Setups</div>
-             <div id="stat-total-setups" class="text-3xl font-black text-gray-900 mt-1">0</div>
+            <div class="text-xs text-gray-500 font-bold uppercase tracking-wider">Active Setups</div>
+            <div id="stat-total-setups" class="text-3xl font-black text-gray-900 mt-1">0</div>
           </div>
           <div class="bg-white px-5 py-4 rounded-xl border border-gray-200 shadow-sm flex-[3]">
-             <div class="text-xs text-gray-500 font-bold uppercase tracking-wider">Current Filter Logic</div>
-             <div class="flex items-center gap-3 mt-2">
-                <span class="text-sm font-bold text-blue-800 bg-blue-50 px-2.5 py-1 rounded border border-blue-100">
-                  MACD 15m Zero-Line Cross
-                </span>
-                <span class="text-gray-300 font-bold">+</span>
-                <span class="text-sm font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded border border-emerald-100">
-                  RVOL Expansion Filter
-                </span>
-             </div>
+            <div class="text-xs text-gray-500 font-bold uppercase tracking-wider">Current Filter Logic</div>
+            <div class="flex items-center gap-3 mt-2">
+              <span class="text-sm font-bold text-blue-800 bg-blue-50 px-2.5 py-1 rounded border border-blue-100">
+                MACD 15m Zero-Line Cross
+              </span>
+              <span class="text-gray-300 font-bold">+</span>
+              <span class="text-sm font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded border border-emerald-100">
+                RVOL Expansion Filter
+              </span>
+            </div>
           </div>
         </div>
 
@@ -162,7 +161,7 @@ export const MTFScreenerPage = () => (
       </main>
 
       {/* Client-Side Refresh, Search, and Countdown Logic */}
-      <script>{`
+      <script dangerouslySetInnerHTML={{ __html: `
         let allStocks = [];
         let nextUpdateIn = 60;
 
@@ -351,7 +350,7 @@ export const MTFScreenerPage = () => (
           const btnText = document.getElementById('trigger-scan-text');
           const btnIcon = document.getElementById('trigger-scan-icon');
           if (btn) {
-            btn.className = 'flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-black transition-all bg-blue-600 text-white hover:bg-blue-700 shadow-md';
+            btn.className = 'flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-black transition-all bg-blue-600 text-white hover:bg-blue-700 shadow-md cursor-pointer';
           }
           if (btnText) btnText.innerText = 'Run Scan';
           if (btnIcon) {
@@ -365,23 +364,56 @@ export const MTFScreenerPage = () => (
           btnElem.addEventListener('click', triggerManualScan);
         }
 
-        // Initialize Search Listener
-        document.getElementById('search-input').addEventListener('input', applyFilter);
+        // Live Cron Sync Countdown Timer (:01, :16, :31, :46 minutes)
+        function updateLiveScanCountdown() {
+          const now = new Date();
+          const m = now.getMinutes();
+          const targetMinutes = [1, 16, 31, 46];
+          
+          let targetM = targetMinutes.find(t => t > m);
+          let nextScanDate = new Date(now);
 
-        // Initial Data Fetch
+          if (targetM !== undefined) {
+            nextScanDate.setMinutes(targetM, 0, 0);
+          } else {
+            nextScanDate.setHours(now.getHours() + 1, 1, 0, 0);
+          }
+
+          const diffMs = nextScanDate.getTime() - now.getTime();
+          const totalSeconds = Math.max(0, Math.floor(diffMs / 1000));
+
+          const mins = Math.floor(totalSeconds / 60);
+          const secs = totalSeconds % 60;
+
+          let timeString = '';
+          if (mins > 0) {
+            timeString = mins + 'm ' + (secs < 10 ? '0' : '') + secs + 's';
+          } else {
+            timeString = secs + 's';
+          }
+
+          const labelElem = document.getElementById('countdown-label');
+          if (labelElem) {
+            labelElem.innerText = 'Next scan in: ' + timeString;
+          }
+
+          // Trigger setup fetch when cron fires
+          if (totalSeconds === 0) {
+            setTimeout(fetchMTFSetups, 3000);
+          }
+        }
+
+        // Initialize Search Listener & Initial Data Fetch
+        document.getElementById('search-input').addEventListener('input', applyFilter);
         fetchMTFSetups();
 
-        // 60-Second Loop
+        // 60-Second Data Loop
         setInterval(fetchMTFSetups, 60000);
 
-        // Countdown Timer
-        setInterval(() => {
-          if (nextUpdateIn > 0) {
-            nextUpdateIn--;
-          }
-          document.getElementById('countdown-label').innerText = 'Next scan in: ' + nextUpdateIn + 's';
-        }, 1000);
-      `}</script>
+        // Live 1-Second Countdown Counter
+        updateLiveScanCountdown();
+        setInterval(updateLiveScanCountdown, 1000);
+      ` }}></script>
     </body>
   </html>
 );
