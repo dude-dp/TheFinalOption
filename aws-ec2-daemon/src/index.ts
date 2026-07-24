@@ -18,7 +18,7 @@ import { brokerAdapter } from './broker-adapter.js';
 import { AIManager } from './ai/ai-manager.js';
 import { initializeCronJobs } from './cron-prewarmer.js';
 import { OptionChainFetcher } from './option-chain-fetcher.js';
-import { run15MinScreener } from './mtf-screener.js';
+import { run15MinScreener, startMTFTriggerListener } from './mtf-screener.js';
 
 import { createClient } from '@supabase/supabase-js';
 
@@ -193,7 +193,8 @@ connectWithRetry().then(() => {
     OptionChainFetcher.start(activeToken);
   }, 10000);
 
-  // ⚡ Start MTF Quant Screener Offset Scheduler
+  // ⚡ Start MTF Quant Screener Offset Scheduler & Trigger Listener
+  startMTFTriggerListener();
   setTimeout(() => {
     run15MinScreener().catch(err => logError(`[MTF-SCREENER] Initial boot scan failed: ${err.message}`));
   }, 15000);

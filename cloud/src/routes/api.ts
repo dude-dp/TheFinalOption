@@ -48,6 +48,7 @@ api.use('/api/chart-data', dashboardAuth);
 api.use('/api/summary', dashboardAuth);
 api.use('/api/config', dashboardAuth);
 api.use('/api/mtf-screener', dashboardAuth);
+api.use('/api/mtf-screener/*', dashboardAuth);
 
 async function getUpstoxAccessToken(c: any): Promise<string | null> {
   try {
@@ -1517,6 +1518,26 @@ api.get('/api/mtf-screener', async (c) => {
     if (error) throw error;
 
     return c.json({ success: true, count: data?.length || 0, data: data || [] });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+/**
+ * POST /api/mtf-screener/trigger
+ * Triggers an on-demand scan by updating mtf_scan_requested = true in system_controls table.
+ */
+api.post('/api/mtf-screener/trigger', async (c) => {
+  try {
+    const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY);
+    const { error } = await supabase
+      .from('system_controls')
+      .update({ mtf_scan_requested: true })
+      .eq('id', 1);
+
+    if (error) throw error;
+    
+    return c.json({ success: true, message: "Scan initialized on EC2." });
   } catch (err: any) {
     return c.json({ success: false, error: err.message }, 500);
   }

@@ -93,6 +93,20 @@ export const MTFScreenerPage = () => (
               Next scan in: 60s
             </span>
           </div>
+
+          {/* Manual Run Scan Button */}
+          <div class="flex items-center gap-4 border-l border-gray-200 pl-4">
+            <button 
+              id="trigger-scan-btn"
+              onclick="triggerManualScan()"
+              class="flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-black transition-all bg-blue-600 text-white hover:bg-blue-700 shadow-md"
+            >
+              <svg id="trigger-scan-icon" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+              </svg>
+              <span id="trigger-scan-text">Run Scan</span>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -125,21 +139,18 @@ export const MTFScreenerPage = () => (
             <table class="w-full text-left text-sm whitespace-nowrap">
               <thead class="bg-gray-50/80 border-b border-gray-200 uppercase tracking-wider text-[11px] font-black text-gray-500">
                 <tr>
-                  <th class="px-6 py-4">Symbol</th>
+                  <th class="px-6 py-4">Asset & Volume</th>
                   <th class="px-6 py-4">LTP</th>
-                  <th class="px-6 py-4 text-center">Leverage</th>
-                  <th class="px-6 py-4">VWAP Dist %</th>
-                  <th class="px-6 py-4">MACD Status</th>
+                  <th class="px-6 py-4">VWAP Ext.</th>
+                  <th class="px-6 py-4">MACD 15m</th>
                   <th class="px-6 py-4">RSI (14)</th>
-                  <th class="px-6 py-4">Trend (ADX)</th>
-                  <th class="px-6 py-4">RVOL</th>
                   <th class="px-6 py-4">Struct SL (ATR)</th>
                   <th class="px-6 py-4 text-right">Review</th>
                 </tr>
               </thead>
               <tbody id="screener-table-body" class="divide-y divide-gray-100">
                 <tr>
-                  <td colSpan={10} class="px-6 py-16 text-center text-gray-400 font-medium">
+                  <td colSpan={7} class="px-6 py-16 text-center text-gray-400 font-medium">
                     Loading MTF setups...
                   </td>
                 </tr>
@@ -184,7 +195,7 @@ export const MTFScreenerPage = () => (
           if (!stocks || stocks.length === 0) {
             tbody.innerHTML = \`
               <tr>
-                <td colspan="10" class="px-6 py-20 text-center">
+                <td colspan="7" class="px-6 py-20 text-center">
                   <div class="text-gray-300 mb-3">
                     <svg class="w-10 h-10 mx-auto" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
@@ -211,18 +222,23 @@ export const MTFScreenerPage = () => (
 
             const rsiClass = stock.rsi_14 > 60 ? 'text-emerald-600 font-extrabold' : (stock.rsi_14 < 40 ? 'text-red-600 font-extrabold' : 'text-gray-600 font-bold');
             
-            const adxFlame = stock.adx_trend > 25 
-              ? \`<span class="inline-flex items-center gap-0.5 ml-1 text-red-500 font-bold">
-                  <svg class="w-3 h-3 inline fill-current" viewBox="0 0 24 24">
-                    <path d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
-                    <path d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
-                  </svg>
-                 </span>\` 
+            const rvolVal = Number(stock.rvol || 1.0);
+            const isHighRvol = rvolVal > 2.5;
+            const rvolBadgeClass = isHighRvol
+              ? 'bg-orange-100 text-orange-700 border-orange-200 font-extrabold'
+              : 'bg-gray-100 text-gray-600 border-gray-200 font-bold';
+
+            const rvolFlameSvg = isHighRvol
+              ? \`<svg class="w-3 h-3 inline fill-current text-orange-600 mr-0.5" viewBox="0 0 24 24">
+                  <path d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
+                  <path d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                 </svg>\`
               : '';
 
-            const vwapDistClass = stock.distance_from_vwap_pct > 3.0
-              ? 'text-red-600 bg-red-50 border-red-200 font-bold'
-              : 'text-gray-700 bg-gray-100 border-gray-200 font-medium';
+            const distVwap = Number(stock.distance_from_vwap_pct || 0);
+            const vwapDistClass = distVwap > 2.0
+              ? 'text-red-500 font-bold'
+              : (distVwap < 0 ? 'text-blue-500 font-bold' : 'text-emerald-600 font-bold');
 
             const formattedSL = Number(stock.suggested_sl || (stock.current_price * 0.98)).toLocaleString('en-IN', {
               minimumFractionDigits: 2,
@@ -232,27 +248,28 @@ export const MTFScreenerPage = () => (
             return \`
               <tr class="table-row-hover transition-colors group border-b border-gray-100">
                 <td class="px-6 py-4">
-                  <span class="font-black text-gray-900 text-base block">\${stock.tradingsymbol}</span>
-                  <span class="text-[10px] font-black text-gray-400 tracking-wider uppercase">\${stock.sector || 'GENERAL'}</span>
+                  <div class="flex items-center gap-2">
+                    <span class="font-black text-gray-900 text-base">\${stock.tradingsymbol}</span>
+                    <span class="px-2 py-0.5 rounded text-[10px] tracking-wider border \${rvolBadgeClass}">
+                      \${rvolFlameSvg}RVOL \${rvolVal}x
+                    </span>
+                  </div>
+                  <span class="text-[10px] font-black text-gray-400 tracking-wider uppercase mt-0.5 block">\${stock.sector || 'GENERAL'}</span>
                 </td>
-                <td class="px-6 py-4 font-mono font-extrabold text-gray-800 text-base">₹\${Number(stock.current_price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-                <td class="px-6 py-4 text-center">
-                  <span class="bg-gray-100 text-gray-700 border border-gray-200 px-2.5 py-1 rounded text-xs font-black">
-                    \${stock.mtf_margin_multiplier || 2.0}x
-                  </span>
-                </td>
+                <td class="px-6 py-4 font-mono font-semibold text-gray-800 text-base">₹\${Number(stock.current_price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                 <td class="px-6 py-4 font-mono">
-                  <span class="text-xs px-2.5 py-1 rounded border \${vwapDistClass}">
-                    \${stock.distance_from_vwap_pct > 0 ? '+' : ''}\${stock.distance_from_vwap_pct}%
-                  </span>
+                  <div class="flex flex-col">
+                    <span class="text-xs \${vwapDistClass}">
+                      \${distVwap > 0 ? '+' : ''}\${distVwap}%
+                    </span>
+                    <span class="text-[9px] text-gray-400 font-medium tracking-wide uppercase">from VWAP</span>
+                  </div>
                 </td>
                 <td class="px-6 py-4">
                   \${macdBadge}
-                  <span class="ml-2.5 font-mono text-xs text-gray-400 font-bold">(\${stock.macd_value})</span>
+                  <span class="ml-2 font-mono text-xs text-gray-400 font-bold">(\${stock.macd_value})</span>
                 </td>
                 <td class="px-6 py-4 font-mono \${rsiClass}">\${stock.rsi_14}</td>
-                <td class="px-6 py-4 font-mono font-bold text-gray-700">\${stock.adx_trend}\${adxFlame}</td>
-                <td class="px-6 py-4 font-mono font-black text-gray-800">\${stock.rvol || 1.0}x</td>
                 <td class="px-6 py-3">
                   <div class="bg-white border border-gray-200 rounded-md p-2.5 w-44 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
                     <div class="flex justify-between items-center text-[10px] font-mono text-gray-500 border-b border-gray-100 pb-1 mb-1">
@@ -291,6 +308,54 @@ export const MTFScreenerPage = () => (
               </tr>
             \`;
           }).join('');
+        }
+
+        // On-Demand Manual Scan Trigger Function
+        let isScanning = false;
+        async function triggerManualScan() {
+          if (isScanning) return;
+          isScanning = true;
+          const btn = document.getElementById('trigger-scan-btn');
+          const btnText = document.getElementById('trigger-scan-text');
+          const btnIcon = document.getElementById('trigger-scan-icon');
+          
+          if (btn) {
+            btn.className = 'flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-black transition-all bg-blue-100 text-blue-500 border border-blue-200 cursor-not-allowed';
+          }
+          if (btnText) btnText.innerText = 'Scanning EC2...';
+          if (btnIcon) {
+            btnIcon.outerHTML = '<svg id="trigger-scan-icon" class="w-3.5 h-3.5 animate-spin text-blue-500" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>';
+          }
+          
+          try {
+            await fetch('/api/mtf-screener/trigger', { method: 'POST' });
+          } catch (e) {
+            console.error('Trigger request error:', e);
+          }
+
+          let polls = 0;
+          const pollInterval = setInterval(async () => {
+            await fetchMTFSetups();
+            polls++;
+            if (polls >= 6) {
+              clearInterval(pollInterval);
+              resetScanButton();
+            }
+          }, 5000);
+        }
+
+        function resetScanButton() {
+          isScanning = false;
+          const btn = document.getElementById('trigger-scan-btn');
+          const btnText = document.getElementById('trigger-scan-text');
+          const btnIcon = document.getElementById('trigger-scan-icon');
+          if (btn) {
+            btn.className = 'flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-black transition-all bg-blue-600 text-white hover:bg-blue-700 shadow-md';
+          }
+          if (btnText) btnText.innerText = 'Run Scan';
+          if (btnIcon) {
+            btnIcon.outerHTML = '<svg id="trigger-scan-icon" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>';
+          }
         }
 
         // Initialize Search Listener

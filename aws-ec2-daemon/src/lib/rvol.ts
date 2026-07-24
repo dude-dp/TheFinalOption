@@ -1,37 +1,35 @@
-import { Candle } from './adx.js';
-
-/**
- * Calculates Relative Volume (RVOL).
- * Compares current candle's volume to average volume of same time slot in past N days.
- */
-export function calculateRVOL(candles: Candle[], historicalCandles: Candle[][]): number {
-  if (!candles || candles.length === 0) return 1.0;
+export function calculateRVOL(candles: any[]): number {
+  if (!candles || candles.length < 2) return 1.0;
 
   const currentCandle = candles[candles.length - 1];
-  const currentVol = currentCandle.volume || 0;
-  if (currentVol === 0) return 1.0;
+  if (!currentCandle.volume || currentCandle.volume === 0) return 1.0;
 
-  if (!historicalCandles || historicalCandles.length === 0) return 1.0;
+  // Helper to extract "HH:MM" string for time-matching
+  const getTime = (ts: string | number) => {
+    if (!ts) return '';
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return '';
+    return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+  };
 
-  let totalSameSlotVolume = 0;
+  const targetTime = getTime(currentCandle.timestamp);
+  let historicalVolSum = 0;
   let count = 0;
 
-  for (const dayCandles of historicalCandles) {
-    if (dayCandles && dayCandles.length > 0) {
-      const match = dayCandles.find(c => c.timestamp && currentCandle.timestamp && c.timestamp.slice(11, 16) === currentCandle.timestamp.slice(11, 16));
-      if (match && match.volume) {
-        totalSameSlotVolume += match.volume;
-        count++;
-      }
+  // Look backward through history to find candles matching THIS EXACT TIME OF DAY
+  for (let i = candles.length - 2; i >= 0; i--) {
+    const candleTime = getTime(candles[i].timestamp);
+    if (candleTime && candleTime === targetTime && candles[i].volume) {
+      historicalVolSum += candles[i].volume;
+      count++;
     }
   }
 
-  if (count === 0 || totalSameSlotVolume === 0) {
-    // Fallback to simple average over recent candles
-    const avgVol = candles.slice(0, -1).reduce((acc, c) => acc + (c.volume || 0), 0) / Math.max(1, candles.length - 1);
-    return avgVol > 0 ? Number((currentVol / avgVol).toFixed(2)) : 1.0;
-  }
+  // If no historical data for this time slot, default to 1.0 (baseline)
+  if (count === 0 || historicalVolSum === 0) return 1.0;
 
-  const avgSameSlotVol = totalSameSlotVolume / count;
-  return Number((currentVol / avgSameSlotVol).toFixed(2));
+  const avgHistoricalVol = historicalVolSum / count;
+  const rvol = currentCandle.volume / avgHistoricalVol;
+
+  return Number(rvol.toFixed(2));
 }
