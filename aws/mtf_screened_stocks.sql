@@ -17,34 +17,40 @@ CREATE TABLE IF NOT EXISTS mtf_screened_stocks (
     rvol DECIMAL DEFAULT 1.0,
     atr_value DECIMAL DEFAULT 0.0,
     suggested_sl DECIMAL DEFAULT 0.0,
+    conviction VARCHAR NOT NULL DEFAULT 'NORMAL',
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- Migration query if table already exists:
+-- Migrations (run if table exists):
 ALTER TABLE mtf_screened_stocks ADD COLUMN IF NOT EXISTS atr_value DECIMAL DEFAULT 0.0;
+ALTER TABLE mtf_screened_stocks ADD COLUMN IF NOT EXISTS conviction VARCHAR DEFAULT 'NORMAL';
 
--- Index for fast query ordering by momentum (macd_value) and recency
-CREATE INDEX IF NOT EXISTS idx_mtf_screened_stocks_macd ON mtf_screened_stocks (macd_value DESC, updated_at DESC);
+-- Index: HIGH conviction first, then by MACD momentum
+DROP INDEX IF EXISTS idx_mtf_screened_stocks_macd;
+CREATE INDEX IF NOT EXISTS idx_mtf_screened_stocks_conviction 
+  ON mtf_screened_stocks (conviction DESC, macd_value DESC, updated_at DESC);
 
--- System Controls Table for On-Demand Triggers & Telemetry Bridge
+-- System Controls
 CREATE TABLE IF NOT EXISTS system_controls (
     id INT PRIMARY KEY DEFAULT 1,
     mtf_scan_requested BOOLEAN DEFAULT false,
     last_scan_time TIMESTAMP WITH TIME ZONE
 );
 
--- Seed default control record
 INSERT INTO system_controls (id, mtf_scan_requested) VALUES (1, false)
 ON CONFLICT (id) DO NOTHING;
 
--- Instrument Master Table storing live Upstox NSE equities and liquidity tiers
+-- Instrument Master (seeded from AutoBot Upstox_MTF_enabled.json)
 CREATE TABLE IF NOT EXISTS mtf_instrument_master (
     instrument_token VARCHAR PRIMARY KEY,
     tradingsymbol VARCHAR NOT NULL,
     sector VARCHAR DEFAULT 'EQUITY',
-    liquidity_tier VARCHAR DEFAULT 'LOW', -- 'HIGH' for F&O constituents, 'LOW' for others
+    liquidity_tier VARCHAR DEFAULT 'HIGH',
+    mtf_bracket DECIMAL DEFAULT 25.0,
     is_active BOOLEAN DEFAULT true,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE mtf_instrument_master ADD COLUMN IF NOT EXISTS mtf_bracket DECIMAL DEFAULT 25.0;
 
 CREATE INDEX IF NOT EXISTS idx_mtf_liquidity ON mtf_instrument_master(liquidity_tier);
