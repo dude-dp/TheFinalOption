@@ -9,6 +9,7 @@ import type { Env } from './lib/types';
 import apiRoutes from './routes/api';
 import dashboardRoutes from './routes/dashboard';
 import { BacktestPage } from './routes/backtest';
+import { MTFScreenerPage } from './routes/mtf-screener';
 import { handleScheduled, takeConfigSnapshot } from './cron';
 import { handleQueue } from './queue';
 
@@ -23,6 +24,9 @@ app.route('/', dashboardRoutes);
 
 // NEW: Backtest UI Page
 app.get('/backtest', (c) => c.html(BacktestPage()));
+
+// NEW: Quant MTF Screener UI Page
+app.get('/mtf-screener', (c) => c.html(MTFScreenerPage()));
 
 // Handle favicon.ico to prevent 404 console warnings
 app.get('/favicon.ico', (c) => c.body(null, 204));

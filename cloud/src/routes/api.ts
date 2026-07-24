@@ -47,6 +47,7 @@ api.use('/api/telemetry', dashboardAuth);
 api.use('/api/chart-data', dashboardAuth);
 api.use('/api/summary', dashboardAuth);
 api.use('/api/config', dashboardAuth);
+api.use('/api/mtf-screener', dashboardAuth);
 
 async function getUpstoxAccessToken(c: any): Promise<string | null> {
   try {
@@ -1496,6 +1497,29 @@ api.post('/api/admin/run-backtest', dashboardAuth, async (c) => {
     maxDrawdown: maxDrawdown,
     trades: closedTrades.reverse() // Newest first for the table
   });
+});
+
+/**
+ * GET /api/mtf-screener
+ * Serves active 15m quantitative MTF setups cached in Supabase mtf_screened_stocks table.
+ */
+api.get('/api/mtf-screener', async (c) => {
+  try {
+    const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY);
+    
+    // Fetch stocks updated in the last 24 hours (or top 50)
+    const { data, error } = await supabase
+      .from('mtf_screened_stocks')
+      .select('*')
+      .order('macd_value', { ascending: false })
+      .limit(50);
+
+    if (error) throw error;
+
+    return c.json({ success: true, count: data?.length || 0, data: data || [] });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
 });
 
 export default api;

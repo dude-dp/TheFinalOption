@@ -18,6 +18,7 @@ import { brokerAdapter } from './broker-adapter.js';
 import { AIManager } from './ai/ai-manager.js';
 import { initializeCronJobs } from './cron-prewarmer.js';
 import { OptionChainFetcher } from './option-chain-fetcher.js';
+import { run15MinScreener } from './mtf-screener.js';
 
 import { createClient } from '@supabase/supabase-js';
 
@@ -188,10 +189,29 @@ async function bootstrapEngine() {
 
 connectWithRetry().then(() => {
   // Start option chain fetcher AFTER WS is connected (needs spot price)
-  // Small delay to let WS feed initialize and populate tracker.liveSpotPrice
   setTimeout(() => {
     OptionChainFetcher.start(activeToken);
   }, 10000);
+
+  // ⚡ Start MTF Quant Screener Offset Scheduler
+  setTimeout(() => {
+    run15MinScreener().catch(err => logError(`[MTF-SCREENER] Initial boot scan failed: ${err.message}`));
+  }, 15000);
+
+  setInterval(() => {
+    const now = new Date();
+    const minute = now.getMinutes();
+    const hour = now.getHours();
+    
+    // Offset minutes: 16, 31, 46, 01 during market hours (09:15 to 15:30)
+    const isMarketHours = hour >= 9 && (hour < 15 || (hour === 15 && minute <= 35));
+    const isOffsetMinute = minute === 16 || minute === 31 || minute === 46 || minute === 1;
+    const isEODSweep = hour === 15 && minute === 35;
+
+    if (isMarketHours && (isOffsetMinute || isEODSweep)) {
+      run15MinScreener().catch(err => logError(`[MTF-SCREENER] Cron scan error: ${err.message}`));
+    }
+  }, 60000);
 }).catch(e => logError(`Fatal WS loop: ${e.message}`));
 
 process.on('SIGINT', () => process.exit(0));
