@@ -43,19 +43,11 @@ async function fetchCandles(
   const headers: Record<string, string> = { 'Accept': 'application/json' };
   if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
 
-  // v3 historical endpoint (AutoBot pattern)
-  const url = `https://api.upstox.com/v3/historical-candle/${encoded}/${interval}/${today}/${past}`;
+  const url = `https://api.upstox.com/v2/historical-candle/${encoded}/${interval}/${today}/${past}`;
   const json = await fetchWithRetry(url, headers);
 
   if (json?.status === 'success' && json?.data?.candles?.length > 0) {
     return parseUpstoxCandles(json.data.candles);
-  }
-
-  // Fallback: v2 historical
-  const urlV2 = `https://api.upstox.com/v2/historical-candle/${encoded}/${interval}/${today}/${past}`;
-  const json2 = await fetchWithRetry(urlV2, headers);
-  if (json2?.data?.candles?.length > 0) {
-    return parseUpstoxCandles(json2.data.candles);
   }
 
   return [];
