@@ -1532,8 +1532,7 @@ api.post('/api/mtf-screener/trigger', async (c) => {
     const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY);
     const { error } = await supabase
       .from('system_controls')
-      .update({ mtf_scan_requested: true })
-      .eq('id', 1);
+      .upsert({ id: 1, mtf_scan_requested: true });
 
     if (error) throw error;
     

@@ -255,7 +255,7 @@ export async function run15MinScreener() {
 
   // Update system_controls timestamp so UI knows scan is finalized
   try {
-    await supabase.from('system_controls').update({ last_scan_time: new Date().toISOString() }).eq('id', 1);
+    await supabase.from('system_controls').upsert({ id: 1, last_scan_time: new Date().toISOString() });
   } catch (err: any) {
     logError(`[MTF-SCREENER] Failed to update last_scan_time in system_controls: ${err.message}`);
   }
@@ -271,12 +271,12 @@ export function startMTFTriggerListener() {
   setInterval(async () => {
     if (!supabase) return;
     try {
-      const { data } = await supabase.from('system_controls').select('mtf_scan_requested').eq('id', 1).single();
+      const { data } = await supabase.from('system_controls').select('mtf_scan_requested').eq('id', 1).maybeSingle();
       
       if (data && data.mtf_scan_requested) {
         logInfo('[MTF-SCREENER] ⚡ On-Demand MTF scan requested from UI! Executing immediately...');
         // Acknowledge request immediately to prevent duplicate runs
-        await supabase.from('system_controls').update({ mtf_scan_requested: false }).eq('id', 1);
+        await supabase.from('system_controls').upsert({ id: 1, mtf_scan_requested: false });
         
         // Execute scan
         await run15MinScreener();
