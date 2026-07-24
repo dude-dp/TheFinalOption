@@ -294,7 +294,7 @@ export const MTFScreenerPage = () => (
                 </td>
                 <td class="px-6 py-4 text-right">
                   <a 
-                    href="https://pro.upstox.com/" 
+                    href="https://in.tradingview.com/chart/?symbol=NSE:\${stock.tradingsymbol}" 
                     target="_blank" 
                     rel="noreferrer"
                     class="inline-flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity bg-white border border-gray-300 hover:border-blue-500 hover:text-blue-700 text-gray-700 px-4 py-1.5 rounded-lg text-xs font-black shadow-sm"
@@ -356,6 +356,12 @@ export const MTFScreenerPage = () => (
           if (btnIcon) {
             btnIcon.outerHTML = '<svg id="trigger-scan-icon" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>';
           }
+        }
+
+        window.triggerManualScan = triggerManualScan;
+        const btnElem = document.getElementById('trigger-scan-btn');
+        if (btnElem) {
+          btnElem.addEventListener('click', triggerManualScan);
         }
 
         // Initialize Search Listener

@@ -7,6 +7,7 @@ import { calculateATR, calculateSuggestedSL } from './lib/atr.js';
 import { calculateVWAPDistance } from './lib/vwap.js';
 import { calculateRVOL } from './lib/rvol.js';
 import { syncUpstoxInstrumentMaster } from './lib/instrument-sync.js';
+import { sendMTFAlert } from './lib/notify.js';
 
 const supabaseUrl = process.env.SUPABASE_URL || '';
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '';
@@ -207,7 +208,7 @@ export async function run15MinScreener() {
                              vwapDistance < 3.5;
 
         if (isValidSetup) {
-          matchingStocks.push({
+          const setupData = {
             instrument_token: stock.token,
             tradingsymbol: stock.symbol,
             sector: stock.sector,
@@ -222,7 +223,15 @@ export async function run15MinScreener() {
             atr_value: Number(currentAtr.toFixed(2)),
             suggested_sl: suggestedSL,
             updated_at: new Date().toISOString()
-          });
+          };
+
+          matchingStocks.push(setupData);
+
+          // 🎯 DISCORD SNIPER NOTIFICATION TRIGGER:
+          // Alert Discord if setup is top-tier: RVOL >= 1.8 and safely near VWAP (-1.0% <= VWAP <= 2.0%)
+          if (currentRvol >= 1.8 && vwapDistance <= 2.0 && vwapDistance >= -1.0) {
+            sendMTFAlert(setupData).catch(err => logError(`[NOTIFY] Alert error for ${stock.symbol}: ${err.message}`));
+          }
         }
       } catch (err: any) {
         logError(`[MTF-SCREENER] Error screening ${stock.symbol}: ${err.message}`);
