@@ -46,7 +46,7 @@ export class AIManager {
 
       // Hardcoded whitelist of the fastest and smartest models on Groq for algorithmic trading
       const topTradingModels = [
-        'llama-3.3-70b-versatile',
+        // 'llama-3.3-70b-versatile', <-- REMOVED from continuous polling
         'llama-3.1-8b-instant',
         'gemma2-9b-it',
         'mixtral-8x7b-32768'

@@ -10,6 +10,7 @@ import { eventBus } from './event-bus.js';
 import { varianceEngine } from './variance.js';
 import type { LocalCandle } from './aggregator.js';
 import { EnsembleEngine } from './ai/ensemble.js';
+import { AIManager } from './ai/ai-manager.js';
 import { TRADING_SYSTEM_PROMPT } from './ai/prompts.js';
 import { OptionChainFetcher } from './option-chain-fetcher.js';
 
@@ -215,48 +216,84 @@ export class StateEngine {
       }
     }
 
-    const marketSnapshot = {
-      timestamp: new Date().toISOString(),
-      spotPrice: _spotPrice,
-      candles: candles.slice(-5), // Only pass last 5 candles to save tokens
-      indicators: {
+    const minifiedSnapshot = {
+      t: Date.now(), // timestamp
+      sp: _spotPrice, // spot price
+      // Dense Candles: Map to shortest possible keys
+      c: candles.slice(-5).map(candle => ({
+        t: candle.timestamp,
+        o: candle.open,
+        h: candle.high,
+        l: candle.low,
+        c: candle.close,
+        v: candle.volume
+      })),
+      // Dense Option Chain
+      oc: oiDataForAI ? {
+        atm: oiDataForAI.atmStrike,
+        pcr: Number(oiDataForAI.pcr.toFixed(2)), // Keep decimals short
+        mp: oiDataForAI.maxPainStrike,
+        cΔ: oiDataForAI.callOIChange,
+        pΔ: oiDataForAI.putOIChange,
+        // Compress the nearby strikes array
+        str: oiDataForAI.nearbyStrikes.map((strike: any) => ({
+          sp: strike.strike,
+          cO: strike.callOI,
+          pO: strike.putOI,
+          cI: Number(strike.callIV.toFixed(1)),
+          pI: Number(strike.putIV.toFixed(1)),
+          cB: strike.callBid,
+          cA: strike.callAsk,
+          pB: strike.putBid,
+          pA: strike.putAsk
+        }))
+      } : null,
+      // Any indicators
+      ind: {
         vwap: indicatorSignal.vwap,
         ema9: indicatorSignal.ema9,
         ema21: indicatorSignal.ema21,
-        rsi: indicatorSignal.rsi,
-        volumeRatio: indicatorSignal.volumeRatio
-      },
-      optionChain: oiDataForAI ? {
-        atmStrike: oiDataForAI.atmStrike,
-        callOI: oiDataForAI.callOI,
-        putOI: oiDataForAI.putOI,
-        callOIChange: oiDataForAI.callOIChange,
-        putOIChange: oiDataForAI.putOIChange,
-        callIV: oiDataForAI.callIV,
-        putIV: oiDataForAI.putIV,
-        callBid: oiDataForAI.callBid,
-        callAsk: oiDataForAI.callAsk,
-        putBid: oiDataForAI.putBid,
-        putAsk: oiDataForAI.putAsk,
-        pcr: oiDataForAI.pcr,
-        maxPainStrike: oiDataForAI.maxPainStrike,
-        greeks: {
-          atmCallDelta: oiDataForAI.atmCallDelta,
-          atmCallTheta: oiDataForAI.atmCallTheta,
-          atmPutDelta: oiDataForAI.atmPutDelta,
-          atmPutTheta: oiDataForAI.atmPutTheta,
-          atmCallGamma: oiDataForAI.atmCallGamma,
-          atmCallVega: oiDataForAI.atmCallVega
-        },
-        nearbyStrikes: oiDataForAI.nearbyStrikes,
-        isStale: oiDataForAI._stale ?? false
-      } : null,
-      volatilityState
+        rsi: indicatorSignal.rsi ? Number(indicatorSignal.rsi.toFixed(1)) : null,
+        volRatio: indicatorSignal.volumeRatio
+      }
     };
 
-    const prompt = `${TRADING_SYSTEM_PROMPT}\n\nLive Snapshot:\n${JSON.stringify(marketSnapshot, null, 2)}`;
+    const prompt = `${TRADING_SYSTEM_PROMPT}\n\nLive Snapshot:\n${JSON.stringify(minifiedSnapshot)}`;
     const ensembleResult = await EnsembleEngine.getConsensus(prompt, 2);
     
+    // ESCALATION ARCHITECTURE (Boss validation)
+    if (ensembleResult.decision.action !== 'WAIT') {
+      logInfo(`[ESCALATION] 🚨 8B/9B ensemble voted ${ensembleResult.decision.action}. Waking up 70B Boss model for final validation...`);
+      try {
+        const bossResponse = await AIManager.askSpecificModel(prompt, 'llama-3.3-70b-versatile');
+        if (bossResponse.parsed) {
+          if (bossResponse.parsed.action === ensembleResult.decision.action) {
+            logInfo(`[ESCALATION] ✅ Boss validated the trade: ${bossResponse.parsed.action}`);
+            // Append boss vote
+            ensembleResult.votes.push({
+              modelId: 'llama-3.3-70b-versatile',
+              action: bossResponse.parsed.action,
+              confidence: bossResponse.parsed.confidence,
+              reasoning: bossResponse.parsed.reasoning,
+              latencyMs: bossResponse.latencyMs
+            });
+            // Update decision reasoning to include boss reasoning
+            ensembleResult.decision.reasoning = `[Boss 70B]: ${bossResponse.parsed.reasoning} || [Ensemble]: ${ensembleResult.decision.reasoning}`;
+            // Boost confidence since boss agreed
+            ensembleResult.decision.confidence = Math.min(100, ensembleResult.decision.confidence + 10);
+          } else {
+            logInfo(`[ESCALATION] ❌ Boss rejected the trade (voted ${bossResponse.parsed.action}). Overriding ensemble and falling back to WAIT.`);
+            ensembleResult.decision.action = 'WAIT';
+            ensembleResult.decision.reasoning = `[Boss Override]: 70B rejected the ensemble's ${ensembleResult.decision.action} signal. Reason: ${bossResponse.parsed.reasoning}`;
+          }
+        } else {
+           logWarn(`[ESCALATION] ⚠️ Boss model failed to return a valid JSON. Proceeding with original ensemble decision.`);
+        }
+      } catch (err) {
+        logWarn(`[ESCALATION] ⚠️ Boss model request failed: ${err}. Proceeding with original ensemble decision.`);
+      }
+    }
+
     // Store the raw vote array in the tracker for the next heartbeat
     tracker.setLatestVotes(ensembleResult.votes, ensembleResult.decision.reasoning);
 
