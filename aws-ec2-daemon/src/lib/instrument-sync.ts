@@ -18,7 +18,7 @@ export async function syncUpstoxInstrumentMaster() {
   }
 
   try {
-    const jsonPath = resolve(process.cwd(), '../AutoBot/docs/Upstox_MTF_enabled.json');
+    const jsonPath = resolve(process.cwd(), '../Upstox_MTF_enabled.json');
     const raw = readFileSync(jsonPath, 'utf-8');
     const mtfStocks: any[] = JSON.parse(raw);
 
