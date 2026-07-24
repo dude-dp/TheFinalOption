@@ -253,7 +253,28 @@ export const MTFScreenerPage = () => (
                 <td class="px-6 py-4 font-mono \${rsiClass}">\${stock.rsi_14}</td>
                 <td class="px-6 py-4 font-mono font-bold text-gray-700">\${stock.adx_trend}\${adxFlame}</td>
                 <td class="px-6 py-4 font-mono font-black text-gray-800">\${stock.rvol || 1.0}x</td>
-                <td class="px-6 py-4 font-mono font-black text-red-600/90">₹\${formattedSL}</td>
+                <td class="px-6 py-3">
+                  <div class="bg-white border border-gray-200 rounded-md p-2.5 w-44 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+                    <div class="flex justify-between items-center text-[10px] font-mono text-gray-500 border-b border-gray-100 pb-1 mb-1">
+                      <span class="tracking-wider uppercase">Base LTP</span>
+                      <span class="font-semibold text-gray-700">₹\${Number(stock.current_price).toFixed(2)}</span>
+                    </div>
+                    <div class="flex justify-between items-center text-[10px] font-mono text-gray-500 border-b border-gray-100 pb-1 mb-1.5">
+                      <span class="tracking-wider uppercase" title="ATR: ₹\${stock.atr_value || '0.00'}">
+                        2 × ATR <span class="text-gray-400">(\${stock.atr_value || '0.00'})</span>
+                      </span>
+                      <span class="font-semibold text-red-500">
+                        - ₹\${((stock.atr_value || 0) * 2).toFixed(2)}
+                      </span>
+                    </div>
+                    <div class="flex justify-between items-center text-xs font-mono font-black pt-0.5">
+                      <span class="text-gray-800 tracking-wider">STOP</span>
+                      <span class="text-red-600 bg-red-50 px-1.5 py-0.5 rounded border border-red-100">
+                        ₹\${formattedSL}
+                      </span>
+                    </div>
+                  </div>
+                </td>
                 <td class="px-6 py-4 text-right">
                   <a 
                     href="https://pro.upstox.com/" 

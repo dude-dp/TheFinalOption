@@ -166,6 +166,7 @@ export async function run15MinScreener() {
           macd_signal: isZeroLineCross ? 'ZERO_LINE_CROSS' : 'BULLISH_MOMENTUM',
           adx_trend: Number(currentAdx.toFixed(2)),
           rvol: rvol,
+          atr_value: Number(currentAtr.toFixed(2)),
           suggested_sl: suggestedSL,
           updated_at: new Date().toISOString()
         });

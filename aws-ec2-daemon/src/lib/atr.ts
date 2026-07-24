@@ -1,36 +1,47 @@
-import { Candle } from './adx.js';
+export interface Candle {
+  high: number;
+  low: number;
+  close: number;
+  open?: number;
+  volume?: number;
+  timestamp?: string;
+}
 
 /**
- * Average True Range (ATR 14) Calculation
- * Used for dynamic structural stop loss determination.
+ * Average True Range (ATR 14) Calculation using Wilder's Smoothing Method (RMA)
+ * Ensures smooth volatility decay matching TradingView / Institutional standards.
  */
 export function calculateATR(candles: Candle[], period: number = 14): number[] {
-  if (candles.length < period + 1) {
-    return new Array(candles.length).fill(0);
+  if (candles.length < period) return new Array(candles.length).fill(0);
+
+  const tr: number[] = [];
+  const atr: number[] = new Array(candles.length).fill(0);
+
+  // 1. Calculate True Range (TR) for all candles
+  for (let i = 0; i < candles.length; i++) {
+    if (i === 0) {
+      tr.push(candles[i].high - candles[i].low);
+    } else {
+      const highLow = candles[i].high - candles[i].low;
+      const highClose = Math.abs(candles[i].high - candles[i - 1].close);
+      const lowClose = Math.abs(candles[i].low - candles[i - 1].close);
+      tr.push(Math.max(highLow, highClose, lowClose));
+    }
   }
 
-  const trs: number[] = [candles[0].high - candles[0].low];
+  // 2. Initial ATR is the Simple Moving Average of the first 'period' TRs
+  let sumTR = 0;
+  for (let i = 0; i < period; i++) {
+    sumTR += tr[i];
+  }
+  atr[period - 1] = sumTR / period;
 
-  for (let i = 1; i < candles.length; i++) {
-    const tr = Math.max(
-      candles[i].high - candles[i].low,
-      Math.abs(candles[i].high - candles[i - 1].close),
-      Math.abs(candles[i].low - candles[i - 1].close)
-    );
-    trs.push(tr);
+  // 3. Subsequent ATRs use Wilder's Smoothing Method (RMA)
+  for (let i = period; i < candles.length; i++) {
+    atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period;
   }
 
-  const atrSeries: number[] = new Array(period - 1).fill(0);
-
-  let initialAtr = trs.slice(0, period).reduce((a, b) => a + b, 0) / period;
-  atrSeries.push(initialAtr);
-
-  for (let i = period; i < trs.length; i++) {
-    const currentAtr = (atrSeries[atrSeries.length - 1] * (period - 1) + trs[i]) / period;
-    atrSeries.push(currentAtr);
-  }
-
-  return atrSeries;
+  return atr;
 }
 
 /**

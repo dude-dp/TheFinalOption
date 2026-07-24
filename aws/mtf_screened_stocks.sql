@@ -15,9 +15,13 @@ CREATE TABLE IF NOT EXISTS mtf_screened_stocks (
     macd_signal VARCHAR NOT NULL DEFAULT 'NEUTRAL', 
     adx_trend DECIMAL DEFAULT 0.0,
     rvol DECIMAL DEFAULT 1.0,
+    atr_value DECIMAL DEFAULT 0.0,
     suggested_sl DECIMAL DEFAULT 0.0,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Migration query if table already exists:
+ALTER TABLE mtf_screened_stocks ADD COLUMN IF NOT EXISTS atr_value DECIMAL DEFAULT 0.0;
 
 -- Index for fast query ordering by momentum (macd_value) and recency
 CREATE INDEX IF NOT EXISTS idx_mtf_screened_stocks_macd ON mtf_screened_stocks (macd_value DESC, updated_at DESC);
