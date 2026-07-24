@@ -32,7 +32,7 @@ function parseUpstoxCandles(rawCandles: any[]): Candle[] {
 
 async function fetchCandles(
   token: string,
-  interval: '15minute' | '3hour',
+  interval: '30minute' | 'day',
   daysBack: number,
   accessToken?: string
 ): Promise<Candle[]> {
@@ -185,7 +185,7 @@ function detect15mSignals(candles: Candle[]): {
 async function check3HConviction(token: string, accessToken?: string): Promise<boolean> {
   try {
     // Fetch 40 days of 3H candles (same as AutoBot — gives EMA enough warmup)
-    const candles3h = await fetchCandles(token, '3hour', 40, accessToken);
+    const candles3h = await fetchCandles(token, 'day', 40, accessToken);
     if (candles3h.length < 20) return false;
 
     const closes3h = candles3h.map(c => c.close);
@@ -271,7 +271,7 @@ export async function run15MinScreener() {
 
       try {
         // STEP A: Fetch 15-minute candles (5 days of data)
-        const candles15m = await fetchCandles(stock.token, '15minute', 5, accessToken);
+        const candles15m = await fetchCandles(stock.token, '30minute', 5, accessToken);
         totalScanned++;
 
         // Progress telemetry every 20 stocks from worker 0
