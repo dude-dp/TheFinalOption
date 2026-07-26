@@ -7,14 +7,16 @@ export const MTFScreenerPage = () => (
       <meta charset="UTF-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
       <title>Quant MTF Terminal | TheFinalOption</title>
-      
+      <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
       {/* GOOGLE FONTS: INTER (UI) + JETBRAINS MONO (NUMERIC/QUANT) */}
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
       <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-      
+
       <script src="https://cdn.tailwindcss.com"></script>
-      <script dangerouslySetInnerHTML={{ __html: `
+      <script dangerouslySetInnerHTML={{
+        __html: `
         tailwind.config = {
           darkMode: 'class',
           theme: {
@@ -147,7 +149,7 @@ export const MTFScreenerPage = () => (
       `}</style>
     </head>
     <body class="min-h-screen bg-snow text-carbon font-sans antialiased relative overflow-x-hidden selection:bg-carbon selection:text-snow">
-      
+
       {/* Toast Notification Container (Sharp Boxy Light) */}
       <div id="toast-container" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none"></div>
 
@@ -157,9 +159,9 @@ export const MTFScreenerPage = () => (
         {/* LEFT: Branding & Module ID */}
         <div class="flex items-center gap-3.5">
           <div class="flex items-center gap-2">
-            <span class="w-2.5 h-2.5 bg-carbon inline-block"></span>
+            <img src="/favicon.svg" alt="TheFinalOption Logo" class="w-4 h-4 shadow-sm" />
             <h1 class="text-sm font-extrabold tracking-tight text-carbon uppercase font-sans">
-              THEFINALOPTION<span class="text-slategrey font-mono mx-0.5">//</span>QUANT-RADAR
+              MTF-RADAR
             </h1>
           </div>
           <span class="px-2 py-0.5 bg-platinum text-carbon text-[10px] font-mono font-bold tracking-wider border border-alabaster uppercase">
@@ -226,7 +228,7 @@ export const MTFScreenerPage = () => (
 
           {/* TERMINAL HEADER & FILTER CONTROLS BAR */}
           <div class="terminal-glass-header-light px-4 py-3 flex flex-wrap items-center justify-between gap-4">
-            
+
             {/* Left: Section Title & Live Setup Counter Badge */}
             <div class="flex items-center gap-3">
               <span class="w-2 h-2 bg-carbon inline-block"></span>
@@ -252,30 +254,30 @@ export const MTFScreenerPage = () => (
 
               {/* Boxy Rigid Filter Tabs */}
               <div class="flex items-center bg-platinum border border-alabaster">
-                <button 
-                  onclick="setFilterTab('ALL')" 
-                  id="tab-ALL" 
+                <button
+                  onclick="setFilterTab('ALL')"
+                  id="tab-ALL"
                   class="px-3 py-1.5 text-xs font-extrabold text-snow bg-carbon transition-colors cursor-pointer uppercase tracking-wider"
                 >
                   ALL
                 </button>
-                <button 
-                  onclick="setFilterTab('HIGH')" 
-                  id="tab-HIGH" 
+                <button
+                  onclick="setFilterTab('HIGH')"
+                  id="tab-HIGH"
                   class="px-3 py-1.5 text-xs font-bold text-irongrey hover:text-carbon hover:bg-paleslate transition-colors cursor-pointer uppercase tracking-wider border-l border-alabaster"
                 >
                   ⚡ HIGH CONVICTION
                 </button>
-                <button 
-                  onclick="setFilterTab('ZERO_CROSS')" 
-                  id="tab-ZERO_CROSS" 
+                <button
+                  onclick="setFilterTab('ZERO_CROSS')"
+                  id="tab-ZERO_CROSS"
                   class="px-3 py-1.5 text-xs font-bold text-irongrey hover:text-carbon hover:bg-paleslate transition-colors cursor-pointer uppercase tracking-wider border-l border-alabaster"
                 >
                   🎯 ZERO CROSS
                 </button>
-                <button 
-                  onclick="setFilterTab('HIGH_RVOL')" 
-                  id="tab-HIGH_RVOL" 
+                <button
+                  onclick="setFilterTab('HIGH_RVOL')"
+                  id="tab-HIGH_RVOL"
                   class="px-3 py-1.5 text-xs font-bold text-irongrey hover:text-carbon hover:bg-paleslate transition-colors cursor-pointer uppercase tracking-wider border-l border-alabaster"
                 >
                   🔥 HIGH RVOL
@@ -311,7 +313,7 @@ export const MTFScreenerPage = () => (
                 {/* Dynamically populated */}
               </div>
             </div>
-            <button 
+            <button
               onclick="toggleTableCollapse()"
               class="text-carbon hover:underline font-bold shrink-0 ml-4 cursor-pointer uppercase text-xs tracking-wider font-mono"
             >
@@ -350,135 +352,159 @@ export const MTFScreenerPage = () => (
         </section>
 
         {/* ============================================================ */}
-        {/* LOWER SECTION: 60/40 SPLIT FOR PORTFOLIO AND BRIEFING        */}
+        {/* LOWER SECTION: GRID LAYOUT FOR PORTFOLIO AND BRIEFING        */}
         {/* ============================================================ */}
-        <div class="flex flex-col lg:flex-row gap-6 items-start w-full">
-          
-          {/* SECTION 2: ACTIVE SWINGS POSITION MANAGER (60% WIDTH) */}
-          <section id="portfolio-section" class="terminal-glass-card-light border border-alabaster shadow-md w-full lg:w-[60%] shrink-0">
-            {/* PORTFOLIO HEADER & QUICK STATS BAR */}
-            <div class="terminal-glass-header-light px-4 py-3 flex flex-wrap items-center justify-between gap-4 border-b border-alabaster">
-              {/* Title & Live Status */}
-              <div class="flex items-center gap-3">
-                <span class="w-2.5 h-2.5 bg-emerald inline-block"></span>
-                <h2 class="text-xs font-extrabold tracking-wider text-carbon uppercase font-sans flex items-center gap-2">
-                  ACTIVE MTF SWING POSITIONS
+        <div class="grid grid-cols-1 lg:grid-cols-5 gap-0 w-full border border-alabaster bg-white shadow-sm">
+
+          {/* SECTION 2: ACTIVE SWINGS POSITION MANAGER (3/5 = 60%) */}
+          <section id="portfolio-section" class="lg:col-span-3 lg:border-r border-alabaster flex flex-col">
+            {/* COLLAPSIBLE HEADER — always visible */}
+            <button
+              id="portfolio-toggle-btn"
+              onclick="togglePortfolioPanel()"
+              class="w-full px-4 py-2.5 flex items-center justify-between gap-4 bg-snow hover:bg-platinum border-b border-alabaster transition-colors cursor-pointer group"
+            >
+              {/* Left: Title + Badge + Inline PnL */}
+              <div class="flex items-center gap-3 min-w-0">
+                <span class="w-2 h-2 bg-emerald shrink-0"></span>
+                <h2 class="text-[11px] font-extrabold tracking-wider text-carbon uppercase font-sans whitespace-nowrap">
+                  ACTIVE SWINGS
                 </h2>
-                <span id="stat-portfolio-count-badge" class="px-2 py-0.5 bg-platinum text-carbon text-xs font-mono font-bold border border-alabaster uppercase">
-                  0 POSITIONS
+                <span id="stat-portfolio-count-badge" class="px-1.5 py-0.5 bg-platinum text-carbon text-[10px] font-mono font-bold border border-alabaster uppercase shrink-0">
+                  0 POS
+                </span>
+                <span class="text-alabaster hidden sm:inline">|</span>
+                <span class="hidden sm:flex items-center gap-1.5 text-[10px] font-mono font-bold">
+                  <span class="text-slategrey uppercase">PnL:</span>
+                  <span id="port-total-pnl" class="font-extrabold text-emerald">+₹0.00</span>
                 </span>
               </div>
-
-              {/* Micro Metrics Inline Tape */}
-              <div class="flex flex-wrap items-center gap-4 text-xs">
-                <div class="flex items-center gap-2 bg-platinum px-3 py-1 border border-alabaster">
-                  <span class="text-slategrey text-[10px] font-sans font-bold uppercase tracking-wider">UNREALIZED PnL:</span>
-                  <span id="port-total-pnl" class="font-mono font-extrabold text-emerald">+₹0.00</span>
-                </div>
-                <div class="hidden sm:flex items-center gap-2.5 text-[10px] font-sans font-bold text-irongrey border-l border-alabaster pl-3">
-                  <span class="flex items-center gap-1"><span class="w-2 h-2 bg-emerald inline-block"></span> &gt;50% Safe</span>
-                  <span class="flex items-center gap-1 ml-2"><span class="w-2 h-2 bg-amber inline-block"></span> 20-50%</span>
-                  <span class="flex items-center gap-1 ml-2"><span class="w-2 h-2 bg-crimson inline-block"></span> &lt;20% Critical</span>
-                </div>
-                <button 
-                  onclick="fetchPortfolioData()"
-                  class="px-3 py-1 bg-snow hover:bg-carbon hover:text-snow text-carbon text-xs font-sans font-bold border border-alabaster transition-colors cursor-pointer uppercase tracking-wider"
+              {/* Right: Chevron + Refresh */}
+              <div class="flex items-center gap-2 shrink-0">
+                <span
+                  onclick="event.stopPropagation(); fetchPortfolioData();"
+                  class="px-2 py-0.5 text-[10px] font-sans font-bold text-slategrey hover:text-carbon hover:bg-platinum border border-transparent hover:border-alabaster transition-colors uppercase tracking-wider"
                 >
                   REFRESH
-                </button>
+                </span>
+                <svg id="portfolio-chevron" class="w-3.5 h-3.5 text-slategrey transition-transform duration-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
               </div>
-            </div>
+            </button>
 
-            {/* ACTIVE SWINGS PORTFOLIO TABLE MATRIX */}
-            <div class="overflow-x-auto">
-              <table class="w-full text-left text-xs whitespace-nowrap border-collapse">
-                <thead class="bg-platinum border-b border-alabaster uppercase text-[10px] font-extrabold text-gunmetal tracking-wider">
-                  <tr>
-                    <th class="px-4 py-3 border-r border-alabaster">SYMBOL / QTY</th>
-                    <th class="px-4 py-3 border-r border-alabaster">AVG / LTP</th>
-                    <th class="px-4 py-3 border-r border-alabaster">UNREALIZED PnL</th>
-                    <th class="px-4 py-3 border-r border-alabaster">DAYS HELD</th>
-                    <th class="px-6 py-3 w-72 border-r border-alabaster">DISTANCE TO STOP-LOSS (2x ATR)</th>
-                    <th class="px-4 py-3 text-right">ACTIONS</th>
-                  </tr>
-                </thead>
-                <tbody id="portfolio-table-body" class="divide-y divide-platinum">
-                  <tr>
-                    <td colSpan={6} class="px-6 py-12 text-center text-slategrey">
-                      <span class="font-bold text-xs uppercase tracking-widest text-slategrey font-sans">SYNCING LIVE UPSTOX PORTFOLIO...</span>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+            {/* COLLAPSIBLE CONTENT — hidden by default */}
+            <div id="portfolio-panel-body" class="hidden">
+              {/* SL Legend Bar */}
+              <div class="px-4 py-1.5 flex items-center gap-4 text-[10px] font-sans font-bold text-irongrey border-b border-alabaster bg-snow">
+                <span class="flex items-center gap-1"><span class="w-2 h-2 bg-emerald inline-block"></span> &gt;50% Safe</span>
+                <span class="flex items-center gap-1"><span class="w-2 h-2 bg-amber inline-block"></span> 20-50%</span>
+                <span class="flex items-center gap-1"><span class="w-2 h-2 bg-crimson inline-block"></span> &lt;20% Critical</span>
+              </div>
+
+              {/* PORTFOLIO TABLE */}
+              <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs whitespace-nowrap border-collapse">
+                  <thead class="bg-platinum border-b border-alabaster uppercase text-[10px] font-extrabold text-gunmetal tracking-wider">
+                    <tr>
+                      <th class="px-4 py-2.5 border-r border-alabaster">SYMBOL / QTY</th>
+                      <th class="px-4 py-2.5 border-r border-alabaster">AVG / LTP</th>
+                      <th class="px-4 py-2.5 border-r border-alabaster">UNREALIZED PnL</th>
+                      <th class="px-4 py-2.5 border-r border-alabaster">DAYS HELD</th>
+                      <th class="px-6 py-2.5 w-72 border-r border-alabaster">DISTANCE TO STOP-LOSS (2x ATR)</th>
+                      <th class="px-4 py-2.5 text-right">ACTIONS</th>
+                    </tr>
+                  </thead>
+                  <tbody id="portfolio-table-body" class="divide-y divide-platinum">
+                    <tr>
+                      <td colSpan={6} class="px-6 py-10 text-center text-slategrey">
+                        <span class="font-bold text-xs uppercase tracking-widest text-slategrey font-sans">SYNCING LIVE UPSTOX PORTFOLIO...</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
           </section>
 
-          {/* SECTION 3: AI MORNING BRIEFING ENGINE (40% WIDTH) */}
-          <section id="morning-briefing-section" class="terminal-glass-card-light border border-alabaster shadow-md w-full lg:w-[40%] flex flex-col shrink-0 lg:sticky lg:top-24">
-            <div class="terminal-glass-header-light px-4 py-3 flex flex-wrap items-center justify-between gap-4 border-b border-alabaster">
-              <div class="flex items-center gap-3">
-                <span class="w-2.5 h-2.5 bg-amber inline-block"></span>
-                <h2 class="text-xs font-extrabold tracking-wider text-carbon uppercase font-sans flex items-center gap-2">
-                  AI CHIEF RISK OFFICER
+          {/* SECTION 3: AI MORNING BRIEFING ENGINE (2/5 = 40%) */}
+          <section id="morning-briefing-section" class="lg:col-span-2 flex flex-col border-t lg:border-t-0 border-alabaster">
+            {/* COLLAPSIBLE HEADER — always visible */}
+            <button
+              id="briefing-toggle-btn"
+              onclick="toggleBriefingPanel()"
+              class="w-full px-4 py-2.5 flex items-center justify-between gap-4 bg-snow hover:bg-platinum border-b border-alabaster transition-colors cursor-pointer group"
+            >
+              {/* Left: Title + Timestamp */}
+              <div class="flex items-center gap-3 min-w-0">
+                <span class="w-2 h-2 bg-amber shrink-0"></span>
+                <h2 class="text-[11px] font-extrabold tracking-wider text-carbon uppercase font-sans whitespace-nowrap">
+                  AI CRO BRIEFING
                 </h2>
-              </div>
-              <div class="flex items-center gap-2">
                 <span id="briefing-timestamp" class="text-[10px] font-mono font-bold text-slategrey uppercase">
                   --:--
                 </span>
-                <button 
+              </div>
+              {/* Right: Copy + Chevron */}
+              <div class="flex items-center gap-2 shrink-0">
+                <span
                   id="copy-briefing-btn"
-                  onclick="copyMorningBriefing()"
-                  class="hidden px-2 py-1 bg-snow hover:bg-carbon hover:text-snow text-carbon text-[10px] font-sans font-bold border border-alabaster transition-colors cursor-pointer uppercase tracking-wider"
-                  title="Copy Briefing"
+                  onclick="event.stopPropagation(); copyMorningBriefing();"
+                  class="hidden px-2 py-0.5 text-[10px] font-sans font-bold text-slategrey hover:text-carbon hover:bg-platinum border border-transparent hover:border-alabaster transition-colors uppercase tracking-wider"
                 >
                   COPY
-                </button>
+                </span>
+                <svg id="briefing-chevron" class="w-3.5 h-3.5 text-slategrey transition-transform duration-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
               </div>
-            </div>
+            </button>
 
-            <div id="briefing-content-area" class="p-4 sm:p-5 text-sm text-carbon leading-relaxed font-sans min-h-[300px] max-h-[500px] overflow-y-auto">
-              {/* Skeleton Loader */}
-              <div id="briefing-skeleton" class="animate-pulse space-y-4">
-                <div class="h-4 bg-platinum rounded w-3/4"></div>
-                <div class="space-y-2 mt-4">
-                  <div class="h-3 bg-platinum rounded w-full"></div>
-                  <div class="h-3 bg-platinum rounded w-5/6"></div>
-                  <div class="h-3 bg-platinum rounded w-full"></div>
-                  <div class="h-3 bg-platinum rounded w-4/5"></div>
+            {/* COLLAPSIBLE CONTENT — hidden by default */}
+            <div id="briefing-panel-body" class="hidden">
+              <div id="briefing-content-area" class="p-4 sm:p-5 text-sm text-carbon leading-relaxed font-sans min-h-[200px] max-h-[400px] overflow-y-auto">
+                {/* Skeleton Loader */}
+                <div id="briefing-skeleton" class="animate-pulse space-y-4">
+                  <div class="h-4 bg-platinum rounded w-3/4"></div>
+                  <div class="space-y-2 mt-4">
+                    <div class="h-3 bg-platinum rounded w-full"></div>
+                    <div class="h-3 bg-platinum rounded w-5/6"></div>
+                    <div class="h-3 bg-platinum rounded w-full"></div>
+                    <div class="h-3 bg-platinum rounded w-4/5"></div>
+                  </div>
+                  <div class="space-y-2 mt-6">
+                    <div class="h-3 bg-platinum rounded w-full"></div>
+                    <div class="h-3 bg-platinum rounded w-11/12"></div>
+                    <div class="h-3 bg-platinum rounded w-full"></div>
+                  </div>
                 </div>
-                <div class="space-y-2 mt-6">
-                  <div class="h-3 bg-platinum rounded w-full"></div>
-                  <div class="h-3 bg-platinum rounded w-11/12"></div>
-                  <div class="h-3 bg-platinum rounded w-full"></div>
+
+                {/* Empty State */}
+                <div id="briefing-empty" class="hidden flex flex-col items-center justify-center text-center py-10">
+                  <div class="w-8 h-8 border border-paleslate flex items-center justify-center bg-snow mb-3 text-slategrey">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M17 8h1a4 4 0 1 1 0 8h-1" />
+                      <path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z" />
+                      <line x1="6" y1="2" x2="6" y2="4" />
+                      <line x1="10" y1="2" x2="10" y2="4" />
+                      <line x1="14" y1="2" x2="14" y2="4" />
+                    </svg>
+                  </div>
+                  <h3 class="text-[10px] font-extrabold text-carbon uppercase tracking-wider">NO BRIEFING YET</h3>
+                  <p class="text-[9px] text-slategrey mt-1 font-mono max-w-[180px]">
+                    Daily Quant Briefing arrives ~08:30 IST.
+                  </p>
+                  <span
+                    onclick="fetchMorningBriefing()"
+                    class="mt-3 px-2.5 py-1 bg-snow hover:bg-platinum text-carbon text-[10px] font-sans font-bold border border-alabaster transition-colors cursor-pointer uppercase tracking-wider"
+                  >
+                    REFRESH
+                  </span>
                 </div>
+
+                {/* Actual Content */}
+                <div id="briefing-text" class="hidden whitespace-pre-wrap text-[13px] font-sans text-carbon leading-relaxed pb-4 prose prose-sm prose-slate max-w-none"></div>
               </div>
-
-              {/* Empty State */}
-              <div id="briefing-empty" class="hidden h-full flex flex-col items-center justify-center text-center mt-12 mb-12">
-                <div class="w-10 h-10 border border-paleslate flex items-center justify-center bg-snow mb-4 text-slategrey">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M17 8h1a4 4 0 1 1 0 8h-1" />
-                    <path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z" />
-                    <line x1="6" y1="2" x2="6" y2="4" />
-                    <line x1="10" y1="2" x2="10" y2="4" />
-                    <line x1="14" y1="2" x2="14" y2="4" />
-                  </svg>
-                </div>
-                <h3 class="text-xs font-extrabold text-carbon uppercase tracking-wider">NO BRIEFING YET</h3>
-                <p class="text-[10px] text-slategrey mt-2 font-mono max-w-[200px]">
-                  The Daily Quant Briefing usually arrives by ~08:30 IST.
-                </p>
-                <button 
-                  onclick="fetchMorningBriefing()"
-                  class="mt-4 px-3 py-1.5 bg-snow hover:bg-platinum text-carbon text-[10px] font-sans font-bold border border-alabaster transition-colors cursor-pointer uppercase tracking-wider"
-                >
-                  REFRESH
-                </button>
-              </div>
-
-              {/* Actual Content */}
-              <div id="briefing-text" class="hidden whitespace-pre-wrap text-[13px] font-sans text-carbon leading-relaxed pb-4 prose prose-sm prose-slate max-w-none"></div>
             </div>
           </section>
 
@@ -487,12 +513,33 @@ export const MTFScreenerPage = () => (
       </main>
 
       {/* Client-Side Logic */}
-      <script dangerouslySetInnerHTML={{ __html: `
+      <script dangerouslySetInnerHTML={{
+        __html: `
         let allStocks = [];
         let allPortfolio = [];
         let activeTab = 'ALL';
         let isTableCollapsed = true; // COLLAPSED BY DEFAULT
         let expandedRows = new Set();
+        let isPortfolioPanelOpen = false;
+        let isBriefingPanelOpen = false;
+
+        function togglePortfolioPanel() {
+          isPortfolioPanelOpen = !isPortfolioPanelOpen;
+          const body = document.getElementById('portfolio-panel-body');
+          const chevron = document.getElementById('portfolio-chevron');
+          if (body) body.classList.toggle('hidden', !isPortfolioPanelOpen);
+          if (chevron) chevron.style.transform = isPortfolioPanelOpen ? 'rotate(180deg)' : 'rotate(0deg)';
+        }
+        window.togglePortfolioPanel = togglePortfolioPanel;
+
+        function toggleBriefingPanel() {
+          isBriefingPanelOpen = !isBriefingPanelOpen;
+          const body = document.getElementById('briefing-panel-body');
+          const chevron = document.getElementById('briefing-chevron');
+          if (body) body.classList.toggle('hidden', !isBriefingPanelOpen);
+          if (chevron) chevron.style.transform = isBriefingPanelOpen ? 'rotate(180deg)' : 'rotate(0deg)';
+        }
+        window.toggleBriefingPanel = toggleBriefingPanel;
 
         async function fetchMTFSetups() {
           try {
@@ -586,7 +633,7 @@ export const MTFScreenerPage = () => (
             pnlElem.innerText = (totalPnl >= 0 ? '+₹' : '-₹') + Math.abs(totalPnl).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
             pnlElem.className = 'font-mono font-extrabold ' + (totalPnl >= 0 ? 'text-emerald' : 'text-crimson');
           }
-          if (countElem) countElem.innerText = positions.length + ' POSITIONS';
+          if (countElem) countElem.innerText = positions.length + ' POS';
           if (statNavElem) statNavElem.innerText = positions.length;
         }
 

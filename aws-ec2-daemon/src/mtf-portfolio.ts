@@ -83,14 +83,6 @@ async function fetchUpstoxPositionsAndHoldings(): Promise<PortfolioPosition[]> {
     }
   }
 
-  // Simulated / Fallback positions for testing if Upstox API returns empty or offline
-  if (positions.length === 0) {
-    positions.push(
-      { tradingsymbol: 'RELIANCE', quantity: 50, average_price: 2900.50, current_price: 2945.10, instrument_token: 'NSE_EQ|INE002A01018' },
-      { tradingsymbol: 'TATAMOTORS', quantity: 150, average_price: 980.00, current_price: 965.20, instrument_token: 'NSE_EQ|INE155A01022' },
-      { tradingsymbol: 'INFY', quantity: 80, average_price: 1780.00, current_price: 1825.40, instrument_token: 'NSE_EQ|INE009A01021' }
-    );
-  }
 
   return positions;
 }
@@ -175,10 +167,23 @@ export async function syncActivePortfolio() {
       });
     }
 
+    // Fetch current symbols in the database to identify closed positions
+    const { data: currentRows } = await supabase.from('mtf_active_portfolio').select('tradingsymbol');
+    const currentSymbols = new Set(currentRows?.map(r => r.tradingsymbol) || []);
+
     if (portfolioPayload.length > 0) {
       await supabase.from('mtf_active_portfolio').upsert(portfolioPayload, { onConflict: 'tradingsymbol' });
-      logInfo(`[PORTFOLIO] ✅ Synced ${portfolioPayload.length} active positions to Supabase.`);
     }
+
+    // Delete symbols no longer in portfolio
+    const activeSymbols = new Set(portfolioPayload.map(p => p.tradingsymbol));
+    const symbolsToDelete = [...currentSymbols].filter(sym => !activeSymbols.has(sym));
+    
+    if (symbolsToDelete.length > 0) {
+      await supabase.from('mtf_active_portfolio').delete().in('tradingsymbol', symbolsToDelete);
+    }
+
+    logInfo(`[PORTFOLIO] ✅ Synced ${portfolioPayload.length} active positions. Removed ${symbolsToDelete.length} closed positions.`);
 
   } catch (error: any) {
     logError(`[PORTFOLIO] ❌ Sync failed: ${error.message}`);
