@@ -20,6 +20,8 @@ import { initializeCronJobs } from './cron-prewarmer.js';
 import { OptionChainFetcher } from './option-chain-fetcher.js';
 import { run15MinScreener, startMTFTriggerListener } from './mtf-screener.js';
 import { startArchiverCron } from './archiver.js';
+import { startPortfolioPoller } from './mtf-portfolio.js';
+import { startMorningBriefingCron } from './morning-briefing.js';
 
 import { createClient } from '@supabase/supabase-js';
 
@@ -79,8 +81,10 @@ async function bootstrapEngine() {
 
   // 1. Pre-warm AI Subsystem & Archiver Cron
   await AIManager.fetchAvailableModels();
-  initializeCronJobs();
+  // ⚡ Start Nightly Archiver Cron, Portfolio Poller & Morning Briefing
   startArchiverCron();
+  startPortfolioPoller();
+  startMorningBriefingCron();
 
   // 2. Initialize Realtime Engine 
   let activeToken: string = '';
