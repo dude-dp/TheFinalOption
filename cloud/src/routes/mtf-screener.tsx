@@ -159,14 +159,11 @@ export const MTFScreenerPage = () => (
         {/* LEFT: Branding & Module ID */}
         <div class="flex items-center gap-3.5">
           <div class="flex items-center gap-2">
-            <img src="/favicon.svg" alt="TheFinalOption Logo" class="w-4 h-4 shadow-sm" />
+            <img src="/favicon.svg" alt="TheFinalOption Logo" class="w-7 h-7 shadow-sm" />
             <h1 class="text-sm font-extrabold tracking-tight text-carbon uppercase font-sans">
               MTF-RADAR
             </h1>
           </div>
-          <span class="px-2 py-0.5 bg-platinum text-carbon text-[10px] font-mono font-bold tracking-wider border border-alabaster uppercase">
-            v4.2 PRO
-          </span>
         </div>
 
         {/* CENTER: Integrated Ticker Stats */}
@@ -231,58 +228,32 @@ export const MTFScreenerPage = () => (
 
             {/* Left: Section Title & Live Setup Counter Badge */}
             <div class="flex items-center gap-3">
-              <span class="w-2 h-2 bg-carbon inline-block"></span>
+              <svg class="w-3.5 h-3.5 text-carbon shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <circle cx="12" cy="12" r="6"></circle>
+                <circle cx="12" cy="12" r="2"></circle>
+              </svg>
               <h2 class="text-xs font-extrabold tracking-wider text-carbon uppercase font-sans flex items-center gap-2">
-                MULTIPLE TIMEFRAME CONFLUENCE MATRIX
+                ACTIVE TRADE SETUPS
               </h2>
               <span id="setup-count-badge" class="px-2 py-0.5 bg-platinum text-carbon text-xs font-mono font-bold border border-alabaster">
                 0 SETUPS
               </span>
             </div>
 
-            {/* Center: Search & Filter Tabs */}
-            <div class="flex flex-wrap items-center gap-3">
-              {/* Search Box */}
-              <div class="relative">
-                <input
-                  id="search-input"
-                  type="text"
-                  placeholder="Filter ticker / sector..."
-                  class="bg-snow border border-paleslate focus:border-carbon text-xs text-carbon px-3 py-1.5 w-56 focus:outline-none transition-colors uppercase font-sans placeholder:normal-case placeholder:text-paleslate2 font-medium"
-                />
-              </div>
-
-              {/* Boxy Rigid Filter Tabs */}
-              <div class="flex items-center bg-platinum border border-alabaster">
-                <button
-                  onclick="setFilterTab('ALL')"
-                  id="tab-ALL"
-                  class="px-3 py-1.5 text-xs font-extrabold text-snow bg-carbon transition-colors cursor-pointer uppercase tracking-wider"
-                >
-                  ALL
-                </button>
-                <button
-                  onclick="setFilterTab('HIGH')"
-                  id="tab-HIGH"
-                  class="px-3 py-1.5 text-xs font-bold text-irongrey hover:text-carbon hover:bg-paleslate transition-colors cursor-pointer uppercase tracking-wider border-l border-alabaster"
-                >
-                  ⚡ HIGH CONVICTION
-                </button>
-                <button
-                  onclick="setFilterTab('ZERO_CROSS')"
-                  id="tab-ZERO_CROSS"
-                  class="px-3 py-1.5 text-xs font-bold text-irongrey hover:text-carbon hover:bg-paleslate transition-colors cursor-pointer uppercase tracking-wider border-l border-alabaster"
-                >
-                  🎯 ZERO CROSS
-                </button>
-                <button
-                  onclick="setFilterTab('HIGH_RVOL')"
-                  id="tab-HIGH_RVOL"
-                  class="px-3 py-1.5 text-xs font-bold text-irongrey hover:text-carbon hover:bg-paleslate transition-colors cursor-pointer uppercase tracking-wider border-l border-alabaster"
-                >
-                  🔥 HIGH RVOL
-                </button>
-              </div>
+            {/* Center: Search Box */}
+            <div class="relative">
+              <input
+                id="search-input"
+                type="text"
+                placeholder="Filter ticker / sector..."
+                class="w-56 px-3 py-1.5 bg-snow border border-alabaster text-carbon text-xs font-mono placeholder:text-paleslate focus:outline-none focus:border-carbon transition-colors"
+                oninput="handleSearch(event)"
+              />
+              <svg class="w-3.5 h-3.5 text-paleslate absolute right-2.5 top-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
             </div>
 
             {/* Right: Expand & Table Collapse Controls */}
@@ -327,12 +298,24 @@ export const MTFScreenerPage = () => (
               <thead class="bg-platinum border-b border-alabaster uppercase text-[10px] font-extrabold text-gunmetal tracking-wider">
                 <tr>
                   <th class="px-3 py-3 text-center w-8 border-r border-alabaster"></th>
-                  <th class="px-4 py-3 border-r border-alabaster">ASSET & RVOL</th>
-                  <th class="px-4 py-3 border-r border-alabaster">LTP</th>
-                  <th class="px-4 py-3 border-r border-alabaster">VWAP DEV %</th>
-                  <th class="px-4 py-3 border-r border-alabaster">MACD SIGNAL (15M)</th>
-                  <th class="px-4 py-3 border-r border-alabaster">RSI / ADX</th>
-                  <th class="px-4 py-3 border-r border-alabaster">ATR STOP LOSS</th>
+                  <th class="px-4 py-3 border-r border-alabaster cursor-pointer hover:bg-snow select-none group" onclick="sortScreenerTable('asset')">
+                    <div class="flex items-center justify-between">ASSET & RVOL <span class="sort-icon text-paleslate group-hover:text-irongrey transition-colors" data-col="asset"></span></div>
+                  </th>
+                  <th class="px-4 py-3 border-r border-alabaster cursor-pointer hover:bg-snow select-none group" onclick="sortScreenerTable('ltp')">
+                    <div class="flex items-center justify-between">LTP <span class="sort-icon text-paleslate group-hover:text-irongrey transition-colors" data-col="ltp"></span></div>
+                  </th>
+                  <th class="px-4 py-3 border-r border-alabaster cursor-pointer hover:bg-snow select-none group" onclick="sortScreenerTable('vwap')">
+                    <div class="flex items-center justify-between">VWAP DEV % <span class="sort-icon text-paleslate group-hover:text-irongrey transition-colors" data-col="vwap"></span></div>
+                  </th>
+                  <th class="px-4 py-3 border-r border-alabaster cursor-pointer hover:bg-snow select-none group" onclick="sortScreenerTable('macd')">
+                    <div class="flex items-center justify-between">MACD SIGNAL (15M) <span class="sort-icon text-paleslate group-hover:text-irongrey transition-colors" data-col="macd"></span></div>
+                  </th>
+                  <th class="px-4 py-3 border-r border-alabaster cursor-pointer hover:bg-snow select-none group" onclick="sortScreenerTable('rsi')">
+                    <div class="flex items-center justify-between">RSI / ADX <span class="sort-icon text-paleslate group-hover:text-irongrey transition-colors" data-col="rsi"></span></div>
+                  </th>
+                  <th class="px-4 py-3 border-r border-alabaster cursor-pointer hover:bg-snow select-none group" onclick="sortScreenerTable('atr')">
+                    <div class="flex items-center justify-between">ATR STOP LOSS <span class="sort-icon text-paleslate group-hover:text-irongrey transition-colors" data-col="atr"></span></div>
+                  </th>
                   <th class="px-4 py-3 text-right">ACTIONS</th>
                 </tr>
               </thead>
@@ -352,21 +335,24 @@ export const MTFScreenerPage = () => (
         </section>
 
         {/* ============================================================ */}
-        {/* LOWER SECTION: GRID LAYOUT FOR PORTFOLIO AND BRIEFING        */}
+        {/* LOWER SECTION: FLEX LAYOUT FOR PORTFOLIO AND BRIEFING        */}
         {/* ============================================================ */}
-        <div class="grid grid-cols-1 lg:grid-cols-5 gap-0 w-full border border-alabaster bg-white shadow-sm">
+        <div class="flex flex-col lg:flex-row gap-4 items-start w-full">
 
-          {/* SECTION 2: ACTIVE SWINGS POSITION MANAGER (3/5 = 60%) */}
-          <section id="portfolio-section" class="lg:col-span-3 lg:border-r border-alabaster flex flex-col">
+          {/* SECTION 2: ACTIVE SWINGS POSITION MANAGER (60%) */}
+          <section id="portfolio-section" class="w-full lg:w-[60%] border border-alabaster bg-white shadow-sm flex flex-col shrink-0">
             {/* COLLAPSIBLE HEADER — always visible */}
             <button
               id="portfolio-toggle-btn"
               onclick="togglePortfolioPanel()"
-              class="w-full px-4 py-2.5 flex items-center justify-between gap-4 bg-snow hover:bg-platinum border-b border-alabaster transition-colors cursor-pointer group"
+              class="w-full h-12 px-4 flex items-center justify-between gap-4 bg-snow hover:bg-platinum border-b border-transparent transition-colors cursor-pointer group"
             >
               {/* Left: Title + Badge + Inline PnL */}
               <div class="flex items-center gap-3 min-w-0">
-                <span class="w-2 h-2 bg-emerald shrink-0"></span>
+                <svg class="w-3.5 h-3.5 text-emerald shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline>
+                  <polyline points="17 6 23 6 23 12"></polyline>
+                </svg>
                 <h2 class="text-[11px] font-extrabold tracking-wider text-carbon uppercase font-sans whitespace-nowrap">
                   ACTIVE SWINGS
                 </h2>
@@ -382,6 +368,7 @@ export const MTFScreenerPage = () => (
               {/* Right: Chevron + Refresh */}
               <div class="flex items-center gap-2 shrink-0">
                 <span
+                  id="portfolio-refresh-btn"
                   onclick="event.stopPropagation(); fetchPortfolioData();"
                   class="px-2 py-0.5 text-[10px] font-sans font-bold text-slategrey hover:text-carbon hover:bg-platinum border border-transparent hover:border-alabaster transition-colors uppercase tracking-wider"
                 >
@@ -394,16 +381,16 @@ export const MTFScreenerPage = () => (
             </button>
 
             {/* COLLAPSIBLE CONTENT — hidden by default */}
-            <div id="portfolio-panel-body" class="hidden">
+            <div id="portfolio-panel-body" class="hidden border-t border-alabaster h-[400px] flex-col">
               {/* SL Legend Bar */}
-              <div class="px-4 py-1.5 flex items-center gap-4 text-[10px] font-sans font-bold text-irongrey border-b border-alabaster bg-snow">
+              <div class="px-4 py-1.5 flex items-center gap-4 text-[10px] font-sans font-bold text-irongrey border-b border-alabaster bg-snow shrink-0">
                 <span class="flex items-center gap-1"><span class="w-2 h-2 bg-emerald inline-block"></span> &gt;50% Safe</span>
                 <span class="flex items-center gap-1"><span class="w-2 h-2 bg-amber inline-block"></span> 20-50%</span>
                 <span class="flex items-center gap-1"><span class="w-2 h-2 bg-crimson inline-block"></span> &lt;20% Critical</span>
               </div>
 
               {/* PORTFOLIO TABLE */}
-              <div class="overflow-x-auto">
+              <div class="overflow-x-auto overflow-y-auto flex-grow relative">
                 <table class="w-full text-left text-xs whitespace-nowrap border-collapse">
                   <thead class="bg-platinum border-b border-alabaster uppercase text-[10px] font-extrabold text-gunmetal tracking-wider">
                     <tr>
@@ -427,25 +414,27 @@ export const MTFScreenerPage = () => (
             </div>
           </section>
 
-          {/* SECTION 3: AI MORNING BRIEFING ENGINE (2/5 = 40%) */}
-          <section id="morning-briefing-section" class="lg:col-span-2 flex flex-col border-t lg:border-t-0 border-alabaster">
+          {/* SECTION 3: AI MORNING BRIEFING ENGINE (40%) */}
+          <section id="morning-briefing-section" class="w-full lg:w-[40%] border border-alabaster bg-white shadow-sm flex flex-col shrink-0">
             {/* COLLAPSIBLE HEADER — always visible */}
             <button
               id="briefing-toggle-btn"
               onclick="toggleBriefingPanel()"
-              class="w-full px-4 py-2.5 flex items-center justify-between gap-4 bg-snow hover:bg-platinum border-b border-alabaster transition-colors cursor-pointer group"
+              class="w-full h-12 px-4 flex items-center justify-between gap-4 bg-snow hover:bg-platinum border-b border-transparent transition-colors cursor-pointer group"
             >
               {/* Left: Title + Timestamp */}
               <div class="flex items-center gap-3 min-w-0">
-                <span class="w-2 h-2 bg-amber shrink-0"></span>
+                <svg class="w-3.5 h-3.5 text-amber shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+                </svg>
                 <h2 class="text-[11px] font-extrabold tracking-wider text-carbon uppercase font-sans whitespace-nowrap">
-                  AI CRO BRIEFING
+                  SIGNAL BRIEFING
                 </h2>
                 <span id="briefing-timestamp" class="text-[10px] font-mono font-bold text-slategrey uppercase">
                   --:--
                 </span>
               </div>
-              {/* Right: Copy + Chevron */}
+              {/* Right: Copy + Refresh + Chevron */}
               <div class="flex items-center gap-2 shrink-0">
                 <span
                   id="copy-briefing-btn"
@@ -454,6 +443,13 @@ export const MTFScreenerPage = () => (
                 >
                   COPY
                 </span>
+                <span
+                  id="briefing-refresh-btn"
+                  onclick="event.stopPropagation(); fetchMorningBriefing();"
+                  class="px-2 py-0.5 text-[10px] font-sans font-bold text-slategrey hover:text-carbon hover:bg-platinum border border-transparent hover:border-alabaster transition-colors uppercase tracking-wider cursor-pointer"
+                >
+                  REFRESH
+                </span>
                 <svg id="briefing-chevron" class="w-3.5 h-3.5 text-slategrey transition-transform duration-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                   <polyline points="6 9 12 15 18 9"></polyline>
                 </svg>
@@ -461,8 +457,8 @@ export const MTFScreenerPage = () => (
             </button>
 
             {/* COLLAPSIBLE CONTENT — hidden by default */}
-            <div id="briefing-panel-body" class="hidden">
-              <div id="briefing-content-area" class="p-4 sm:p-5 text-sm text-carbon leading-relaxed font-sans min-h-[200px] max-h-[400px] overflow-y-auto">
+            <div id="briefing-panel-body" class="hidden border-t border-alabaster h-[400px] overflow-y-auto">
+              <div id="briefing-content-area" class="p-4 sm:p-5 text-sm text-carbon leading-relaxed font-sans">
                 {/* Skeleton Loader */}
                 <div id="briefing-skeleton" class="animate-pulse space-y-4">
                   <div class="h-4 bg-platinum rounded w-3/4"></div>
@@ -494,12 +490,6 @@ export const MTFScreenerPage = () => (
                   <p class="text-[9px] text-slategrey mt-1 font-mono max-w-[180px]">
                     Daily Quant Briefing arrives ~08:30 IST.
                   </p>
-                  <span
-                    onclick="fetchMorningBriefing()"
-                    class="mt-3 px-2.5 py-1 bg-snow hover:bg-platinum text-carbon text-[10px] font-sans font-bold border border-alabaster transition-colors cursor-pointer uppercase tracking-wider"
-                  >
-                    REFRESH
-                  </span>
                 </div>
 
                 {/* Actual Content */}
@@ -522,6 +512,19 @@ export const MTFScreenerPage = () => (
         let expandedRows = new Set();
         let isPortfolioPanelOpen = false;
         let isBriefingPanelOpen = false;
+        let currentSortColumn = 'macd';
+        let currentSortDirection = 'desc';
+
+        function sortScreenerTable(col) {
+          if (currentSortColumn === col) {
+            currentSortDirection = currentSortDirection === 'asc' ? 'desc' : 'asc';
+          } else {
+            currentSortColumn = col;
+            currentSortDirection = 'desc';
+          }
+          applyFilter();
+        }
+        window.sortScreenerTable = sortScreenerTable;
 
         function togglePortfolioPanel() {
           isPortfolioPanelOpen = !isPortfolioPanelOpen;
@@ -556,6 +559,8 @@ export const MTFScreenerPage = () => (
         }
 
         async function fetchPortfolioData() {
+          const btn = document.getElementById('portfolio-refresh-btn');
+          if (btn) btn.innerText = 'REFRESHING...';
           try {
             const res = await fetch('/api/mtf-portfolio');
             if (!res.ok) return;
@@ -567,11 +572,15 @@ export const MTFScreenerPage = () => (
             }
           } catch (e) {
             console.error("Failed to fetch Portfolio data:", e);
+          } finally {
+            if (btn) btn.innerText = 'REFRESH';
           }
         }
         window.fetchPortfolioData = fetchPortfolioData;
 
         async function fetchMorningBriefing() {
+          const btn = document.getElementById('briefing-refresh-btn');
+          if (btn) btn.innerText = 'REFRESHING...';
           try {
             document.getElementById('briefing-skeleton').style.display = 'block';
             document.getElementById('briefing-empty').style.display = 'none';
@@ -610,6 +619,8 @@ export const MTFScreenerPage = () => (
             document.getElementById('briefing-skeleton').style.display = 'none';
             document.getElementById('briefing-empty').style.display = 'flex';
             document.getElementById('briefing-timestamp').innerText = 'ERROR';
+          } finally {
+            if (btn) btn.innerText = 'REFRESH';
           }
         }
         window.fetchMorningBriefing = fetchMorningBriefing;
@@ -923,12 +934,32 @@ export const MTFScreenerPage = () => (
             return;
           }
 
-          // Sort: HIGH conviction first, then by MACD value descending
+          // Dynamic sorting based on column
           const sorted = [...stocks].sort((a, b) => {
             if (a.conviction === 'HIGH' && b.conviction !== 'HIGH') return -1;
             if (b.conviction === 'HIGH' && a.conviction !== 'HIGH') return 1;
-            return Number(b.macd_value) - Number(a.macd_value);
+            
+            let valA, valB;
+            switch(currentSortColumn) {
+              case 'asset': valA = a.tradingsymbol; valB = b.tradingsymbol; break;
+              case 'ltp': valA = Number(a.ltp || 0); valB = Number(b.ltp || 0); break;
+              case 'vwap': valA = Number(a.distance_from_vwap_pct || 0); valB = Number(b.distance_from_vwap_pct || 0); break;
+              case 'macd': valA = Number(a.macd_value || 0); valB = Number(b.macd_value || 0); break;
+              case 'rsi': valA = Number(a.rsi_14 || 50); valB = Number(b.rsi_14 || 50); break;
+              case 'atr': valA = Number(a.atr_stop_loss || 0); valB = Number(b.atr_stop_loss || 0); break;
+              default: valA = Number(a.macd_value || 0); valB = Number(b.macd_value || 0); break;
+            }
+            if (valA < valB) return currentSortDirection === 'asc' ? -1 : 1;
+            if (valA > valB) return currentSortDirection === 'asc' ? 1 : -1;
+            return 0;
           });
+
+          // Update sort indicators
+          document.querySelectorAll('.sort-icon').forEach(icon => icon.innerHTML = '');
+          const activeIcon = document.querySelector(\`.sort-icon[data-col="\${currentSortColumn}"]\`);
+          if (activeIcon) {
+            activeIcon.innerHTML = currentSortDirection === 'asc' ? '▲' : '▼';
+          }
 
           const signalMap = {
             'ZERO_LINE_CROSS':    { label: 'ZERO CROSS', bg: 'bg-emerald-light text-emerald-dark border-emerald-border font-extrabold' },
