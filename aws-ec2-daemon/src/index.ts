@@ -19,6 +19,7 @@ import { AIManager } from './ai/ai-manager.js';
 import { initializeCronJobs } from './cron-prewarmer.js';
 import { OptionChainFetcher } from './option-chain-fetcher.js';
 import { run15MinScreener, startMTFTriggerListener } from './mtf-screener.js';
+import { startArchiverCron } from './archiver.js';
 
 import { createClient } from '@supabase/supabase-js';
 
@@ -76,9 +77,10 @@ async function bootstrapEngine() {
   logInfo('  TheFinalOption — Local Execution Daemon  ');
   logInfo('═══════════════════════════════════════════');
 
-  // 1. Pre-warm AI Subsystem
+  // 1. Pre-warm AI Subsystem & Archiver Cron
   await AIManager.fetchAvailableModels();
   initializeCronJobs();
+  startArchiverCron();
 
   // 2. Initialize Realtime Engine 
   let activeToken: string = '';
