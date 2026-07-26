@@ -2,308 +2,346 @@
 import { jsx } from 'hono/jsx';
 
 export const MTFScreenerPage = () => (
-  <html lang="en">
+  <html lang="en" class="dark">
     <head>
       <meta charset="UTF-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-      <title>Quant MTF Screener | TheFinalOption</title>
+      <title>Quant MTF Terminal | TheFinalOption</title>
       <script src="https://cdn.tailwindcss.com"></script>
+      <script dangerouslySetInnerHTML={{ __html: `
+        tailwind.config = {
+          darkMode: 'class',
+          theme: {
+            extend: {
+              colors: {
+                cyan: {
+                  neon: '#00f2fe',
+                  glow: '#4facfe',
+                },
+                emerald: {
+                  neon: '#00e676',
+                  dark: '#00a854',
+                },
+                crimson: {
+                  neon: '#ff1744',
+                  dark: '#b2102f',
+                },
+                amber: {
+                  neon: '#ffb300',
+                },
+                terminal: {
+                  void: '#06080d',
+                  glass: 'rgba(10, 16, 26, 0.85)',
+                  panel: 'rgba(15, 23, 42, 0.9)',
+                  border: '#1e293b',
+                  accent: '#334155',
+                }
+              },
+              fontFamily: {
+                mono: ['JetBrains Mono', 'Fira Code', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
+                sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+              }
+            }
+          }
+        };
+      ` }}></script>
       <style>{`
+        :root {
+          --color-cyan-neon: #00f2fe;
+          --color-emerald-neon: #00e676;
+          --color-crimson-neon: #ff1744;
+          --color-amber-neon: #ffb300;
+          --color-void: #06080d;
+        }
+
         body { 
-          background-color: #f8fafc; 
-          color: #0f172a; 
-          font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+          background-color: var(--color-void); 
+          color: #f8fafc; 
+          font-family: 'JetBrains Mono', monospace; 
         }
-        .table-row-hover:hover { 
-          background-color: #f1f5f9; 
+
+        /* LIQUID GLASS RIGID TERMINAL PANELS */
+        .terminal-glass-card {
+          background: rgba(10, 16, 26, 0.85);
+          backdrop-filter: blur(20px);
+          -webkit-backdrop-filter: blur(20px);
+          border-top: 1px solid rgba(255, 255, 255, 0.15);
+          border-left: 1px solid rgba(255, 255, 255, 0.12);
+          border-right: 1px solid rgba(0, 0, 0, 0.7);
+          border-bottom: 1px solid rgba(0, 0, 0, 0.7);
+          box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.1);
         }
+
+        .terminal-glass-header {
+          background: rgba(6, 9, 15, 0.95);
+          backdrop-filter: blur(24px);
+          -webkit-backdrop-filter: blur(24px);
+          border-bottom: 1px solid rgba(0, 242, 254, 0.25);
+        }
+
+        .terminal-glass-panel {
+          background: rgba(12, 19, 32, 0.9);
+          backdrop-filter: blur(16px);
+          -webkit-backdrop-filter: blur(16px);
+          border: 1px solid rgba(0, 242, 254, 0.2);
+          box-shadow: inset 0 0 20px rgba(0, 242, 254, 0.03);
+        }
+
+        .table-row-terminal {
+          transition: background-color 0.15s ease, border-color 0.15s ease;
+        }
+        .table-row-terminal:hover { 
+          background-color: rgba(0, 242, 254, 0.06) !important; 
+          border-color: rgba(0, 242, 254, 0.4) !important;
+        }
+
+        /* CYBER SCANLINE & GLOW EFFECTS */
+        .scanline {
+          background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0, 242, 254, 0.04) 50%, rgba(0, 242, 254, 0.04));
+          background-size: 100% 4px;
+        }
+
+        .cyan-glow {
+          box-shadow: 0 0 15px rgba(0, 242, 254, 0.35);
+        }
+        .emerald-glow {
+          box-shadow: 0 0 15px rgba(0, 230, 118, 0.35);
+        }
+        .crimson-glow {
+          box-shadow: 0 0 15px rgba(255, 23, 68, 0.35);
+        }
+
         .animate-fade-in {
-          animation: fadeIn 0.2s ease-in-out;
+          animation: fadeIn 0.15s cubic-bezier(0, 0, 0.2, 1);
         }
         @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(-4px); }
+          from { opacity: 0; transform: translateY(-2px); }
           to { opacity: 1; transform: translateY(0); }
         }
-        /* Custom scrollbars */
+
+        /* Sharp Scrollbar */
         ::-webkit-scrollbar {
-          height: 6px;
-          width: 6px;
+          height: 4px;
+          width: 4px;
         }
         ::-webkit-scrollbar-track {
-          background: #f1f5f9;
+          background: #06080d;
         }
         ::-webkit-scrollbar-thumb {
-          background: #cbd5e1;
-          border-radius: 9999px;
+          background: #1e293b;
+          border-radius: 0px;
         }
         ::-webkit-scrollbar-thumb:hover {
-          background: #94a3b8;
+          background: #00f2fe;
         }
       `}</style>
     </head>
-    <body class="min-h-screen bg-slate-50 text-slate-900 selection:bg-blue-100 antialiased">
-      {/* Toast Notification Container */}
-      <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
+    <body class="min-h-screen bg-[#06080d] text-slate-100 font-mono antialiased relative overflow-x-hidden selection:bg-[#00f2fe] selection:text-[#06080d] scanline">
+      
+      {/* AMBIENT LIQUID REFRACTION SPHERES (CYBER CYAN & EMERALD) */}
+      <div class="fixed top-[-10%] left-[-5%] w-[600px] h-[600px] rounded-full bg-[#00f2fe]/10 blur-[150px] pointer-events-none z-0"></div>
+      <div class="fixed top-[50%] right-[-10%] w-[700px] h-[700px] rounded-full bg-[#00e676]/8 blur-[180px] pointer-events-none z-0"></div>
 
-      {/* --- INSTITUTIONAL LIGHT NAVBAR --- */}
-      <header class="sticky top-0 z-50 w-full bg-white/95 backdrop-blur-md border-b border-slate-200 px-4 sm:px-6 py-3 flex justify-between items-center transition-all duration-300 shadow-xs">
+      {/* Toast Notification Container (Sharp Boxy) */}
+      <div id="toast-container" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none"></div>
 
-        {/* LEFT: Branding */}
+      {/* --- RIGID LIQUID GLASS TOP TERMINAL BAR --- */}
+      <header class="sticky top-0 z-50 w-full bg-[#070b12]/90 backdrop-blur-2xl border-b border-[#00f2fe]/30 px-4 lg:px-6 py-2.5 flex justify-between items-center transition-all duration-200">
+
+        {/* LEFT: Branding & Module ID */}
         <div class="flex items-center gap-4">
-          <h1 class="text-xl font-black tracking-tight text-slate-900 font-sans">
-            TheFinalOption
-          </h1>
-          <span class="px-2.5 py-0.5 rounded-md bg-blue-50 text-blue-700 text-[10px] font-extrabold uppercase tracking-widest border border-blue-200 shadow-xs">
-            MTF Screener
+          <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 bg-[#00f2fe] cyan-glow inline-block"></span>
+            <h1 class="text-sm font-black tracking-widest text-white uppercase font-mono">
+              THEFINALOPTION<span class="text-[#00f2fe]">//</span>QUANT-RADAR
+            </h1>
+          </div>
+          <span class="px-2 py-0.5 bg-[#00f2fe]/10 text-[#00f2fe] text-[10px] font-black tracking-widest border border-[#00f2fe]/40 uppercase">
+            v4.2 PRO
           </span>
         </div>
 
-        {/* CENTER: Navigation Pills & Search */}
-        <div class="hidden lg:flex items-center gap-6">
-          <nav class="flex bg-slate-100 p-1 rounded-full border border-slate-200 shadow-inner">
-            <a href="/" class="px-5 py-1.5 text-xs font-bold text-slate-500 hover:text-slate-900 rounded-full transition-colors">
-              Live Terminal
+        {/* CENTER: Navigation Tabs & Global Ticker */}
+        <div class="hidden md:flex items-center gap-6">
+          <nav class="flex border border-[#1e293b] bg-[#0c121e]">
+            <a href="/" class="px-4 py-1.5 text-xs font-bold text-slate-400 hover:text-white transition-colors">
+              TERMINAL
             </a>
-            <a href="/mtf-screener" class="px-5 py-1.5 text-xs font-bold text-blue-800 bg-white shadow-xs rounded-full transition-colors">
-              MTF Radar
+            <a href="/mtf-screener" class="px-4 py-1.5 text-xs font-black text-[#06080d] bg-[#00f2fe] cyan-glow transition-colors">
+              MTF RADAR
             </a>
           </nav>
 
-          {/* Quick Search */}
-          <div class="relative">
-            <input
-              id="search-input"
-              type="text"
-              placeholder="Filter ticker or sector..."
-              class="bg-slate-50 border border-slate-200 text-xs rounded-full pl-8 pr-4 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all w-60 placeholder-slate-400 font-medium"
-            />
-            <svg class="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
-            </svg>
+          {/* Integrated Ticker Stats */}
+          <div class="flex items-center gap-4 text-xs font-mono border-l border-r border-[#1e293b] px-4 py-1">
+            <div class="flex items-center gap-2">
+              <span class="text-slate-400 text-[10px] uppercase tracking-wider">SETUPS:</span>
+              <span id="stat-total-setups" class="font-black text-white">0</span>
+            </div>
+            <span class="text-[#1e293b]">|</span>
+            <div class="flex items-center gap-2">
+              <span class="text-slate-400 text-[10px] uppercase tracking-wider">HIGH CONVICTION:</span>
+              <span id="stat-high-conviction" class="font-black text-[#00f2fe]">0</span>
+            </div>
           </div>
         </div>
 
-        {/* RIGHT: Telemetry & Status */}
-        <div class="flex items-center gap-3 sm:gap-4">
-          {/* API Fuel Gauge */}
-          <div class="group hidden sm:flex items-center gap-3 px-3 py-1.5 bg-white border border-slate-200 rounded-full shadow-xs hover:border-emerald-300 transition-all duration-300 cursor-default">
-            <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest group-hover:text-emerald-600 transition-colors">API Fuel</span>
-            <div class="flex items-center gap-2">
-              <div class="relative w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden shadow-inner">
-                <div class="absolute top-0 left-0 h-full bg-gradient-to-r from-emerald-400 to-emerald-600 rounded-full transition-all duration-1000 ease-out" style="width: 95%">
-                  <div class="absolute top-0 left-0 w-full h-full bg-white/30 animate-pulse"></div>
-                </div>
-              </div>
-              <span class="text-[10px] font-mono font-black text-slate-700 tabular-nums">
-                190<span class="text-slate-400 font-semibold">/200</span>
-              </span>
+        {/* RIGHT: Telemetry & Manual Trigger Button */}
+        <div class="flex items-center gap-4">
+          {/* API Fuel Counter */}
+          <div class="hidden sm:flex items-center gap-2.5 px-3 py-1 bg-[#0c121e] border border-[#1e293b] text-[10px]">
+            <span class="text-slate-400 font-bold uppercase tracking-wider">FUEL:</span>
+            <div class="w-12 h-1 bg-[#1e293b] overflow-hidden">
+              <div class="h-full bg-[#00f2fe]" style="width: 95%"></div>
             </div>
+            <span class="font-mono font-black text-slate-200">190/200</span>
           </div>
 
-          {/* System Status & Countdown */}
-          <div class="flex flex-col items-end pl-3 border-l border-slate-200">
-            <div class="flex items-center gap-2">
-              <span class="relative flex h-2 w-2">
-                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-              </span>
-              <span class="text-xs font-bold text-slate-800 tracking-wide">SYSTEM ALIVE</span>
-            </div>
-            <span id="countdown-label" class="text-[9px] font-medium text-slate-400 mt-0.5">
-              Next scan in: 60s
+          {/* System Status Indicator */}
+          <div class="flex items-center gap-2 border-l border-[#1e293b] pl-3">
+            <span class="w-2 h-2 bg-[#00e676] emerald-glow"></span>
+            <span class="text-xs font-black text-slate-200 uppercase tracking-wider">LIVE</span>
+            <span id="countdown-label" class="text-[10px] font-bold text-slate-400 ml-1">
+              [60s]
             </span>
           </div>
 
-          {/* Manual Run Scan Button */}
-          <div class="flex items-center gap-3 border-l border-slate-200 pl-3">
-            <button
-              id="trigger-scan-btn"
-              type="button"
-              class="relative overflow-hidden group flex items-center gap-2 px-4 sm:px-5 py-2 rounded-full text-xs font-black transition-all bg-gradient-to-r from-blue-600 to-blue-800 text-white shadow-md hover:shadow-blue-500/30 hover:scale-[1.02] active:scale-95 cursor-pointer border border-blue-400/20"
-            >
-              <div class="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-500 ease-in-out"></div>
-              <svg id="trigger-scan-icon" class="w-3.5 h-3.5 text-blue-100 drop-shadow-xs group-hover:animate-pulse" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
-              </svg>
-              <span id="trigger-scan-text" class="tracking-wider uppercase drop-shadow-xs z-10">Run Scan</span>
-            </button>
-          </div>
+          {/* Manual Run Scan Trigger */}
+          <button
+            id="trigger-scan-btn"
+            type="button"
+            class="flex items-center gap-2 px-4 py-1.5 text-xs font-black text-[#06080d] bg-[#00f2fe] hover:bg-[#4facfe] cyan-glow transition-all active:translate-y-0.5 cursor-pointer uppercase tracking-wider"
+          >
+            <svg id="trigger-scan-icon" class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24">
+              <path d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+            </svg>
+            <span id="trigger-scan-text">SCAN NOW</span>
+          </button>
         </div>
       </header>
 
-      {/* --- MAIN DATA CONTAINER — REMOVED HEAVY SIDE MARGINS/PADDING --- */}
-      <main class="w-full max-w-[1750px] mx-auto px-2 sm:px-4 lg:px-6 py-6 space-y-6">
+      {/* --- MAIN HIGH-DENSITY TERMINAL CONTAINER (NO HEAVY PADDING) --- */}
+      <main class="w-full px-2 sm:px-4 py-4 space-y-4">
 
-        {/* Top Control & Metrics Summary Bar */}
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {/* Active Setups */}
-          <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
-            <div>
-              <div class="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Total Setups</div>
-              <div id="stat-total-setups" class="text-2xl sm:text-3xl font-black text-slate-900 mt-0.5">0</div>
-            </div>
-            <div class="w-10 h-10 rounded-lg bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 font-bold">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
-              </svg>
-            </div>
-          </div>
+        {/* --- RIGID TERMINAL RADAR DATA MATRIX CARD --- */}
+        <div class="terminal-glass-card border border-[#1e293b]">
 
-          {/* High Conviction Count */}
-          <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between">
-            <div>
-              <div class="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">High Conviction</div>
-              <div id="stat-high-conviction" class="text-2xl sm:text-3xl font-black text-amber-600 mt-0.5">0</div>
-            </div>
-            <div class="w-10 h-10 rounded-lg bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-600 font-bold">
-              <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-            </div>
-          </div>
-
-          {/* Active Filter Logic */}
-          <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs md:col-span-2 flex flex-col justify-between">
-            <div class="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Quantitative Confluence Logic</div>
-            <div class="flex flex-wrap items-center gap-2 mt-2">
-              <span class="text-xs font-bold text-blue-800 bg-blue-50 px-2.5 py-1 rounded-md border border-blue-100 flex items-center gap-1.5">
-                <span class="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
-                MACD 15m Zero-Line Cross
-              </span>
-              <span class="text-slate-300 font-bold">+</span>
-              <span class="text-xs font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-100 flex items-center gap-1.5">
-                <span class="w-1.5 h-1.5 rounded-full bg-emerald-600"></span>
-                RVOL &gt; 1.0x Expansion
-              </span>
-              <span class="text-slate-300 font-bold">+</span>
-              <span class="text-xs font-bold text-amber-800 bg-amber-50 px-2.5 py-1 rounded-md border border-amber-100 flex items-center gap-1.5">
-                <span class="w-1.5 h-1.5 rounded-full bg-amber-600"></span>
-                2x ATR Structural SL
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* --- STUNNING ENHANCED RADAR TABLE CARD --- */}
-        <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs transition-all duration-300">
-
-          {/* COLLAPSIBLE HEADER CONTROL BAR */}
-          <div class="bg-slate-900 text-white px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 shadow-md">
+          {/* TERMINAL HEADER & FILTER CONTROLS BAR */}
+          <div class="terminal-glass-header px-4 py-3 flex flex-wrap items-center justify-between gap-4">
             
-            {/* Left: Title, Live Status & Badge */}
+            {/* Left: Section Title & Live Setup Counter Badge */}
             <div class="flex items-center gap-3">
-              <span class="relative flex h-3 w-3">
-                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span class="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+              <span class="w-2 h-2 bg-[#00f2fe] cyan-glow inline-block"></span>
+              <h2 class="text-xs font-black tracking-widest text-white uppercase font-mono flex items-center gap-2">
+                MULTIPLE TIMEFRAME CONFLUENCE MATRIX
+              </h2>
+              <span id="setup-count-badge" class="px-2 py-0.5 bg-[#00f2fe]/10 text-[#00f2fe] text-xs font-mono font-bold border border-[#00f2fe]/40">
+                0 SETUPS
               </span>
-              <div>
-                <h2 class="text-sm font-black tracking-wider uppercase text-white flex items-center gap-2">
-                  Quant MTF Radar Setups
-                </h2>
+            </div>
+
+            {/* Center: Search & Filter Tabs */}
+            <div class="flex flex-wrap items-center gap-3">
+              {/* Search Box */}
+              <div class="relative">
+                <input
+                  id="search-input"
+                  type="text"
+                  placeholder="FILTER TICKER / SECTOR..."
+                  class="bg-[#06080d] border border-[#1e293b] focus:border-[#00f2fe] text-xs text-white px-3 py-1.5 w-52 focus:outline-none transition-colors uppercase font-mono placeholder:text-slate-500"
+                />
               </div>
-              <span id="setup-count-badge" class="px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-xs font-mono font-bold border border-blue-500/30">
-                0 setups
-              </span>
+
+              {/* Boxy Rigid Filter Tabs */}
+              <div class="flex items-center bg-[#06080d] border border-[#1e293b]">
+                <button 
+                  onclick="setFilterTab('ALL')" 
+                  id="tab-ALL" 
+                  class="px-3 py-1 text-xs font-black text-[#06080d] bg-[#00f2fe] transition-colors cursor-pointer uppercase"
+                >
+                  ALL
+                </button>
+                <button 
+                  onclick="setFilterTab('HIGH')" 
+                  id="tab-HIGH" 
+                  class="px-3 py-1 text-xs font-bold text-slate-400 hover:text-white hover:bg-[#1e293b] transition-colors cursor-pointer uppercase border-l border-[#1e293b]"
+                >
+                  ⚡ HIGH CONVICTION
+                </button>
+                <button 
+                  onclick="setFilterTab('ZERO_CROSS')" 
+                  id="tab-ZERO_CROSS" 
+                  class="px-3 py-1 text-xs font-bold text-slate-400 hover:text-white hover:bg-[#1e293b] transition-colors cursor-pointer uppercase border-l border-[#1e293b]"
+                >
+                  🎯 ZERO CROSS
+                </button>
+                <button 
+                  onclick="setFilterTab('HIGH_RVOL')" 
+                  id="tab-HIGH_RVOL" 
+                  class="px-3 py-1 text-xs font-bold text-slate-400 hover:text-white hover:bg-[#1e293b] transition-colors cursor-pointer uppercase border-l border-[#1e293b]"
+                >
+                  🔥 HIGH RVOL
+                </button>
+              </div>
             </div>
 
-            {/* Center: Quick Filter Pills */}
-            <div class="flex flex-wrap items-center gap-1.5 bg-slate-800/80 p-1 rounded-xl border border-slate-700/60">
-              <button 
-                onclick="setFilterTab('ALL')" 
-                id="tab-ALL" 
-                class="px-3 py-1 rounded-lg text-xs font-bold transition-all bg-blue-600 text-white shadow-xs cursor-pointer"
-              >
-                All
-              </button>
-              <button 
-                onclick="setFilterTab('HIGH')" 
-                id="tab-HIGH" 
-                class="px-3 py-1 rounded-lg text-xs font-bold transition-all text-slate-300 hover:text-white hover:bg-slate-700/60 cursor-pointer"
-              >
-                ⚡ High Conviction
-              </button>
-              <button 
-                onclick="setFilterTab('ZERO_CROSS')" 
-                id="tab-ZERO_CROSS" 
-                class="px-3 py-1 rounded-lg text-xs font-bold transition-all text-slate-300 hover:text-white hover:bg-slate-700/60 cursor-pointer"
-              >
-                🎯 Zero Cross
-              </button>
-              <button 
-                onclick="setFilterTab('HIGH_RVOL')" 
-                id="tab-HIGH_RVOL" 
-                class="px-3 py-1 rounded-lg text-xs font-bold transition-all text-slate-300 hover:text-white hover:bg-slate-700/60 cursor-pointer"
-              >
-                🔥 High RVOL
-              </button>
-            </div>
-
-            {/* Right: Controls (Expand/Collapse All Rows & Collapse Entire Table) */}
+            {/* Right: Expand & Table Collapse Controls */}
             <div class="flex items-center gap-2">
               <button
                 id="toggle-all-rows-btn"
                 onclick="toggleExpandAllRows()"
-                class="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold transition-all border border-slate-700/80 cursor-pointer"
-                title="Toggle detail drawer for all rows"
+                class="px-3 py-1 bg-[#0c121e] hover:bg-[#1e293b] text-slate-300 text-xs font-bold border border-[#1e293b] transition-colors cursor-pointer uppercase"
               >
-                <svg id="toggle-all-rows-icon" class="w-3.5 h-3.5 transition-transform duration-300" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path>
-                </svg>
-                <span id="toggle-all-rows-text">Expand All</span>
+                <span id="toggle-all-rows-text">EXPAND ALL</span>
               </button>
 
-              {/* COLLAPSE / EXPAND TABLE TOGGLE BUTTON */}
               <button
                 id="table-collapse-btn"
                 onclick="toggleTableCollapse()"
-                class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-blue-600 text-slate-200 hover:text-white text-xs font-extrabold transition-all border border-slate-700/80 cursor-pointer shadow-xs"
+                class="px-3 py-1 bg-[#0c121e] hover:bg-[#00f2fe] hover:text-[#06080d] text-[#00f2fe] text-xs font-black border border-[#00f2fe]/40 transition-colors cursor-pointer uppercase"
               >
-                <span id="table-collapse-text">Collapse Table</span>
-                <svg id="table-collapse-icon" class="w-4 h-4 transition-transform duration-300" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7"></path>
-                </svg>
+                <span id="table-collapse-text">COLLAPSE TABLE</span>
               </button>
             </div>
           </div>
 
-          {/* COLLAPSED TICKER SUMMARY BANNER (Shown when table is collapsed) */}
-          <div id="table-collapsed-summary" class="hidden bg-slate-800 text-slate-300 px-5 py-3 border-b border-slate-700 flex items-center justify-between text-xs font-mono">
-            <div class="flex items-center gap-3 overflow-x-auto py-0.5 scrollbar-none">
-              <span class="text-slate-400 font-extrabold uppercase text-[10px] tracking-wider shrink-0">Radar Collapsed:</span>
+          {/* COLLAPSED SUMMARY TICKER TAPE (When Table Collapsed) */}
+          <div id="table-collapsed-summary" class="hidden bg-[#070b12] text-slate-200 px-4 py-2 border-b border-[#1e293b] flex items-center justify-between text-xs font-mono">
+            <div class="flex items-center gap-3 overflow-x-auto py-0.5">
+              <span class="text-slate-500 font-bold uppercase tracking-wider shrink-0 text-[10px]">COLLAPSED TICKERS:</span>
               <div id="collapsed-tickers-list" class="flex items-center gap-2 shrink-0">
-                {/* Dynamically populated mini ticker pills */}
+                {/* Dynamically populated */}
               </div>
             </div>
             <button 
               onclick="toggleTableCollapse()"
-              class="text-blue-400 hover:text-blue-300 font-bold shrink-0 ml-4 underline cursor-pointer"
+              class="text-[#00f2fe] hover:underline font-bold shrink-0 ml-4 cursor-pointer uppercase text-xs"
             >
-              Show Table
+              [EXPAND]
             </button>
           </div>
 
-          {/* TABLE CONTAINER WRAPPER WITH COLLAPSIBLE ANIMATION */}
-          <div id="screener-table-container" class="overflow-x-auto transition-all duration-300 max-h-[2500px]">
-            <table class="w-full text-left text-xs sm:text-sm whitespace-nowrap">
-              <thead class="bg-slate-50 border-b border-slate-200 uppercase tracking-wider text-[11px] font-black text-slate-500">
+          {/* TERMINAL TABLE MATRIX WRAPPER */}
+          <div id="screener-table-container" class="overflow-x-auto transition-all duration-200 max-h-[2500px]">
+            <table class="w-full text-left text-xs whitespace-nowrap border-collapse">
+              <thead class="bg-[#06080d] border-b border-[#1e293b] uppercase text-[10px] font-black text-slate-400 tracking-wider">
                 <tr>
-                  <th class="px-3 sm:px-4 py-3.5 text-center w-10"></th>
-                  <th class="px-4 py-3.5">Asset & Volume</th>
-                  <th class="px-4 py-3.5">LTP</th>
-                  <th class="px-4 py-3.5">VWAP Ext.</th>
-                  <th class="px-4 py-3.5">MACD 15m</th>
-                  <th class="px-4 py-3.5">RSI (14)</th>
-                  <th class="px-4 py-3.5">Struct SL (ATR)</th>
-                  <th class="px-4 py-3.5 text-right">Actions</th>
+                  <th class="px-3 py-2.5 text-center w-8 border-r border-[#1e293b]"></th>
+                  <th class="px-4 py-2.5 border-r border-[#1e293b]">ASSET & RVOL</th>
+                  <th class="px-4 py-2.5 border-r border-[#1e293b]">LTP</th>
+                  <th class="px-4 py-2.5 border-r border-[#1e293b]">VWAP DEV %</th>
+                  <th class="px-4 py-2.5 border-r border-[#1e293b]">MACD SIGNAL (15M)</th>
+                  <th class="px-4 py-2.5 border-r border-[#1e293b]">RSI / ADX</th>
+                  <th class="px-4 py-2.5 border-r border-[#1e293b]">ATR STOP LOSS</th>
+                  <th class="px-4 py-2.5 text-right">ACTIONS</th>
                 </tr>
               </thead>
-              <tbody id="screener-table-body" class="divide-y divide-slate-100">
+              <tbody id="screener-table-body" class="divide-y divide-[#1e293b]/60">
                 <tr>
-                  <td colSpan={8} class="px-6 py-16 text-center text-slate-400 font-medium">
+                  <td colSpan={8} class="px-6 py-16 text-center text-slate-500">
                     <div class="flex flex-col items-center justify-center gap-3">
-                      <svg class="w-8 h-8 text-blue-500 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                      </svg>
-                      <span>Loading MTF setups...</span>
+                      <div class="w-6 h-6 border-2 border-[#00f2fe] border-t-transparent animate-spin"></div>
+                      <span class="font-bold text-xs uppercase tracking-widest text-[#00f2fe]">SCANNING LIVE MARKET MATRIX...</span>
                     </div>
                   </td>
                 </tr>
@@ -314,7 +352,7 @@ export const MTFScreenerPage = () => (
         </div>
       </main>
 
-      {/* Client-Side Refresh, Search, and Countdown Logic */}
+      {/* Client-Side Logic */}
       <script dangerouslySetInnerHTML={{ __html: `
         let allStocks = [];
         let nextUpdateIn = 60;
@@ -343,9 +381,9 @@ export const MTFScreenerPage = () => (
             const btn = document.getElementById('tab-' + t);
             if (btn) {
               if (t === tab) {
-                btn.className = 'px-3 py-1 rounded-lg text-xs font-bold transition-all bg-blue-600 text-white shadow-xs cursor-pointer';
+                btn.className = 'px-3 py-1 text-xs font-black text-[#06080d] bg-[#00f2fe] cyan-glow transition-colors cursor-pointer uppercase';
               } else {
-                btn.className = 'px-3 py-1 rounded-lg text-xs font-bold transition-all text-slate-300 hover:text-white hover:bg-slate-700/60 cursor-pointer';
+                btn.className = 'px-3 py-1 text-xs font-bold text-slate-400 hover:text-white hover:bg-[#1e293b] transition-colors cursor-pointer uppercase border-l border-[#1e293b]';
               }
             }
           });
@@ -379,7 +417,7 @@ export const MTFScreenerPage = () => (
           
           if (totalElem) totalElem.innerText = stocks.length;
           if (highElem) highElem.innerText = stocks.filter(s => s.conviction === 'HIGH').length;
-          if (badgeElem) badgeElem.innerText = stocks.length + ' setups';
+          if (badgeElem) badgeElem.innerText = stocks.length + ' SETUPS';
         }
 
         function toggleTableCollapse() {
@@ -387,17 +425,15 @@ export const MTFScreenerPage = () => (
           const container = document.getElementById('screener-table-container');
           const summary = document.getElementById('table-collapsed-summary');
           const btnText = document.getElementById('table-collapse-text');
-          const btnIcon = document.getElementById('table-collapse-icon');
 
           if (isTableCollapsed) {
             if (container) {
               container.style.maxHeight = '0px';
               container.style.opacity = '0';
-              setTimeout(() => { container.classList.add('hidden'); }, 300);
+              setTimeout(() => { container.classList.add('hidden'); }, 200);
             }
             if (summary) summary.classList.remove('hidden');
-            if (btnText) btnText.innerText = 'Expand Table';
-            if (btnIcon) btnIcon.style.transform = 'rotate(180deg)';
+            if (btnText) btnText.innerText = 'EXPAND TABLE';
           } else {
             if (container) {
               container.classList.remove('hidden');
@@ -407,8 +443,7 @@ export const MTFScreenerPage = () => (
               });
             }
             if (summary) summary.classList.add('hidden');
-            if (btnText) btnText.innerText = 'Collapse Table';
-            if (btnIcon) btnIcon.style.transform = 'rotate(0deg)';
+            if (btnText) btnText.innerText = 'COLLAPSE TABLE';
           }
         }
 
@@ -416,37 +451,36 @@ export const MTFScreenerPage = () => (
           const listElem = document.getElementById('collapsed-tickers-list');
           if (!listElem) return;
           if (stocks.length === 0) {
-            listElem.innerHTML = '<span class="text-slate-400">No active setups</span>';
+            listElem.innerHTML = '<span class="text-slate-500">[NO SETUPS]</span>';
             return;
           }
           listElem.innerHTML = stocks.slice(0, 10).map(s => \`
-            <span class="px-2 py-0.5 rounded bg-slate-700 text-white font-bold text-[11px] flex items-center gap-1">
+            <span class="px-2 py-0.5 bg-[#0c121e] border border-[#1e293b] text-slate-200 font-bold text-[11px] flex items-center gap-1.5">
               \${s.tradingsymbol}
-              <span class="text-[9px] text-emerald-400 font-mono">₹\${Number(s.current_price).toFixed(1)}</span>
+              <span class="text-[10px] text-[#00f2fe] font-mono font-black">₹\${Number(s.current_price).toFixed(1)}</span>
             </span>
-          \`).join('') + (stocks.length > 10 ? \`<span class="text-slate-400 text-[10px]">+\${stocks.length - 10} more</span>\` : '');
+          \`).join('') + (stocks.length > 10 ? \`<span class="text-slate-500 text-[10px] font-bold">+\${stocks.length - 10} MORE</span>\` : '');
         }
 
         function toggleRowDetails(symbol) {
           const detailRow = document.getElementById('detail-row-' + symbol);
-          const chevron = document.getElementById('chevron-' + symbol);
+          const chev = document.getElementById('chevron-' + symbol);
           if (!detailRow) return;
 
           if (expandedRows.has(symbol)) {
             expandedRows.delete(symbol);
             detailRow.classList.add('hidden');
-            if (chevron) chevron.style.transform = 'rotate(0deg)';
+            if (chev) chev.innerText = '+';
           } else {
             expandedRows.add(symbol);
             detailRow.classList.remove('hidden');
-            if (chevron) chevron.style.transform = 'rotate(180deg)';
+            if (chev) chev.innerText = '−';
           }
         }
 
         function toggleExpandAllRows() {
           const allSymbols = allStocks.map(s => s.tradingsymbol);
           const btnText = document.getElementById('toggle-all-rows-text');
-          const btnIcon = document.getElementById('toggle-all-rows-icon');
 
           if (expandedRows.size === allSymbols.length && allSymbols.length > 0) {
             expandedRows.clear();
@@ -454,20 +488,18 @@ export const MTFScreenerPage = () => (
               const row = document.getElementById('detail-row-' + sym);
               const chev = document.getElementById('chevron-' + sym);
               if (row) row.classList.add('hidden');
-              if (chev) chev.style.transform = 'rotate(0deg)';
+              if (chev) chev.innerText = '+';
             });
-            if (btnText) btnText.innerText = 'Expand All';
-            if (btnIcon) btnIcon.style.transform = 'rotate(0deg)';
+            if (btnText) btnText.innerText = 'EXPAND ALL';
           } else {
             allSymbols.forEach(sym => {
               expandedRows.add(sym);
               const row = document.getElementById('detail-row-' + sym);
               const chev = document.getElementById('chevron-' + sym);
               if (row) row.classList.remove('hidden');
-              if (chev) chev.style.transform = 'rotate(180deg)';
+              if (chev) chev.innerText = '−';
             });
-            if (btnText) btnText.innerText = 'Collapse All';
-            if (btnIcon) btnIcon.style.transform = 'rotate(180deg)';
+            if (btnText) btnText.innerText = 'COLLAPSE ALL';
           }
         }
 
@@ -475,19 +507,15 @@ export const MTFScreenerPage = () => (
           const container = document.getElementById('toast-container');
           if (!container) return;
           const toast = document.createElement('div');
-          toast.className = 'pointer-events-auto px-4 py-2.5 rounded-xl shadow-lg border text-xs font-bold flex items-center gap-2 transition-all duration-300 animate-fade-in ' + 
-            (type === 'success' ? 'bg-slate-900 text-white border-emerald-500/50' : 'bg-slate-900 text-white border-red-500/50');
+          toast.className = 'pointer-events-auto px-4 py-2 border text-xs font-black flex items-center gap-2 bg-[#0c121e] text-white border-[#00f2fe] cyan-glow uppercase tracking-wider';
           toast.innerHTML = \`
-            <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
-            </svg>
+            <span class="w-1.5 h-1.5 bg-[#00f2fe]"></span>
             <span>\${message}</span>
           \`;
           container.appendChild(toast);
           setTimeout(() => {
             toast.style.opacity = '0';
-            toast.style.transform = 'translateY(10px)';
-            setTimeout(() => toast.remove(), 300);
+            setTimeout(() => toast.remove(), 200);
           }, 3000);
         }
 
@@ -505,12 +533,12 @@ export const MTFScreenerPage = () => (
           
           if (navigator.clipboard) {
             navigator.clipboard.writeText(planText).then(() => {
-              showToast('Copied ' + symbol + ' Trade Plan to clipboard!');
+              showToast('COPIED ' + symbol + ' TRADE PLAN');
             }).catch(() => {
-              showToast('Failed to copy plan', 'error');
+              showToast('COPY FAILED', 'error');
             });
           } else {
-            showToast('Copied ' + symbol + ' Trade Plan!');
+            showToast('COPIED ' + symbol + ' PLAN');
           }
         }
 
@@ -519,14 +547,9 @@ export const MTFScreenerPage = () => (
           if (!stocks || stocks.length === 0) {
             tbody.innerHTML = \`
               <tr>
-                <td colspan="8" class="px-6 py-20 text-center">
-                  <div class="text-slate-300 mb-3">
-                    <svg class="w-12 h-12 mx-auto stroke-current" fill="none" stroke-width="1.5" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
-                    </svg>
-                  </div>
-                  <p class="text-slate-700 font-bold text-base">No active setups match your criteria.</p>
-                  <p class="text-xs text-slate-400 mt-1 font-medium">Scanning live intraday 15m & 3H crossovers on Upstox...</p>
+                <td colspan="8" class="px-6 py-16 text-center text-slate-500">
+                  <p class="text-slate-300 font-black text-sm uppercase tracking-widest">[ NO ACTIVE MTF SETUPS MATCHING CRITERIA ]</p>
+                  <p class="text-xs text-slate-500 mt-1 uppercase font-mono">CONTINUOUS 15M / 3H UPSTOX CANDLE SCANNER RUNNING...</p>
                 </td>
               </tr>\`;
             return;
@@ -540,15 +563,15 @@ export const MTFScreenerPage = () => (
           });
 
           const signalMap = {
-            'ZERO_LINE_CROSS':    { label: 'Zero Line Cross', bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200', icon: 'M13 10V3L4 14h7v7l9-11h-7z' },
-            'SIGNAL_LINE_CROSS':  { label: 'Signal Cross', bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200', icon: 'M13 10V3L4 14h7v7l9-11h-7z' },
-            'APPROACHING_ZERO':   { label: 'Approaching Zero', bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200', icon: 'M5 10l7-7m0 0l7 7m-7-7v18' },
-            'EMA_GOLDEN_CROSS':   { label: 'EMA Golden Cross', bg: 'bg-yellow-50', text: 'text-yellow-700', border: 'border-yellow-200', icon: 'M13 7h8m0 0v8m0-8l-8 8-4-4-6 6' },
-            'BULLISH_ENGULFING':  { label: 'Bullish Engulfing', bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200', icon: 'M5 15l7-7 7 7' },
-            'HAMMER':             { label: 'Hammer', bg: 'bg-teal-50', text: 'text-teal-700', border: 'border-teal-200', icon: 'M12 19V5m-7 7l7-7 7 7' },
-            'RSI_REVERSAL':       { label: 'RSI Reversal', bg: 'bg-violet-50', text: 'text-violet-700', border: 'border-violet-200', icon: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15' },
-            'RSI_50_CROSS':       { label: 'RSI 50 Cross', bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-200', icon: 'M13 7h8m0 0v8m0-8l-8 8-4-4-6 6' },
-            'BULLISH_MOMENTUM':   { label: 'Bullish', bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200', icon: 'M5 15l7-7 7 7' },
+            'ZERO_LINE_CROSS':    { label: 'ZERO CROSS', bg: 'bg-[#00e676]/15 text-[#00e676] border-[#00e676]/60' },
+            'SIGNAL_LINE_CROSS':  { label: 'SIGNAL CROSS', bg: 'bg-[#00f2fe]/15 text-[#00f2fe] border-[#00f2fe]/60' },
+            'APPROACHING_ZERO':   { label: 'APPROACHING ZERO', bg: 'bg-slate-800 text-slate-300 border-slate-600' },
+            'EMA_GOLDEN_CROSS':   { label: 'EMA GOLDEN CROSS', bg: 'bg-[#00e676]/20 text-[#00e676] border-[#00e676]' },
+            'BULLISH_ENGULFING':  { label: 'BULLISH ENGULF', bg: 'bg-[#00e676]/15 text-[#00e676] border-[#00e676]/50' },
+            'HAMMER':             { label: 'HAMMER', bg: 'bg-[#00e676]/15 text-[#00e676] border-[#00e676]/50' },
+            'RSI_REVERSAL':       { label: 'RSI REVERSAL', bg: 'bg-[#00f2fe]/15 text-[#00f2fe] border-[#00f2fe]/50' },
+            'RSI_50_CROSS':       { label: 'RSI 50 CROSS', bg: 'bg-[#00f2fe]/15 text-[#00f2fe] border-[#00f2fe]/50' },
+            'BULLISH_MOMENTUM':   { label: 'BULLISH', bg: 'bg-[#00e676]/15 text-[#00e676] border-[#00e676]/50' },
           };
 
           tbody.innerHTML = sorted.map(stock => {
@@ -556,33 +579,23 @@ export const MTFScreenerPage = () => (
             const isExpanded = expandedRows.has(sym);
 
             const sig = signalMap[stock.macd_signal] || signalMap['BULLISH_MOMENTUM'];
-            const macdBadge = \`<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-extrabold uppercase tracking-wider \${sig.bg} \${sig.text} border \${sig.border}">
-                <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="\${sig.icon}"></path>
-                </svg>
+            const macdBadge = \`<span class="px-2 py-0.5 text-[10px] font-black tracking-wider uppercase border \${sig.bg}">
                 \${sig.label}
               </span>\`;
 
             const rsiVal = Number(stock.rsi_14 || 50);
-            const rsiClass = rsiVal > 60 ? 'text-emerald-600 font-extrabold' : (rsiVal < 40 ? 'text-red-600 font-extrabold' : 'text-slate-600 font-bold');
+            const rsiClass = rsiVal > 60 ? 'text-[#00e676] font-black' : (rsiVal < 40 ? 'text-[#ff1744] font-black' : 'text-slate-400 font-bold');
             
             const rvolVal = Number(stock.rvol || 1.0);
             const isHighRvol = rvolVal > 2.5;
             const rvolBadgeClass = isHighRvol
-              ? 'bg-orange-100 text-orange-700 border-orange-200 font-extrabold'
-              : 'bg-slate-100 text-slate-600 border-slate-200 font-bold';
-
-            const rvolFlameSvg = isHighRvol
-              ? \`<svg class="w-3 h-3 inline fill-current text-orange-600 mr-0.5" viewBox="0 0 24 24">
-                  <path d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
-                  <path d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
-                 </svg>\`
-              : '';
+              ? 'bg-[#ffb300]/20 text-[#ffb300] border-[#ffb300]/60 font-black'
+              : 'bg-[#0c121e] text-slate-400 border-[#1e293b] font-bold';
 
             const distVwap = Number(stock.distance_from_vwap_pct || 0);
             const vwapDistClass = distVwap > 2.0
-              ? 'text-amber-600 font-bold'
-              : (distVwap < 0 ? 'text-blue-600 font-bold' : 'text-emerald-600 font-bold');
+              ? 'text-[#ffb300] font-black'
+              : (distVwap < 0 ? 'text-[#ff1744] font-black' : 'text-[#00e676] font-black');
 
             const priceNum = Number(stock.current_price || 0);
             const atrVal = Number(stock.atr_value || (priceNum * 0.015)).toFixed(2);
@@ -594,12 +607,11 @@ export const MTFScreenerPage = () => (
 
             const isHighConviction = stock.conviction === 'HIGH';
             const convictionBadge = isHighConviction
-              ? \`<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black tracking-wider bg-gradient-to-r from-amber-400 to-yellow-500 text-white shadow-xs" title="Dual-Timeframe Confirmed: 15m + 3H MACD aligned">
-                  <svg class="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+              ? \`<span class="px-1.5 py-0.5 text-[9px] font-black tracking-widest bg-[#00f2fe] text-[#06080d] uppercase cyan-glow">
                   HIGH
                 </span>\`
-              : \`<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wider bg-slate-100 text-slate-500 border border-slate-200" title="15m signal only">
-                  15m
+              : \`<span class="px-1.5 py-0.5 text-[9px] font-bold tracking-widest bg-[#0c121e] text-slate-400 border border-[#1e293b] uppercase">
+                  15M
                 </span>\`;
 
             const marginMult = stock.mtf_margin_multiplier || 3.5;
@@ -609,83 +621,77 @@ export const MTFScreenerPage = () => (
             const adxVal = stock.adx_trend ? Number(stock.adx_trend).toFixed(1) : '24.5';
 
             return \`
-              <!-- SUMMARY ROW -->
-              <tr class="table-row-hover transition-colors group border-b border-slate-100 \${isHighConviction ? 'bg-amber-50/20' : ''}">
-                <!-- Expand Chevron Toggle Cell -->
-                <td class="px-3 sm:px-4 py-4 text-center">
+              <!-- SUMMARY ROW (BOX & RIGID GLASS) -->
+              <tr class="table-row-terminal transition-all border-b border-[#1e293b] \${isHighConviction ? 'bg-[#00f2fe]/5' : 'bg-[#0a101a]/70'}">
+                <!-- Expand Toggle -->
+                <td class="px-3 py-3 text-center border-r border-[#1e293b]">
                   <button 
                     onclick="toggleRowDetails('\${sym}')" 
-                    class="p-1 rounded-md text-slate-400 hover:text-slate-800 hover:bg-slate-200/60 transition-colors cursor-pointer"
-                    title="Toggle trade details"
+                    id="chevron-\${sym}"
+                    class="w-5 h-5 flex items-center justify-center text-[#00f2fe] hover:bg-[#00f2fe]/20 font-mono font-black text-sm border border-[#00f2fe]/30 cursor-pointer transition-colors"
                   >
-                    <svg id="chevron-\${sym}" class="w-4 h-4 transition-transform duration-300 \${isExpanded ? 'rotate-180 text-blue-600 font-bold' : ''}" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path>
-                    </svg>
+                    \${isExpanded ? '−' : '+'}
                   </button>
                 </td>
                 
                 <!-- Asset & Volume -->
-                <td class="px-4 py-4">
+                <td class="px-4 py-3 border-r border-[#1e293b]">
                   <div class="flex items-center gap-2">
-                    <button onclick="toggleRowDetails('\${sym}')" class="font-black text-slate-900 text-base hover:text-blue-600 transition-colors cursor-pointer">\${sym}</button>
+                    <button onclick="toggleRowDetails('\${sym}')" class="font-black text-white text-sm hover:text-[#00f2fe] transition-colors cursor-pointer uppercase">\${sym}</button>
                     \${convictionBadge}
-                    <span class="px-2 py-0.5 rounded text-[10px] tracking-wider border \${rvolBadgeClass}">
-                      \${rvolFlameSvg}RVOL \${rvolVal}x
+                    <span class="px-1.5 py-0.5 text-[9px] tracking-wider border \${rvolBadgeClass}">
+                      RVOL \${rvolVal}x
                     </span>
                   </div>
-                  <div class="flex items-center gap-2 mt-0.5">
-                    <span class="text-[10px] font-black text-slate-400 tracking-wider uppercase">\${stock.sector || 'EQUITY'}</span>
-                    <span class="text-[9px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.2 rounded border border-blue-100">\${marginMult}x MTF</span>
+                  <div class="flex items-center gap-2 mt-1">
+                    <span class="text-[9px] font-bold text-slate-400 tracking-wider uppercase">\${stock.sector || 'EQUITY'}</span>
+                    <span class="text-[9px] font-black text-[#00f2fe] bg-[#00f2fe]/10 px-1 py-0.1 border border-[#00f2fe]/30">\${marginMult}X MTF</span>
                   </div>
                 </td>
 
                 <!-- LTP -->
-                <td class="px-4 py-4 font-mono font-bold text-slate-900 text-base">
+                <td class="px-4 py-3 font-mono font-black text-white text-sm border-r border-[#1e293b]">
                   ₹\${priceNum.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </td>
 
-                <!-- VWAP Ext. -->
-                <td class="px-4 py-4 font-mono">
+                <!-- VWAP Dev. -->
+                <td class="px-4 py-3 font-mono border-r border-[#1e293b]">
                   <div class="flex flex-col">
                     <span class="text-xs \${vwapDistClass}">
                       \${distVwap > 0 ? '+' : ''}\${distVwap}%
                     </span>
-                    <span class="text-[9px] text-slate-400 font-medium tracking-wide uppercase">from VWAP</span>
+                    <span class="text-[9px] text-slate-500 font-bold tracking-wide uppercase">VWAP DEV</span>
                   </div>
                 </td>
 
                 <!-- MACD 15m -->
-                <td class="px-4 py-4">
+                <td class="px-4 py-3 border-r border-[#1e293b]">
                   \${macdBadge}
                   <span class="ml-2 font-mono text-xs text-slate-400 font-bold">(\${stock.macd_value})</span>
                 </td>
 
-                <!-- RSI & ADX -->
-                <td class="px-4 py-4">
-                  <div class="flex flex-col">
-                    <span class="font-mono text-xs \${rsiClass}">RSI: \${rsiVal}</span>
-                    <span class="text-[10px] font-mono text-slate-400 font-medium">ADX: \${adxVal}</span>
+                <!-- RSI / ADX -->
+                <td class="px-4 py-3 border-r border-[#1e293b]">
+                  <div class="flex flex-col font-mono text-xs">
+                    <span class="\${rsiClass}">RSI: \${rsiVal}</span>
+                    <span class="text-[10px] text-slate-400 font-bold">ADX: \${adxVal}</span>
                   </div>
                 </td>
 
                 <!-- Struct SL (ATR) -->
-                <td class="px-4 py-3">
-                  <div class="bg-white border border-slate-200 rounded-lg p-2 w-44 shadow-2xs">
-                    <div class="flex justify-between items-center text-[10px] font-mono text-slate-400 border-b border-slate-100 pb-1 mb-1">
-                      <span class="tracking-wider uppercase">Base LTP</span>
-                      <span class="font-semibold text-slate-700">₹\${priceNum.toFixed(2)}</span>
+                <td class="px-4 py-2 border-r border-[#1e293b]">
+                  <div class="bg-[#06080d] border border-[#ff1744]/40 p-2 w-44">
+                    <div class="flex justify-between items-center text-[9px] font-mono text-slate-400 pb-0.5 border-b border-[#1e293b]">
+                      <span class="uppercase">BASE LTP</span>
+                      <span class="font-black text-slate-200">₹\${priceNum.toFixed(2)}</span>
                     </div>
-                    <div class="flex justify-between items-center text-[10px] font-mono text-slate-400 border-b border-slate-100 pb-1 mb-1">
-                      <span class="tracking-wider uppercase" title="ATR: ₹\${atrVal}">
-                        2 × ATR <span class="text-slate-400">(\${atrVal})</span>
-                      </span>
-                      <span class="font-semibold text-red-500">
-                        - ₹\${(Number(atrVal) * 2).toFixed(2)}
-                      </span>
+                    <div class="flex justify-between items-center text-[9px] font-mono text-slate-400 py-0.5 border-b border-[#1e293b]">
+                      <span>2x ATR (\${atrVal})</span>
+                      <span class="font-black text-[#ff1744]">-₹\${(Number(atrVal) * 2).toFixed(2)}</span>
                     </div>
-                    <div class="flex justify-between items-center text-xs font-mono font-black pt-0.5">
-                      <span class="text-slate-800 tracking-wider">STOP</span>
-                      <span class="text-red-600 bg-red-50 px-1.5 py-0.5 rounded border border-red-100">
+                    <div class="flex justify-between items-center text-xs font-mono font-black pt-1">
+                      <span class="text-slate-300">STOP</span>
+                      <span class="text-[#ff1744] bg-[#ff1744]/10 px-1 py-0.5 border border-[#ff1744]/40">
                         ₹\${formattedSL}
                       </span>
                     </div>
@@ -693,129 +699,118 @@ export const MTFScreenerPage = () => (
                 </td>
 
                 <!-- Actions -->
-                <td class="px-4 py-4 text-right">
+                <td class="px-4 py-3 text-right">
                   <div class="flex items-center justify-end gap-2">
                     <a 
                       href="https://in.tradingview.com/chart/?symbol=NSE:\${sym}" 
                       target="_blank" 
                       rel="noreferrer"
-                      class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-extrabold bg-white border border-slate-300 hover:border-blue-500 hover:text-blue-700 text-slate-700 shadow-2xs transition-all"
+                      class="px-2.5 py-1 text-xs font-black bg-[#0c121e] hover:bg-[#00f2fe] hover:text-[#06080d] text-slate-200 border border-[#1e293b] hover:border-[#00f2fe] transition-all uppercase"
                     >
-                      Chart
-                      <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
-                      </svg>
+                      CHART ↗
                     </a>
                     <button
                       onclick="toggleRowDetails('\${sym}')"
-                      class="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors cursor-pointer"
-                      title="Details"
+                      class="px-2 py-1 bg-[#0c121e] hover:bg-[#1e293b] text-[#00f2fe] border border-[#1e293b] transition-colors cursor-pointer text-xs font-bold"
+                      title="Trade Details Matrix"
                     >
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                      </svg>
+                      DETAILS
                     </button>
                   </div>
                 </td>
               </tr>
 
-              <!-- COLLAPSIBLE ACCORDION DETAIL ROW -->
-              <tr id="detail-row-\${sym}" class="\${isExpanded ? '' : 'hidden'} bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white border-b border-slate-700">
-                <td colSpan="8" class="p-4 sm:p-6">
-                  <div class="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs">
+              <!-- EXPANDABLE ACCORDION DETAIL ROW (RIGID GLASS TERMINAL DRAWER) -->
+              <tr id="detail-row-\${sym}" class="\${isExpanded ? '' : 'hidden'} bg-[#070c14] border-b border-[#00f2fe]/40">
+                <td colSpan="8" class="p-4 sm:p-5">
+                  <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs font-mono">
                     
-                    <!-- Panel 1: Quantitative Indicators Breakdown -->
-                    <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700/80 space-y-3">
-                      <div class="flex items-center justify-between border-b border-slate-700 pb-2">
-                        <span class="font-extrabold uppercase tracking-wider text-slate-400 text-[10px]">Technical Matrix</span>
-                        <span class="text-blue-400 font-mono font-bold">\${sym}</span>
+                    <!-- Panel 1: Technical Matrix -->
+                    <div class="terminal-glass-panel p-3.5 space-y-2">
+                      <div class="flex items-center justify-between border-b border-[#1e293b] pb-1.5">
+                        <span class="font-black uppercase tracking-wider text-slate-400 text-[10px]">TECHNICAL MATRIX</span>
+                        <span class="text-[#00f2fe] font-black">\${sym}</span>
                       </div>
-                      <div class="space-y-2 font-mono">
-                        <div class="flex justify-between items-center text-slate-300">
-                          <span>15m MACD Value:</span>
-                          <span class="font-bold text-white">\${stock.macd_value}</span>
+                      <div class="space-y-1 text-[11px]">
+                        <div class="flex justify-between text-slate-300">
+                          <span>15m MACD Histogram:</span>
+                          <span class="font-black text-white">\${stock.macd_value}</span>
                         </div>
-                        <div class="flex justify-between items-center text-slate-300">
-                          <span>Signal Type:</span>
-                          <span class="font-bold text-emerald-400">\${sig.label}</span>
+                        <div class="flex justify-between text-slate-300">
+                          <span>Signal Confluence:</span>
+                          <span class="font-black text-[#00e676]">\${sig.label}</span>
                         </div>
-                        <div class="flex justify-between items-center text-slate-300">
-                          <span>Relative Volume (RVOL):</span>
-                          <span class="font-bold \${isHighRvol ? 'text-orange-400' : 'text-slate-200'}">\${rvolVal}x</span>
+                        <div class="flex justify-between text-slate-300">
+                          <span>RVOL Multiplier:</span>
+                          <span class="font-black \${isHighRvol ? 'text-[#ffb300]' : 'text-white'}>\${rvolVal}x</span>
                         </div>
-                        <div class="flex justify-between items-center text-slate-300">
-                          <span>RSI (14-Period):</span>
-                          <span class="font-bold text-white">\${rsiVal}</span>
+                        <div class="flex justify-between text-slate-300">
+                          <span>RSI Oscillator:</span>
+                          <span class="font-black text-white">\${rsiVal}</span>
                         </div>
-                        <div class="flex justify-between items-center text-slate-300">
-                          <span>ADX Trend Strength:</span>
-                          <span class="font-bold text-indigo-300">\${adxVal} (\${Number(adxVal) > 25 ? 'Strong' : 'Moderate'})</span>
+                        <div class="flex justify-between text-slate-300">
+                          <span>ADX Trend Vector:</span>
+                          <span class="font-black text-[#00f2fe]">\${adxVal}</span>
                         </div>
                       </div>
                     </div>
 
-                    <!-- Panel 2: Trade Plan & ATR Risk Levels -->
-                    <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700/80 space-y-3">
-                      <div class="flex items-center justify-between border-b border-slate-700 pb-2">
-                        <span class="font-extrabold uppercase tracking-wider text-slate-400 text-[10px]">MTF Risk & Targets</span>
-                        <span class="text-emerald-400 font-mono font-bold">1:1.5 to 1:3 RR</span>
+                    <!-- Panel 2: Risk & Targets -->
+                    <div class="terminal-glass-panel p-3.5 space-y-2">
+                      <div class="flex items-center justify-between border-b border-[#1e293b] pb-1.5">
+                        <span class="font-black uppercase tracking-wider text-slate-400 text-[10px]">QUANT RISK & TARGETS</span>
+                        <span class="text-[#00e676] font-black">1:1.5 TO 1:3 RR</span>
                       </div>
-                      <div class="space-y-2 font-mono">
-                        <div class="flex justify-between items-center text-slate-300">
-                          <span>Entry Price (LTP):</span>
-                          <span class="font-bold text-white">₹\${priceNum.toFixed(2)}</span>
+                      <div class="space-y-1 text-[11px]">
+                        <div class="flex justify-between text-slate-300">
+                          <span>Execution LTP:</span>
+                          <span class="font-black text-white">₹\${priceNum.toFixed(2)}</span>
                         </div>
-                        <div class="flex justify-between items-center text-slate-300">
-                          <span>Structural Stop (2x ATR):</span>
-                          <span class="font-bold text-red-400">₹\${formattedSL}</span>
+                        <div class="flex justify-between text-slate-300">
+                          <span>ATR Stop Loss (2x):</span>
+                          <span class="font-black text-[#ff1744]">₹\${formattedSL}</span>
                         </div>
-                        <div class="flex justify-between items-center text-slate-300">
+                        <div class="flex justify-between text-slate-300">
                           <span>Target 1 (1.5R):</span>
-                          <span class="font-bold text-emerald-400">₹\${target1}</span>
+                          <span class="font-black text-[#00e676]">₹\${target1}</span>
                         </div>
-                        <div class="flex justify-between items-center text-slate-300">
+                        <div class="flex justify-between text-slate-300">
                           <span>Target 2 (3.0R):</span>
-                          <span class="font-bold text-emerald-300">₹\${target2}</span>
+                          <span class="font-black text-[#00e676]">₹\${target2}</span>
                         </div>
-                        <div class="flex justify-between items-center text-slate-300">
-                          <span>Risk per Share:</span>
-                          <span class="font-bold text-amber-300">₹\${riskPerShare.toFixed(2)}</span>
+                        <div class="flex justify-between text-slate-300">
+                          <span>Risk Delta / Share:</span>
+                          <span class="font-black text-[#00f2fe]">₹\${riskPerShare.toFixed(2)}</span>
                         </div>
                       </div>
                     </div>
 
-                    <!-- Panel 3: Margin & Execution Actions -->
-                    <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700/80 flex flex-col justify-between space-y-3">
+                    <!-- Panel 3: Execution & Copy Plan -->
+                    <div class="terminal-glass-panel p-3.5 flex flex-col justify-between space-y-2">
                       <div>
-                        <div class="flex items-center justify-between border-b border-slate-700 pb-2">
-                          <span class="font-extrabold uppercase tracking-wider text-slate-400 text-[10px]">Execution & Margin</span>
-                          <span class="text-purple-400 font-mono font-bold">\${marginMult}x Leverage</span>
+                        <div class="flex items-center justify-between border-b border-[#1e293b] pb-1.5">
+                          <span class="font-black uppercase tracking-wider text-slate-400 text-[10px]">MARGIN & EXECUTION</span>
+                          <span class="text-[#00f2fe] font-black">\${marginMult}X MARGIN</span>
                         </div>
-                        <p class="text-slate-400 text-[11px] mt-2 leading-relaxed">
-                          MTF Required Margin: <strong class="text-white font-mono">₹\${(priceNum / marginMult).toFixed(2)}</strong> / share. Always confirm 15m candle close before executing manual orders.
+                        <p class="text-slate-400 text-[10px] mt-2 leading-relaxed uppercase">
+                          REQUIRED MTF MARGIN: <strong class="text-white font-mono">₹\${(priceNum / marginMult).toFixed(2)}</strong> / SHARE.
                         </p>
                       </div>
 
-                      <div class="flex items-center gap-2 pt-2 border-t border-slate-700/60">
+                      <div class="flex items-center gap-2 pt-2 border-t border-[#1e293b]">
                         <button
                           onclick="copyTradePlan('\${sym}', \${priceNum}, \${Number(rawSL).toFixed(2)}, \${atrVal}, \${rvolVal})"
-                          class="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs transition-all shadow-xs cursor-pointer"
+                          class="flex-1 py-1.5 text-xs font-black bg-[#00f2fe] hover:bg-[#4facfe] text-[#06080d] cyan-glow uppercase transition-all cursor-pointer"
                         >
-                          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path>
-                          </svg>
-                          Copy Plan
+                          COPY TRADE PLAN
                         </button>
                         <a
                           href="https://in.tradingview.com/chart/?symbol=NSE:\${sym}"
                           target="_blank"
                           rel="noreferrer"
-                          class="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white font-bold text-xs transition-all cursor-pointer"
+                          class="px-3 py-1.5 text-xs font-black bg-[#0c121e] hover:bg-[#1e293b] text-slate-200 border border-[#1e293b] uppercase transition-colors"
                         >
-                          Chart
-                          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
-                          </svg>
+                          CHART
                         </a>
                       </div>
                     </div>
@@ -837,19 +832,16 @@ export const MTFScreenerPage = () => (
           const btnIcon = document.getElementById('trigger-scan-icon');
           
           if (btn) {
-            btn.className = 'relative overflow-hidden group flex items-center gap-2 px-4 sm:px-5 py-2 rounded-full text-xs font-black transition-all bg-blue-100 text-blue-500 border border-blue-200 cursor-not-allowed';
+            btn.className = 'flex items-center gap-2 px-4 py-1.5 text-xs font-black text-slate-400 bg-[#0c121e] border border-[#1e293b] cursor-not-allowed uppercase';
           }
-          if (btnText) btnText.innerText = 'Scanning EC2...';
-          if (btnIcon) {
-            btnIcon.outerHTML = '<svg id="trigger-scan-icon" class="w-3.5 h-3.5 animate-spin text-blue-500" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>';
-          }
+          if (btnText) btnText.innerText = 'SCANNING...';
           
           try {
             await fetch('/api/mtf-screener/trigger', { method: 'POST' });
-            showToast('Scan requested on EC2');
+            showToast('SCAN TRIGGERED ON EC2');
           } catch (e) {
             console.error('Trigger request error:', e);
-            showToast('Trigger failed', 'error');
+            showToast('TRIGGER FAILED', 'error');
           }
 
           let polls = 0;
@@ -867,14 +859,10 @@ export const MTFScreenerPage = () => (
           isScanning = false;
           const btn = document.getElementById('trigger-scan-btn');
           const btnText = document.getElementById('trigger-scan-text');
-          const btnIcon = document.getElementById('trigger-scan-icon');
           if (btn) {
-            btn.className = 'relative overflow-hidden group flex items-center gap-2 px-4 sm:px-5 py-2 rounded-full text-xs font-black transition-all bg-gradient-to-r from-blue-600 to-blue-800 text-white shadow-md hover:shadow-blue-500/30 hover:scale-[1.02] active:scale-95 cursor-pointer border border-blue-400/20';
+            btn.className = 'flex items-center gap-2 px-4 py-1.5 text-xs font-black text-[#06080d] bg-[#00f2fe] hover:bg-[#4facfe] cyan-glow transition-all active:translate-y-0.5 cursor-pointer uppercase tracking-wider';
           }
-          if (btnText) btnText.innerText = 'Run Scan';
-          if (btnIcon) {
-            btnIcon.outerHTML = '<svg id="trigger-scan-icon" class="w-3.5 h-3.5 text-blue-100 drop-shadow-xs group-hover:animate-pulse" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>';
-          }
+          if (btnText) btnText.innerText = 'SCAN NOW';
         }
 
         window.triggerManualScan = triggerManualScan;
@@ -906,17 +894,16 @@ export const MTFScreenerPage = () => (
 
           let timeString = '';
           if (mins > 0) {
-            timeString = mins + 'm ' + (secs < 10 ? '0' : '') + secs + 's';
+            timeString = mins + 'M ' + (secs < 10 ? '0' : '') + secs + 'S';
           } else {
-            timeString = secs + 's';
+            timeString = secs + 'S';
           }
 
           const labelElem = document.getElementById('countdown-label');
           if (labelElem) {
-            labelElem.innerText = 'Next scan in: ' + timeString;
+            labelElem.innerText = '[' + timeString + ']';
           }
 
-          // Trigger setup fetch when cron fires
           if (totalSeconds === 0) {
             setTimeout(fetchMTFSetups, 3000);
           }

@@ -26,7 +26,12 @@ app.route('/', dashboardRoutes);
 app.get('/backtest', (c) => c.html(BacktestPage()));
 
 // NEW: Quant MTF Screener UI Page
-app.get('/mtf-screener', (c) => c.html(MTFScreenerPage()));
+app.get('/mtf-screener', (c) => {
+  c.header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  c.header('Pragma', 'no-cache');
+  c.header('Expires', '0');
+  return c.html(MTFScreenerPage());
+});
 
 // Handle favicon.ico to prevent 404 console warnings
 app.get('/favicon.ico', (c) => c.body(null, 204));
