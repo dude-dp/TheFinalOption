@@ -20,7 +20,8 @@ export async function fetchWithRetry(
       clearTimeout(timeoutId);
 
       if (res.status === 429) {
-        const backoff = 1500 * attempt;
+        const jitter = Math.floor(Math.random() * 1000); // 0-1000ms jitter
+        const backoff = (1500 * attempt) + jitter;
         logWarn(`[UPSTOX-FETCH] ⚠️ Rate limited (429). Backing off ${backoff}ms (attempt ${attempt}/${maxAttempts})...`);
         await sleep(backoff);
         continue;
