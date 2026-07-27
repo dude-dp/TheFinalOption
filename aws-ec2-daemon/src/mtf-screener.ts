@@ -205,6 +205,8 @@ export async function run30MinScreener() {
     return;
   }
 
+  const scanStartTime = new Date().toISOString();
+
   const accessToken = await getActiveUpstoxToken();
 
   // --- 1. Load watchlist (HIGH liquidity = all Upstox MTF-approved stocks) ---
@@ -345,9 +347,12 @@ export async function run30MinScreener() {
   await Promise.all(workers);
 
   // --- 4. Final DB flush ---
+  const { error: deleteError } = await supabase.from('mtf_screened_stocks').delete().lt('updated_at', scanStartTime);
+  if (deleteError) {
+    logError(`[MTF-SCREENER] Failed to prune old setups: ${deleteError.message}`);
+  }
+
   if (matchingStocks.length > 0) {
-    // Clear previous scan results, then write fresh
-    await supabase.from('mtf_screened_stocks').delete().neq('instrument_token', '__placeholder__');
     const { error } = await supabase.from('mtf_screened_stocks').upsert(matchingStocks);
     if (error) {
       logError(`[MTF-SCREENER] Final upsert error: ${error.message}`);
@@ -355,7 +360,7 @@ export async function run30MinScreener() {
       logInfo(`[MTF-SCREENER] Scan complete. ${totalSignals} setups found (${matchingStocks.filter(s => s.conviction === 'HIGH').length} HIGH conviction).`);
     }
   } else {
-    logInfo('[MTF-SCREENER] Scan complete. No active setups detected.');
+    logInfo('[MTF-SCREENER] Scan complete. No active setups detected. Cleared previous setups.');
   }
 
   // --- 5. Update scan timestamp ---
