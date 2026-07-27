@@ -36,11 +36,11 @@ dashboard.get('/', (c) => {
       <form onsubmit="event.preventDefault(); submitAuth();" style="display: flex; flex-direction: column; gap: 16px;">
         <div style="display: flex; flex-direction: column; gap: 8px;">
           <label style="font-size: 0.8rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em;">Username</label>
-          <input type="text" id="auth-user" class="log-tab" style="width: 100%; padding: 12px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: white; border-radius: 8px;" placeholder="Enter username" />
+          <input type="text" id="auth-user" autocomplete="username" class="log-tab" style="width: 100%; padding: 12px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: white; border-radius: 8px;" placeholder="Enter username" />
         </div>
         <div style="display: flex; flex-direction: column; gap: 8px;">
           <label style="font-size: 0.8rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em;">Password</label>
-          <input type="password" id="auth-pass" class="log-tab" style="width: 100%; padding: 12px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: white; border-radius: 8px;" placeholder="Enter password" />
+          <input type="password" id="auth-pass" autocomplete="current-password" class="log-tab" style="width: 100%; padding: 12px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: white; border-radius: 8px;" placeholder="Enter password" />
         </div>
         <button type="submit" class="btn btn-buy-ce" style="width: 100%; justify-content: center; margin-top: 8px; padding: 12px;">Login to Terminal</button>
       </form>
