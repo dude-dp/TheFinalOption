@@ -6,6 +6,49 @@
 (function () {
   'use strict';
 
+  // --- AUTHENTICATION INTERCEPTOR ---
+  const originalFetch = window.fetch;
+  window.fetch = async function(...args) {
+      let [resource, config] = args;
+      config = config || {};
+      
+      const authKey = localStorage.getItem('tfo_auth_key');
+      if (authKey) {
+          config.headers = config.headers || {};
+          config.headers['Authorization'] = 'Basic ' + authKey;
+      }
+      
+      const response = await originalFetch(resource, config);
+      
+      if (response.status === 401) {
+          const authModal = document.getElementById('auth-modal');
+          if (authModal) {
+              authModal.classList.add('active');
+          }
+      }
+      
+      return response;
+  };
+
+  window.submitAuth = function() {
+      const user = document.getElementById('auth-user').value;
+      const pass = document.getElementById('auth-pass').value;
+      if (!user || !pass) return window.showToast('Enter username and password', 'error');
+      
+      const key = btoa(user + ":" + pass);
+      localStorage.setItem('tfo_auth_key', key);
+      
+      const authModal = document.getElementById('auth-modal');
+      if (authModal) authModal.classList.remove('active');
+      
+      if (window.showToast) {
+          window.showToast('Authenticating...', 'info');
+      }
+      
+      // Reload page to re-trigger all initial fetches and WebSocket connections
+      setTimeout(() => location.reload(), 500);
+  };
+
   // --- ADVANCED LOGGING SYSTEM ---
   class SystemLogger {
       constructor() {
@@ -102,7 +145,9 @@
   window.openSettings = function(opts = {}) {
       const modal = document.getElementById('settings-modal');
       if (modal) {
-          modal.showModal();
+          if (!modal.open) {
+              modal.showModal();
+          }
           modal.classList.add('visible');
           if (opts.section) {
               const el = document.getElementById('section-' + opts.section);

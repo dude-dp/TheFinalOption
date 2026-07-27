@@ -24,6 +24,29 @@ dashboard.get('/', (c) => {
   <!-- Toast Container -->
   <div id="toast-container" style="position: fixed; top: 20px; right: 20px; z-index: 9999;"></div>
 
+  <!-- Auth Modal -->
+  <div id="auth-modal" class="modal-overlay">
+    <div class="modal-content auth-modal-content">
+      <div style="display: flex; align-items: center; justify-content: center; margin-bottom: 24px;">
+        <div class="brand-icon" style="font-size: 24px; width: 48px; height: 48px;">T</div>
+      </div>
+      <h2 style="text-align: center; margin-bottom: 8px;">Authentication Required</h2>
+      <p style="text-align: center; color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 24px;">Please login to access the terminal.</p>
+      
+      <div style="display: flex; flex-direction: column; gap: 16px;">
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <label style="font-size: 0.8rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em;">Username</label>
+          <input type="text" id="auth-user" class="log-tab" style="width: 100%; padding: 12px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: white; border-radius: 8px;" placeholder="Enter username" />
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <label style="font-size: 0.8rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em;">Password</label>
+          <input type="password" id="auth-pass" class="log-tab" style="width: 100%; padding: 12px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: white; border-radius: 8px;" placeholder="Enter password" onkeypress="if(event.key === 'Enter') submitAuth()" />
+        </div>
+        <button onclick="submitAuth()" class="btn btn-buy-ce" style="width: 100%; justify-content: center; margin-top: 8px; padding: 12px;">Login to Terminal</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Top Navigation -->
   <header class="topbar">
     <div class="topbar-left">

@@ -32,11 +32,29 @@ function requirePollSecret(c: any, next: any) {
   return next();
 }
 
-const dashboardAuth = basicAuth({
-  verifyUser: (username, password, c) => {
-    return username === 'vdineshprabu' && password === 'Healthywealth007#';
-  },
-});
+const dashboardAuth = async (c: any, next: any) => {
+  const authHeader = c.req.header('Authorization');
+  if (!authHeader) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  
+  const match = authHeader.match(/^Basic\s+(.*)$/i);
+  if (!match) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  
+  try {
+    const decoded = atob(match[1]);
+    const [username, password] = decoded.split(':');
+    if (username === 'vdineshprabu' && password === 'Healthywealth007#') {
+      await next();
+    } else {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+  } catch (e) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+};
 
 // Apply it to ALL dashboard UI & control routes:
 api.use('/api/status', dashboardAuth);
