@@ -33,17 +33,17 @@ dashboard.get('/', (c) => {
       <h2 style="text-align: center; margin-bottom: 8px;">Authentication Required</h2>
       <p style="text-align: center; color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 24px;">Please login to access the terminal.</p>
       
-      <div style="display: flex; flex-direction: column; gap: 16px;">
+      <form onsubmit="event.preventDefault(); submitAuth();" style="display: flex; flex-direction: column; gap: 16px;">
         <div style="display: flex; flex-direction: column; gap: 8px;">
           <label style="font-size: 0.8rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em;">Username</label>
           <input type="text" id="auth-user" class="log-tab" style="width: 100%; padding: 12px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: white; border-radius: 8px;" placeholder="Enter username" />
         </div>
         <div style="display: flex; flex-direction: column; gap: 8px;">
           <label style="font-size: 0.8rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em;">Password</label>
-          <input type="password" id="auth-pass" class="log-tab" style="width: 100%; padding: 12px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: white; border-radius: 8px;" placeholder="Enter password" onkeypress="if(event.key === 'Enter') submitAuth()" />
+          <input type="password" id="auth-pass" class="log-tab" style="width: 100%; padding: 12px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); color: white; border-radius: 8px;" placeholder="Enter password" />
         </div>
-        <button onclick="submitAuth()" class="btn btn-buy-ce" style="width: 100%; justify-content: center; margin-top: 8px; padding: 12px;">Login to Terminal</button>
-      </div>
+        <button type="submit" class="btn btn-buy-ce" style="width: 100%; justify-content: center; margin-top: 8px; padding: 12px;">Login to Terminal</button>
+      </form>
     </div>
   </div>
 
