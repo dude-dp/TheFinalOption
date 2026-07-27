@@ -9,7 +9,7 @@ import { logWarn, logError } from '../logger.js';
 export async function fetchWithRetry(
   url: string,
   headers: Record<string, string>,
-  maxAttempts = 3
+  maxAttempts = 5
 ): Promise<any | null> {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const controller = new AbortController();
@@ -21,7 +21,7 @@ export async function fetchWithRetry(
 
       if (res.status === 429) {
         const jitter = Math.floor(Math.random() * 1000); // 0-1000ms jitter
-        const backoff = (1500 * attempt) + jitter;
+        const backoff = (3000 * attempt) + jitter;
         logWarn(`[UPSTOX-FETCH] ⚠️ Rate limited (429). Backing off ${backoff}ms (attempt ${attempt}/${maxAttempts})...`);
         await sleep(backoff);
         continue;

@@ -279,7 +279,7 @@ export async function run30MinScreener() {
         // STEP B: Run 30m multi-signal detection (the "gate")
         const result = detect30mSignals(candles30m);
         if (!result) {
-          await sleep(200); // 6 workers × 200ms = 30 req/s, safer for Upstox limits
+          await sleep(500); // 6 workers × 500ms = 12 req/s, extremely safe for Upstox limits
           continue;
         }
 
@@ -337,8 +337,8 @@ export async function run30MinScreener() {
         logError(`[MTF-SCREENER] [W${workerId}] Error on ${stock.symbol}: ${err.message}`);
       }
 
-      // Rate-limit spacing: 6 workers × 200ms = safer for rate limits
-      await sleep(200);
+      // Rate-limit spacing: 6 workers × 500ms = safer for rate limits
+      await sleep(500);
     }
   };
 
