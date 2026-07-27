@@ -297,7 +297,6 @@ export const MTFScreenerPage = () => (
             <table class="w-full text-left text-xs whitespace-nowrap border-collapse">
               <thead class="bg-platinum border-b border-alabaster uppercase text-[10px] font-extrabold text-gunmetal tracking-wider">
                 <tr>
-                  <th class="px-3 py-3 text-center w-8 border-r border-alabaster"></th>
                   <th class="px-4 py-3 border-r border-alabaster cursor-pointer hover:bg-snow select-none group" onclick="sortScreenerTable('asset')">
                     <div class="flex items-center justify-between">ASSET & RVOL <span class="sort-icon text-paleslate group-hover:text-irongrey transition-colors" data-col="asset"></span></div>
                   </th>
@@ -926,7 +925,7 @@ export const MTFScreenerPage = () => (
           if (!stocks || stocks.length === 0) {
             tbody.innerHTML = \`
               <tr>
-                <td colspan="8" class="px-6 py-16 text-center text-slategrey font-sans">
+                <td colspan="7" class="px-6 py-16 text-center text-slategrey font-sans">
                   <p class="text-carbon font-extrabold text-sm uppercase tracking-widest">[ NO ACTIVE MTF SETUPS MATCHING CRITERIA ]</p>
                   <p class="text-xs text-slategrey mt-1 uppercase font-mono">CONTINUOUS 15M / 3H UPSTOX CANDLE SCANNER RUNNING...</p>
                 </td>
@@ -942,7 +941,7 @@ export const MTFScreenerPage = () => (
             let valA, valB;
             switch(currentSortColumn) {
               case 'asset': valA = a.tradingsymbol; valB = b.tradingsymbol; break;
-              case 'ltp': valA = Number(a.ltp || 0); valB = Number(b.ltp || 0); break;
+              case 'ltp': valA = Number(a.current_price || 0); valB = Number(b.current_price || 0); break;
               case 'vwap': valA = Number(a.distance_from_vwap_pct || 0); valB = Number(b.distance_from_vwap_pct || 0); break;
               case 'macd': valA = Number(a.macd_value || 0); valB = Number(b.macd_value || 0); break;
               case 'rsi': valA = Number(a.rsi_14 || 50); valB = Number(b.rsi_14 || 50); break;
@@ -1022,17 +1021,6 @@ export const MTFScreenerPage = () => (
             return \`
               <!-- SUMMARY ROW -->
               <tr class="table-row-terminal-light transition-all border-b border-alabaster \${isHighConviction ? 'bg-snow' : 'bg-white'}">
-                <!-- Expand Toggle -->
-                <td class="px-3 py-3.5 text-center border-r border-alabaster">
-                  <button 
-                    onclick="toggleRowDetails('\${sym}')" 
-                    id="chevron-\${sym}"
-                    class="w-5 h-5 flex items-center justify-center text-carbon hover:bg-platinum font-mono font-extrabold text-sm border border-alabaster cursor-pointer transition-colors"
-                  >
-                    \${isExpanded ? '−' : '+'}
-                  </button>
-                </td>
-                
                 <!-- Asset & Volume -->
                 <td class="px-4 py-3.5 border-r border-alabaster">
                   <div class="flex items-center gap-2">
@@ -1121,7 +1109,7 @@ export const MTFScreenerPage = () => (
 
               <!-- EXPANDABLE ACCORDION DETAIL ROW -->
               <tr id="detail-row-\${sym}" class="\${isExpanded ? '' : 'hidden'} bg-carbon text-snow border-b border-gunmetal">
-                <td colSpan="8" class="p-4 sm:p-5">
+                <td colSpan="7" class="p-4 sm:p-5">
                   <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs font-mono">
                     
                     <!-- Panel 1: Technical Matrix -->
@@ -1141,7 +1129,7 @@ export const MTFScreenerPage = () => (
                         </div>
                         <div class="flex justify-between text-paleslate">
                           <span class="font-sans text-paleslate2">RVOL Multiplier:</span>
-                          <span class="font-extrabold \${isHighRvol ? 'text-amber' : 'text-snow'}>\${rvolVal}x</span>
+                          <span class="font-extrabold \${isHighRvol ? 'text-amber' : 'text-snow'}">\${rvolVal}x</span>
                         </div>
                         <div class="flex justify-between text-paleslate">
                           <span class="font-sans text-paleslate2">RSI Oscillator:</span>

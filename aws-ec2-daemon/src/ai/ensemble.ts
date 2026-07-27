@@ -69,9 +69,11 @@ export class EnsembleEngine {
     let avgConfidence = 0;
     let riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' = 'HIGH';
 
-    if (actionCounts.BUY_CE >= requiredVotes) {
+    const actualRequiredVotes = Math.min(requiredVotes, targetModels.length);
+
+    if (actionCounts.BUY_CE >= actualRequiredVotes) {
       winningAction = 'BUY_CE';
-    } else if (actionCounts.BUY_PE >= requiredVotes) {
+    } else if (actionCounts.BUY_PE >= actualRequiredVotes) {
       winningAction = 'BUY_PE';
     }
 
