@@ -88,6 +88,8 @@ export interface DailyState {
   /** 10% gain → soft halt: no new trades, existing GTTs stay active */
   dailyHaltCeiling: number;
 
+  dailyTradeCount: number;
+
   // ── P&L State ─────────────────────────────────────────────────────────
   dailyRealizedPnL: number;     // Closed Positions PnL
   activeUnrealizedPnL: number;  // Floating Open Positions PnL
@@ -108,6 +110,7 @@ class PortfolioTracker {
     trailingLockThreshold: 0,
     trailingFloorTarget: 0,
     dailyHaltCeiling: 0,
+    dailyTradeCount: 0,
     dailyRealizedPnL: 0,
     activeUnrealizedPnL: 0,
     isShieldModeActive: false,
@@ -128,10 +131,24 @@ class PortfolioTracker {
   public activePositionQty: number = 0;
   public activePositionEntry: number = 0;
   public activePositionSymbol: string = "";
+  public activePositionLtp: number = 0;
+  
+  // Trailing SL state
+  public highestLtp: number = 0;
+  public trailingSlActivated: boolean = false;
 
   // Paper GTT targets
   public paperTargetPrice: number = 0;
   public paperStopLossPrice: number = 0;
+
+  public incrementTradeCount(): void {
+    this.state.dailyTradeCount += 1;
+    logInfo(`[TRACKER] Trade count incremented to ${this.state.dailyTradeCount}/10.`);
+  }
+
+  public isMaxTradesReached(): boolean {
+    return this.state.dailyTradeCount >= 10;
+  }
 
   public hasActivePosition(): boolean {
     return this.activePositionQty !== 0;
@@ -185,7 +202,12 @@ class PortfolioTracker {
     initialRealizedPnL: number = 0
   ): Promise<void> {
     try {
-      const balance = await fetchBalance();
+      let balance = await fetchBalance();
+      if (this.tradingMode === 'PAPER') {
+        balance = 20000; // Dedicated PAPER_CAPITAL
+        logInfo(`[TRACKER] Paper Trading Mode: Using dedicated PAPER_CAPITAL of ₹${balance}`);
+      }
+      
       if (balance <= 0) {
         throw new Error(`Invalid structural capital balance retrieved from broker: ${balance}`);
       }
@@ -201,6 +223,7 @@ class PortfolioTracker {
       this.state.trailingLockThreshold = balance * 0.05; // 5% gain → activate trailing
       this.state.trailingFloorTarget = balance * 0.03;   // 3% guaranteed floor once trailing active
       this.state.dailyHaltCeiling = balance * 0.10;      // 10% gain → halt new trades
+      this.state.dailyTradeCount = 0;
 
       this.state.dailyRealizedPnL = initialRealizedPnL;
       this.state.activeUnrealizedPnL = 0;
@@ -341,6 +364,8 @@ class PortfolioTracker {
     this.activePositionQty = qty;
     this.activePositionEntry = entryPrice;
     this.activePositionSymbol = symbol;
+    this.highestLtp = entryPrice;
+    this.trailingSlActivated = false;
   }
 
   public clearActivePosition(): void {
@@ -348,9 +373,12 @@ class PortfolioTracker {
     this.activePositionQty = 0;
     this.activePositionEntry = 0;
     this.activePositionSymbol = "";
+    this.activePositionLtp = 0;
     this.state.activeUnrealizedPnL = 0;
     this.paperTargetPrice = 0;
     this.paperStopLossPrice = 0;
+    this.highestLtp = 0;
+    this.trailingSlActivated = false;
   }
 
   public updateUnrealizedPnLFromLtp(ltp: number): void {
@@ -359,6 +387,7 @@ class PortfolioTracker {
       return;
     }
     
+    this.activePositionLtp = ltp;
     const grossPnl = (ltp - this.activePositionEntry) * this.activePositionQty;
     const EXPECTED_FEES = 50; 
     this.state.activeUnrealizedPnL = grossPnl - EXPECTED_FEES;
@@ -371,6 +400,14 @@ class PortfolioTracker {
       return "20% Max Daily Limit Reached";
     }
 
+    if (this.state.dailyRealizedPnL >= this.state.dailyHaltCeiling) {
+      return "10% Daily Target Hit. Trading Halted.";
+    }
+    
+    if (this.state.dailyTradeCount >= 10) {
+      return "Max Trades (10) Reached";
+    }
+
     if (this.state.dailyRealizedPnL >= this.state.secureTarget) {
       const projectedNetDailyPnL = this.state.dailyRealizedPnL + this.state.activeUnrealizedPnL;
       
@@ -380,6 +417,40 @@ class PortfolioTracker {
     }
     
     return null;
+  }
+
+  public checkAndUpdateTrailingStop(ltp: number): void {
+    if (!this.hasActivePosition()) return;
+
+    if (ltp > this.highestLtp) {
+      this.highestLtp = ltp;
+    }
+
+    const pointsGained = ltp - this.activePositionEntry;
+    const lotSize = 65; 
+    const costPerShare = 25.0 / lotSize; // TRADE_COST_PER_LOT = 25.0
+    const TRAIL_ACTIVATION_POINTS = 2.0;
+
+    if (!this.trailingSlActivated && pointsGained >= TRAIL_ACTIVATION_POINTS) {
+      this.trailingSlActivated = true;
+      
+      const newSl = this.activePositionEntry + costPerShare;
+      
+      if (newSl > this.paperStopLossPrice) {
+        this.paperStopLossPrice = newSl;
+        logInfo(`[TRACKER] 🛡️ Trailing SL ACTIVATED! Moved to break-even + costs: ₹${newSl.toFixed(2)}`);
+      }
+    }
+
+    if (this.trailingSlActivated && ltp > this.activePositionEntry + TRAIL_ACTIVATION_POINTS) {
+      const pointsAboveActivation = ltp - (this.activePositionEntry + TRAIL_ACTIVATION_POINTS);
+      const dynamicSl = this.activePositionEntry + costPerShare + (pointsAboveActivation * 0.5);
+      
+      if (dynamicSl > this.paperStopLossPrice && dynamicSl < ltp) {
+        this.paperStopLossPrice = Number(dynamicSl.toFixed(2));
+        logInfo(`[TRACKER] 📈 Trailing SL ratcheted up to: ₹${this.paperStopLossPrice.toFixed(2)} (LTP: ₹${ltp})`);
+      }
+    }
   }
 }
 

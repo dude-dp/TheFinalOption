@@ -342,18 +342,52 @@ export class UpstoxWSClient {
               return;
             }
             tracker.updateUnrealizedPnLFromLtp(ltp);
+            tracker.checkAndUpdateTrailingStop(ltp);
             
-            // Paper GTT targets monitoring
-            if (StateEngine.tradingMode === 'PAPER' && !this.isPaperExitProcessing) {
+            // GTT targets monitoring (Live & Paper)
+            if (!this.isPaperExitProcessing) {
               const target = tracker.paperTargetPrice;
               const sl = tracker.paperStopLossPrice;
               if ((target > 0 && ltp >= target) || (sl > 0 && ltp <= sl)) {
                 this.isPaperExitProcessing = true;
-                const reason = (target > 0 && ltp >= target) ? 'TARGET' : 'STOPLOSS';
-                logInfo(`[PAPER GTT] ${reason} Hit! LTP: ${ltp} (Target: ${target}, SL: ${sl})`);
-                executor.executePaperExit(ltp, reason).finally(() => {
-                  this.isPaperExitProcessing = false;
-                });
+                let reason = (target > 0 && ltp >= target) ? 'TARGET' : 'STOPLOSS';
+                if (reason === 'STOPLOSS') {
+                  reason = tracker.trailingSlActivated ? 'TRAILING_STOP_HIT' : 'INITIAL_STOP_HIT';
+                }
+                logInfo(`[GTT] ${reason} Hit! LTP: ${ltp} (Target: ${target}, SL: ${sl})`);
+                
+                if (StateEngine.tradingMode === 'PAPER') {
+                  executor.executePaperExit(ltp, reason).finally(() => {
+                    this.isPaperExitProcessing = false;
+                  });
+                } else {
+                  // For LIVE mode, execute a market exit to close out all active positions
+                  executeEmergencyMarketExit().then(async () => {
+                    tracker.clearActivePosition();
+                    const supabase = createClient(
+                      process.env.SUPABASE_URL || '', 
+                      process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || ''
+                    );
+                    
+                    // Log the live exit signal to Supabase for UI tracking
+                    await supabase.from('order_ledger').insert({
+                      correlation_id: `LIVE-EXIT-${Date.now()}`,
+                      trading_symbol: tracker.activePositionSymbol || tracker.activePositionToken,
+                      transaction_type: 'SELL',
+                      option_type: (tracker.activePositionSymbol || '').endsWith('CE') ? 'CE' : 'PE',
+                      strike_price: 0,
+                      quantity: tracker.activePositionQty,
+                      order_status: 'FILLED',
+                      upstox_order_id: `LIVE-${Date.now()}`,
+                      execution_price: ltp,
+                      trading_mode: 'LIVE',
+                      pnl: 0,
+                      notes: reason
+                    });
+                  }).finally(() => {
+                    this.isPaperExitProcessing = false;
+                  });
+                }
               }
             }
             
@@ -362,22 +396,40 @@ export class UpstoxWSClient {
                console.log(`\n🛡️ [CIRCUIT BREAKER] TRIGGERED: ${cbReason}`);
                tracker.haltTrading(cbReason);
                
-               if (StateEngine.tradingMode === 'PAPER') {
-                 if (!this.isPaperExitProcessing) {
-                   this.isPaperExitProcessing = true;
+               if (!this.isPaperExitProcessing) {
+                 this.isPaperExitProcessing = true;
+                 if (StateEngine.tradingMode === 'PAPER') {
                    executor.executePaperExit(ltp, 'CIRCUIT_BREAKER').finally(() => {
                      this.isPaperExitProcessing = false;
                    });
+                 } else {
+                   executeEmergencyMarketExit().then(async () => {
+                     tracker.clearActivePosition();
+                     const supabase = createClient(
+                       process.env.SUPABASE_URL || '', 
+                       process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || ''
+                     );
+                     await supabase.from('system_state').update({ bot_status: 'EMERGENCY_HALT' }).eq('id', 1);
+                     
+                     // Log the live exit signal to Supabase for UI tracking
+                     await supabase.from('order_ledger').insert({
+                       correlation_id: `LIVE-CB-${Date.now()}`,
+                       trading_symbol: tracker.activePositionSymbol || tracker.activePositionToken,
+                       transaction_type: 'SELL',
+                       option_type: (tracker.activePositionSymbol || '').endsWith('CE') ? 'CE' : 'PE',
+                       strike_price: 0,
+                       quantity: tracker.activePositionQty,
+                       order_status: 'FILLED',
+                       upstox_order_id: `LIVE-${Date.now()}`,
+                       execution_price: ltp,
+                       trading_mode: 'LIVE',
+                       pnl: 0,
+                       notes: 'CIRCUIT_BREAKER'
+                     });
+                   }).finally(() => {
+                     this.isPaperExitProcessing = false;
+                   });
                  }
-               } else {
-                 executeEmergencyMarketExit().then(async () => {
-                   tracker.clearActivePosition();
-                   const supabase = createClient(
-                     process.env.SUPABASE_URL || '', 
-                     process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || ''
-                   );
-                   await supabase.from('system_state').update({ bot_status: 'EMERGENCY_HALT' }).eq('id', 1);
-                 });
                }
             }
           }

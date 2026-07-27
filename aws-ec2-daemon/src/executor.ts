@@ -433,8 +433,15 @@ export async function executeEmergencyMarketExit() {
       return;
     }
     logInfo(`[EXECUTOR] [PAPER] Squaring off simulated position: ${tracker.activePositionSymbol || tracker.activePositionToken}`);
-    const optionLtp = tracker.latestTick?.ltp || tracker.activePositionEntry || 100;
-    await executor.executePaperExit(optionLtp, 'EMERGENCY_EXIT');
+    
+    // BUG FIX: Pull the actual option premium instead of the underlying spot index price
+    const currentOptionPrice = tracker.activePositionLtp || tracker.activePositionEntry;
+    
+    if (!tracker.activePositionLtp) {
+      logError(`[EXECUTOR] Could not fetch live premium for ${tracker.activePositionSymbol}. Defaulting to Entry Price (${tracker.activePositionEntry}) for safety log.`);
+    }
+
+    await executor.executePaperExit(currentOptionPrice, 'EMERGENCY_EXIT');
     return;
   }
 
@@ -514,6 +521,8 @@ export class ExecutionEngine {
   private readonly ABSOLUTE_DELTA_FLOOR = 120;
   private readonly RELATIVE_DELTA_DOMINANCE = 0.35;
   private isExecutingTapeExit = false;
+  private lastExitTimestamp = 0;
+  private readonly COOLDOWN_MS = 120 * 1000; // 2 minutes
 
   constructor() {
     logInfo('[EXECUTOR] Execution Matrix initialized and standing by.');
@@ -525,6 +534,24 @@ export class ExecutionEngine {
     }
     const state = tracker.getState();
     if (state.isHalted) return false;
+
+    if (tracker.isMaxTradesReached()) {
+      logWarn('[EXECUTOR] Circuit Breaker Active: Max Trades (10) Reached for the day.');
+      return false;
+    }
+
+    const timeSinceLastExit = Date.now() - this.lastExitTimestamp;
+    if (timeSinceLastExit < this.COOLDOWN_MS) {
+      const remainingStr = ((this.COOLDOWN_MS - timeSinceLastExit) / 1000).toFixed(0);
+      logWarn(`[EXECUTOR] Cooldown Active: Waiting ${remainingStr}s before next entry allowed.`);
+      return false;
+    }
+
+    if (state.dailyRealizedPnL >= state.dailyHaltCeiling) {
+      logWarn(`[CIRCUIT BREAKER] 10% DAILY HALT CEILING HIT! Shutting down to lock in gains.`);
+      await this.triggerEmergencyShutdown('10% Daily Target Hit');
+      return false;
+    }
 
     if (state.dailyRealizedPnL >= state.hardCeiling) {
       logWarn(`[CIRCUIT BREAKER] 20% HARD CEILING HIT! Shutting down to lock in gains.`);
@@ -654,6 +681,13 @@ export class ExecutionEngine {
         logTrade(`[PAPER FILLED] ${direction} @ ₹${fillPrice} | ${orderPayload.lots} lots`);
 
         tracker.setActivePosition(instrumentToken, orderPayload.quantity, fillPrice, orderPayload.tradingSymbol);
+        
+        // Initial SL Logic: Must be at least 3 points away to avoid instant spread whipsaws
+        const minStopLossPoints = 3.0;
+        const initialStopLoss = Number((fillPrice - minStopLossPoints).toFixed(2));
+        tracker.paperStopLossPrice = initialStopLoss;
+        tracker.incrementTradeCount();
+        
         if (activeWsClient) activeWsClient.subscribe(instrumentToken);
 
         // Insert into Supabase
@@ -683,6 +717,7 @@ export class ExecutionEngine {
 
       if (res.success || res.filledLots > 0) {
         tracker.setActivePosition(instrumentToken, res.filledLots * lotSize, limitPrice, orderPayload.tradingSymbol);
+        tracker.incrementTradeCount();
         if (activeWsClient) activeWsClient.subscribe(instrumentToken);
       }
     } catch (err: any) {
@@ -737,6 +772,13 @@ export class ExecutionEngine {
         logTrade(`[PAPER FILLED] MANUAL ${direction} @ ₹${fillPrice} | ${lotsToBuy} lots`);
 
         tracker.setActivePosition(instrumentToken, quantity, fillPrice, orderPayload.tradingSymbol);
+        
+        // Initial SL Logic: Must be at least 3 points away to avoid instant spread whipsaws
+        const minStopLossPoints = 3.0;
+        const initialStopLoss = Number((fillPrice - minStopLossPoints).toFixed(2));
+        tracker.paperStopLossPrice = initialStopLoss;
+        tracker.incrementTradeCount();
+        
         if (activeWsClient) activeWsClient.subscribe(instrumentToken);
 
         // Insert into Supabase
@@ -766,6 +808,7 @@ export class ExecutionEngine {
 
       if (res.success || res.filledLots > 0) {
         tracker.setActivePosition(instrumentToken, res.filledLots * lotSize, spotPrice, orderPayload.tradingSymbol);
+        tracker.incrementTradeCount();
         if (activeWsClient) activeWsClient.subscribe(instrumentToken);
       }
     } catch (err: any) {
@@ -849,6 +892,7 @@ export class ExecutionEngine {
 
         // Register active position in tracker
         tracker.setActivePosition(instrumentToken, quantity, fillPrice, tradingSymbol);
+        tracker.incrementTradeCount();
         if (activeWsClient) activeWsClient.subscribe(instrumentToken);
 
         const state = tracker.getState();
@@ -993,6 +1037,7 @@ export class ExecutionEngine {
 
       // Step 8: Register active position in tracker
       tracker.setActivePosition(instrumentToken, quantity, fillPrice);
+      tracker.incrementTradeCount();
       if (activeWsClient) activeWsClient.subscribe(instrumentToken);
 
       // Step 9: Log fill event asynchronously
@@ -1184,6 +1229,7 @@ export class ExecutionEngine {
 
       // Clear position
       tracker.clearActivePosition();
+      this.lastExitTimestamp = Date.now();
       logInfo(`[PAPER EXIT] Simulated position cleared.`);
 
       // Update paper_margin dynamically

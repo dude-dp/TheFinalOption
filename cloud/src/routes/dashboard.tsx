@@ -26,13 +26,18 @@ dashboard.get('/', (c) => {
 
   <!-- Top Navigation -->
   <header class="topbar">
-    <div class="brand-container">
+    <div class="topbar-left">
       <div class="brand">
         <div class="brand-icon">T</div>
-        TheFinalOption<span style="color: var(--text-secondary); font-weight: 400;">/</span>Terminal
+        <span class="brand-text">TheFinalOption<span class="dim">/</span>Terminal</span>
       </div>
-      
-      <div class="brand-metrics">
+      <a href="/mtf-screener" class="btn btn-outline mtf-btn" title="Quant MTF Screener">
+        ⚡ <span class="hide-mobile">MTF Radar</span>
+      </a>
+    </div>
+
+    <div class="topbar-right">
+      <div class="brand-metrics hide-mobile">
         <div style="display: flex; flex-direction: column; justify-content: center; min-width: 120px;">
           <div style="display: flex; justify-content: space-between; font-size: 10px; margin-bottom: 3px; font-family: var(--font-mono);">
             <span style="letter-spacing: 0.05em; color: var(--text-secondary);">MARG</span>
@@ -61,30 +66,17 @@ dashboard.get('/', (c) => {
           <span id="session-timer" style="font-weight: 500; color: var(--text-primary); font-family: var(--font-mono); font-size: 0.8rem;">--:--:--</span>
         </div>
       </div>
-    </div>
 
-    <div class="controls" style="display: flex; align-items: center; gap: 8px;">
-      <a href="/mtf-screener" class="btn btn-outline" style="color: #3b82f6; border-color: rgba(59, 130, 246, 0.4); font-weight: 600;" title="Quant MTF Screener">
-        ⚡ MTF Radar
-      </a>
-      <a href="/api/auth/login" class="btn btn-outline" title="Refresh Token">
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4" /><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4" /></svg>
-      </a>
-      <button id="toggle-bot-btn" class="btn btn-outline">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M6 4v16a1 1 0 0 0 1.524 .852l13 -8a1 1 0 0 0 0 -1.704l-13 -8a1 1 0 0 0 -1.524 .852z"/></svg>
-        <span style="margin-left: 4px;">Start Bot</span>
+      <!-- Condensed mobile status pill (visible on mobile) -->
+      <button class="status-pill hide-desktop" onclick="openSettings({section: 'quick'})">
+        <span id="mobile-status-dot" class="status-dot"></span>
+        <span id="mobile-status-text">STOPPED</span>
       </button>
-      <button id="emergency-btn" class="btn btn-danger">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4" /><path d="M10.363 3.591l-8.106 13.534a1.914 1.914 0 0 0 1.636 2.871h16.214a1.914 1.914 0 0 0 1.636 -2.87l-8.106 -13.536a1.914 1.914 0 0 0 -3.274 0z" /><path d="M12 16h.01" /></svg>
-        <span style="margin-left: 4px;">EMERGENCY SQUARE-OFF</span>
-      </button>
-      <button id="mode-toggle" class="btn btn-outline" style="display: flex; align-items: center; gap: 6px; padding: 4px 10px;" title="Toggle Trading Mode">
-        <span id="mode-icon">🧪</span>
-        <span id="mode-text" class="mono" style="font-size: 11px; font-weight: 600; text-transform: uppercase;">Mode: PAPER</span>
-      </button>
-      <button id="voice-toggle" class="btn btn-outline" style="display: flex; align-items: center; gap: 6px; padding: 4px 10px;" title="Toggle Voice Telemetry">
-        <span id="voice-icon">🔇</span>
-        <span id="voice-text" class="mono" style="font-size: 11px; font-weight: 600; text-transform: uppercase;">Voice: Off</span>
+      
+      <button id="hamburger-btn" class="hamburger" aria-label="Open Settings" onclick="openSettings()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 6h16M4 12h16M4 18h16"></path>
+        </svg>
       </button>
     </div>
   </header>
@@ -324,37 +316,86 @@ dashboard.get('/', (c) => {
            <p style="color: var(--text-secondary); text-align: center; padding: 20px;">Loading leaderboard...</p>
         </div>
       </section>
-
-      <!-- Persona Settings -->
-      <section class="bento-item persona-section">
-        <div class="bento-header">
-          <h2 class="bento-title">⚙️ Bot Persona & Risk Matrix</h2>
+    </main>
+  </div>
+  
+  <!-- Settings Modal Overlay -->
+  <dialog id="settings-modal" class="glass-modal">
+    <div class="modal-header-glass">
+      <h3 style="margin: 0; font-size: 1.1rem; font-weight: 600;">System Configurations</h3>
+      <button id="close-settings-btn" class="close-btn" aria-label="Close Settings" onclick="closeSettings()">✕</button>
+    </div>
+    
+    <div class="modal-body-glass">
+      
+      <!-- Quick Actions -->
+      <section class="glass-section" id="section-quick">
+        <div class="glass-section-title">Quick Actions</div>
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+          <a href="/api/auth/login" class="btn btn-outline" style="width: 100%; justify-content: center;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4" /><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4" /></svg>
+            Refresh Token
+          </a>
+          <button id="toggle-bot-btn" class="btn btn-outline" style="width: 100%; justify-content: center; position: relative;">
+            <span id="toggle-bot-spinner" style="display: none; position: absolute; left: 16px;">
+               <svg class="pulse-dot" style="animation-duration: 1s;" width="8" height="8"></svg>
+            </span>
+            <svg id="toggle-bot-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="margin-right: 6px;"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M6 4v16a1 1 0 0 0 1.524 .852l13 -8a1 1 0 0 0 0 -1.704l-13 -8a1 1 0 0 0 -1.524 .852z"/></svg>
+            <span id="toggle-bot-text">Start Bot</span>
+          </button>
+          
+          <button id="emergency-btn" class="btn btn-destructive" style="width: 100%; justify-content: center;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px;"><path d="M12 9v4" /><path d="M10.363 3.591l-8.106 13.534a1.914 1.914 0 0 0 1.636 2.871h16.214a1.914 1.914 0 0 0 1.636 -2.87l-8.106 -13.536a1.914 1.914 0 0 0 -3.274 0z" /><path d="M12 16h.01" /></svg>
+            <span id="emergency-btn-text">EMERGENCY SQUARE-OFF</span>
+          </button>
         </div>
-        <div id="persona-settings" style="display: flex; flex-direction: column; gap: 8px;">
-           <!-- Injected via dashboard.js -->
-        </div>
+      </section>
 
-        <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.1);">
-          <div style="display: flex; flex-direction: column; gap: 8px;">
-            <label style="font-size: 0.85rem; color: var(--text-primary); font-weight: 600;">Simulated Paper Margin (₹)</label>
-            <div style="display: flex; gap: 8px;">
-              <input 
-                type="number" 
-                id="setting-paper-margin"
-                class="modal-input" 
-                style="flex: 1;"
-                placeholder="e.g. 100000"
-              />
-              <button id="save-paper-margin-btn" class="btn btn-outline" style="padding: 0 16px;">Save</button>
+      <!-- Mode & Voice -->
+      <section class="glass-section" id="section-mode">
+        <div class="glass-section-title">Telemetry & Mode</div>
+        <div style="display: flex; gap: 12px;">
+          <button id="mode-toggle" class="btn btn-outline" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;" title="Toggle Trading Mode">
+            <span id="mode-icon">🧪</span>
+            <span id="mode-text" class="mono" style="font-size: 11px; font-weight: 600; text-transform: uppercase;">PAPER</span>
+          </button>
+          <button id="voice-toggle" class="btn btn-outline" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;" title="Toggle Voice Telemetry">
+            <span id="voice-icon">🔇</span>
+            <span id="voice-text" class="mono" style="font-size: 11px; font-weight: 600; text-transform: uppercase;">VOICE: OFF</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- Persona & Risk -->
+      <section class="glass-section" id="section-risk">
+        <div class="glass-section-title">Bot Persona & Risk Matrix</div>
+        <div class="glass-card">
+          <div id="persona-settings" style="display: flex; flex-direction: column; gap: 8px;">
+             <!-- Injected via dashboard.js -->
+          </div>
+  
+          <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.1);">
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+              <label style="font-size: 0.85rem; color: var(--text-primary); font-weight: 600;">Simulated Paper Margin (₹)</label>
+              <div style="display: flex; gap: 8px;">
+                <input 
+                  type="number" 
+                  id="setting-paper-margin"
+                  class="modal-input" 
+                  style="flex: 1; padding: 6px 10px; background: rgba(0,0,0,0.2); border: 1px solid var(--border-color); color: white; border-radius: 4px;"
+                  placeholder="e.g. 100000"
+                />
+                <button id="save-paper-margin-btn" class="btn btn-outline" style="padding: 0 16px;">Save</button>
+              </div>
+              <span style="font-size: 0.75rem; color: var(--text-muted);">Only applies when Bot is in Paper Mode. Overrides Upstox ledger.</span>
             </div>
-            <span style="font-size: 0.75rem; color: var(--text-muted);">Only applies when Bot is in Paper Mode. Overrides Upstox ledger.</span>
           </div>
         </div>
       </section>
 
-    </main>
-  </div>
-  
+    </div>
+  </dialog>
+
   <!-- Journal Modal Overlay -->
   <div id="journal-modal" class="modal-overlay">
     <div class="modal-content">

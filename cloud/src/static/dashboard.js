@@ -99,6 +99,26 @@
       terminal.log(message, type, 'cloud');
   };
 
+  window.openSettings = function(opts = {}) {
+      const modal = document.getElementById('settings-modal');
+      if (modal) {
+          modal.showModal();
+          modal.classList.add('visible');
+          if (opts.section) {
+              const el = document.getElementById('section-' + opts.section);
+              if (el) el.scrollIntoView({ behavior: 'smooth' });
+          }
+      }
+  };
+
+  window.closeSettings = function() {
+      const modal = document.getElementById('settings-modal');
+      if (modal) {
+          modal.classList.remove('visible');
+          setTimeout(() => modal.close(), 300);
+      }
+  };
+
   window.updateBotIntelligence = function(payload) {
       if (!payload) return;
       
@@ -1054,15 +1074,17 @@
     // Toggle button (Icon Morphing)
     const toggleBtn = document.getElementById('toggle-bot-btn');
     if (toggleBtn) {
+      const toggleText = document.getElementById('toggle-bot-text');
+      const toggleIcon = document.getElementById('toggle-bot-icon');
       if (data.status === 'RUNNING') {
-        toggleBtn.setAttribute('data-tooltip', 'Stop Autonomous Bot');
         toggleBtn.style.color = 'var(--accent-sell)';
-        toggleBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M17 4h-10a3 3 0 0 0 -3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3 -3v-10a3 3 0 0 0 -3 -3z" /></svg>`;
+        if (toggleText) toggleText.innerText = 'Stop Bot';
+        if (toggleIcon) toggleIcon.innerHTML = `<path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M17 4h-10a3 3 0 0 0 -3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3 -3v-10a3 3 0 0 0 -3 -3z" />`;
         toggleBtn.classList.add('running');
       } else {
-        toggleBtn.setAttribute('data-tooltip', 'Start Autonomous Bot');
-        toggleBtn.style.color = 'var(--accent-blue)';
-        toggleBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M6 4v16a1 1 0 0 0 1.524 .852l13 -8a1 1 0 0 0 0 -1.704l-13 -8a1 1 0 0 0 -1.524 .852z" /></svg>`;
+        toggleBtn.style.color = '';
+        if (toggleText) toggleText.innerText = 'Start Bot';
+        if (toggleIcon) toggleIcon.innerHTML = `<path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M6 4v16a1 1 0 0 0 1.524 .852l13 -8a1 1 0 0 0 0 -1.704l-13 -8a1 1 0 0 0 -1.524 .852z" />`;
         toggleBtn.classList.remove('running');
       }
     }
@@ -1586,22 +1608,29 @@
 
         if (!confirm(isRunning ? 'Stop Autonomous Trading?' : 'Start Autonomous Trading?')) return;
 
+        const spinner = document.getElementById('toggle-bot-spinner');
+        if (spinner) spinner.style.display = 'block';
 
         await fetch('/api/control', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: isRunning ? 'STOP' : 'START' }),
         });
+        
+        if (spinner) spinner.style.display = 'none';
 
         // Optimistic UI update for the icon
+        const toggleText = document.getElementById('toggle-bot-text');
+        const toggleIcon = document.getElementById('toggle-bot-icon');
+        
         if (!isRunning) {
-          btnStart.setAttribute('data-tooltip', 'Stop Autonomous Bot');
           btnStart.style.color = 'var(--accent-sell)';
-          btnStart.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M17 4h-10a3 3 0 0 0 -3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3 -3v-10a3 3 0 0 0 -3 -3z" /></svg>`;
+          if (toggleText) toggleText.innerText = 'Stop Bot';
+          if (toggleIcon) toggleIcon.innerHTML = `<path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M17 4h-10a3 3 0 0 0 -3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3 -3v-10a3 3 0 0 0 -3 -3z" />`;
         } else {
-          btnStart.setAttribute('data-tooltip', 'Start Autonomous Bot');
-          btnStart.style.color = 'var(--accent-blue)';
-          btnStart.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M6 4v16a1 1 0 0 0 1.524 .852l13 -8a1 1 0 0 0 0 -1.704l-13 -8a1 1 0 0 0 -1.524 .852z" /></svg>`;
+          btnStart.style.color = '';
+          if (toggleText) toggleText.innerText = 'Start Bot';
+          if (toggleIcon) toggleIcon.innerHTML = `<path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M6 4v16a1 1 0 0 0 1.524 .852l13 -8a1 1 0 0 0 0 -1.704l-13 -8a1 1 0 0 0 -1.524 .852z" />`;
         }
         fetchStatus();
       });
@@ -1610,6 +1639,7 @@
     // 2. Emergency Button (Double Click + Pulsing Animation)
     const btnEmergency = document.getElementById('emergency-btn');
     if (btnEmergency) {
+      const emergencyText = document.getElementById('emergency-btn-text') || btnEmergency;
       let clickCount = 0;
       let clickTimer = null;
       btnEmergency.addEventListener('click', () => {
@@ -1617,19 +1647,19 @@
 
         if (clickCount === 1) {
           // First Click: Trigger warning state
-          btnEmergency.setAttribute('data-tooltip', 'CLICK AGAIN TO EXECUTE!');
+          emergencyText.innerText = 'CLICK AGAIN TO EXECUTE!';
           btnEmergency.classList.add('force-tooltip', 'btn-pulsing');
 
           clickTimer = setTimeout(() => {
             clickCount = 0;
-            btnEmergency.setAttribute('data-tooltip', 'EMERGENCY SQUARE-OFF');
+            emergencyText.innerText = 'EMERGENCY SQUARE-OFF';
             btnEmergency.classList.remove('force-tooltip', 'btn-pulsing');
           }, 3000);
         } else if (clickCount >= 2) {
           // Second Click: Execute
           clearTimeout(clickTimer);
           clickCount = 0;
-          btnEmergency.setAttribute('data-tooltip', 'EXECUTING...');
+          emergencyText.innerText = 'EXECUTING...';
           btnEmergency.classList.remove('btn-pulsing');
 
           fetch('/api/emergency-squareoff', { method: 'POST' })
@@ -1637,7 +1667,7 @@
               vibrate([200, 100, 200]);
               showToast('Emergency Square-Off triggered!');
               setTimeout(() => {
-                btnEmergency.setAttribute('data-tooltip', 'EMERGENCY SQUARE-OFF');
+                emergencyText.innerText = 'EMERGENCY SQUARE-OFF';
                 btnEmergency.classList.remove('force-tooltip');
                 fetchStatus();
               }, 1500);
