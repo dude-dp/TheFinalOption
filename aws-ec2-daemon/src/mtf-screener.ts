@@ -66,9 +66,9 @@ async function getActiveUpstoxToken(): Promise<string | undefined> {
 }
 
 // ============================================================
-// MULTI-SIGNAL DETECTOR (15m)
+// MULTI-SIGNAL DETECTOR (30m)
 // ============================================================
-function detect15mSignals(candles: Candle[]): {
+function detect30mSignals(candles: Candle[]): {
   signals: string[];
   macdValue: number;
   rsi: number;
@@ -85,9 +85,9 @@ function detect15mSignals(candles: Candle[]): {
   const { macdLine, histogram } = calculateMACD(closes);
   if (macdLine.length < 3) return null;
 
-  const currentMacd15m = macdLine[macdLine.length - 1];
-  const prevMacd15m    = macdLine[macdLine.length - 2];
-  const prev2Macd15m   = macdLine[macdLine.length - 3];
+  const currentMacd30m = macdLine[macdLine.length - 1];
+  const prevMacd30m    = macdLine[macdLine.length - 2];
+  const prev2Macd30m   = macdLine[macdLine.length - 3];
   const currentHist    = histogram[histogram.length - 1];
 
   const rsiSeries  = calculateRSI(closes, 14);
@@ -105,14 +105,14 @@ function detect15mSignals(candles: Candle[]): {
   const prevCandle = candles[candles.length - 2];
 
   // 1. Classic AutoBot Zero-Line Cross
-  const isZeroLineCross15m = prevMacd15m <= 0 && currentMacd15m > 0;
+  const isZeroLineCross30m = prevMacd30m <= 0 && currentMacd30m > 0;
 
   // 2. Anticipatory "Approaching Zero" Logic
-  const isApproachingZero = currentMacd15m < 0 && 
-                            currentMacd15m > prevMacd15m && 
-                            prevMacd15m > prev2Macd15m &&
+  const isApproachingZero = currentMacd30m < 0 && 
+                            currentMacd30m > prevMacd30m && 
+                            prevMacd30m > prev2Macd30m &&
                             currentHist > 0 &&
-                            (currentMacd15m - prevMacd15m) > 0.5;
+                            (currentMacd30m - prevMacd30m) > 0.5;
 
   // 3. Candlestick Pattern Recognition
   const currOpen = currCandle.open ?? currCandle.close;
@@ -133,13 +133,13 @@ function detect15mSignals(candles: Candle[]): {
   const hasBullishPriceAction = isBullishEngulfing || isHammer;
 
   // --- THE GATEKEEPER ---
-  if (!(isZeroLineCross15m || isApproachingZero || (hasBullishPriceAction && currentMacd15m > -0.5))) {
+  if (!(isZeroLineCross30m || isApproachingZero || (hasBullishPriceAction && currentMacd30m > -0.5))) {
     return null;
   }
 
   const signals: string[] = [];
   
-  if (isZeroLineCross15m) signals.push('ZERO_LINE_CROSS');
+  if (isZeroLineCross30m) signals.push('ZERO_LINE_CROSS');
   else if (isApproachingZero) signals.push('APPROACHING_ZERO');
   else if (isBullishEngulfing) signals.push('BULLISH_ENGULFING');
   else if (isHammer) signals.push('HAMMER_REVERSAL');
@@ -160,7 +160,7 @@ function detect15mSignals(candles: Candle[]): {
 
   return {
     signals,
-    macdValue: currentMacd15m,
+    macdValue: currentMacd30m,
     rsi: currentRsi,
     adx: currentAdx,
     atr: currentAtr,
@@ -172,7 +172,7 @@ function detect15mSignals(candles: Candle[]): {
 }
 
 // ============================================================
-// 3H CONFIRMATION CHECK (called only after 15m passes gate)
+// 3H CONFIRMATION CHECK (called only after 30m passes gate)
 // ============================================================
 async function check3HConviction(token: string, accessToken?: string): Promise<boolean> {
   try {
@@ -197,7 +197,7 @@ async function check3HConviction(token: string, accessToken?: string): Promise<b
 // ============================================================
 // CORE 6-WORKER CONCURRENT SCREENER
 // ============================================================
-export async function run15MinScreener() {
+export async function run30MinScreener() {
   logInfo('[MTF-SCREENER] Initiating Dual-Timeframe 6-Worker MTF Scan...');
 
   if (!supabase) {
@@ -215,9 +215,10 @@ export async function run15MinScreener() {
       .from('mtf_instrument_master')
       .select('instrument_token, tradingsymbol, sector, mtf_bracket')
       .eq('liquidity_tier', 'HIGH')
-      .eq('is_active', true);
+      .eq('is_active', true)
+      .limit(5000);
 
-    if (data && data.length > 0) {
+    if (data && data.length >= 1000) {
       watchlist = data.map(item => ({
         token:  item.instrument_token,
         symbol: item.tradingsymbol,
@@ -230,7 +231,8 @@ export async function run15MinScreener() {
       const retry = await supabase
         .from('mtf_instrument_master')
         .select('instrument_token, tradingsymbol, sector, mtf_bracket')
-        .eq('liquidity_tier', 'HIGH').eq('is_active', true);
+        .eq('liquidity_tier', 'HIGH').eq('is_active', true)
+        .limit(5000);
       if (retry.data && retry.data.length > 0) {
         watchlist = retry.data.map(item => ({
           token:  item.instrument_token,
@@ -262,8 +264,8 @@ export async function run15MinScreener() {
       const stock = watchlist[currentIndex++]; // atomic grab
 
       try {
-        // STEP A: Fetch 15-minute candles (5 days of data)
-        const candles15m = await fetchCandles(stock.token, '30minute', 5, accessToken);
+        // STEP A: Fetch 30-minute candles (5 days of data)
+        const candles30m = await fetchCandles(stock.token, '30minute', 5, accessToken);
         totalScanned++;
 
         // Progress telemetry every 20 stocks from worker 0
@@ -271,14 +273,14 @@ export async function run15MinScreener() {
           logInfo(`[MTF-SCREENER] [W0] Progress: ${totalScanned}/${watchlist.length}`);
         }
 
-        // STEP B: Run 15m multi-signal detection (the "gate")
-        const result = detect15mSignals(candles15m);
+        // STEP B: Run 30m multi-signal detection (the "gate")
+        const result = detect30mSignals(candles30m);
         if (!result) {
           await sleep(60); // 6 workers × 60ms = ~100 req/s, under Upstox 150 req/s limit
           continue;
         }
 
-        // STEP C: 3H Conviction check — "lazy evaluation" (only fired if 15m passes)
+        // STEP C: 3H Conviction check — "lazy evaluation" (only fired if 30m passes)
         const is3HAligned = await check3HConviction(stock.token, accessToken);
         const conviction  = is3HAligned ? 'HIGH' : 'NORMAL';
 
@@ -376,7 +378,7 @@ export function startMTFTriggerListener() {
       if (data?.mtf_scan_requested) {
         logInfo('[MTF-SCREENER] On-Demand scan requested from UI. Executing...');
         await supabase.from('system_controls').upsert({ id: 1, mtf_scan_requested: false });
-        await run15MinScreener();
+        await run30MinScreener();
       }
     } catch (err: any) {
       logError(`[MTF-SCREENER] Trigger listener error: ${err.message}`);

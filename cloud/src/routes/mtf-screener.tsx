@@ -307,7 +307,7 @@ export const MTFScreenerPage = () => (
                     <div class="flex items-center justify-between">VWAP DEV % <span class="sort-icon text-paleslate group-hover:text-irongrey transition-colors" data-col="vwap"></span></div>
                   </th>
                   <th class="px-4 py-3 border-r border-alabaster cursor-pointer hover:bg-snow select-none group" onclick="sortScreenerTable('macd')">
-                    <div class="flex items-center justify-between">MACD SIGNAL (15M) <span class="sort-icon text-paleslate group-hover:text-irongrey transition-colors" data-col="macd"></span></div>
+                    <div class="flex items-center justify-between">MACD SIGNAL (30M) <span class="sort-icon text-paleslate group-hover:text-irongrey transition-colors" data-col="macd"></span></div>
                   </th>
                   <th class="px-4 py-3 border-r border-alabaster cursor-pointer hover:bg-snow select-none group" onclick="sortScreenerTable('rsi')">
                     <div class="flex items-center justify-between">RSI / ADX <span class="sort-icon text-paleslate group-hover:text-irongrey transition-colors" data-col="rsi"></span></div>
@@ -927,7 +927,7 @@ export const MTFScreenerPage = () => (
               <tr>
                 <td colspan="7" class="px-6 py-16 text-center text-slategrey font-sans">
                   <p class="text-carbon font-extrabold text-sm uppercase tracking-widest">[ NO ACTIVE MTF SETUPS MATCHING CRITERIA ]</p>
-                  <p class="text-xs text-slategrey mt-1 uppercase font-mono">CONTINUOUS 15M / 3H UPSTOX CANDLE SCANNER RUNNING...</p>
+                  <p class="text-xs text-slategrey mt-1 uppercase font-mono">CONTINUOUS 30M / 3H UPSTOX CANDLE SCANNER RUNNING...</p>
                 </td>
               </tr>\`;
             return;
@@ -1009,7 +1009,7 @@ export const MTFScreenerPage = () => (
                   HIGH
                 </span>\`
               : \`<span class="px-1.5 py-0.5 text-[9px] font-sans font-bold tracking-widest bg-platinum text-slategrey border border-alabaster uppercase">
-                  15M
+                  30M
                 </span>\`;
 
             const marginMult = stock.mtf_margin_multiplier || 3.5;
@@ -1051,7 +1051,7 @@ export const MTFScreenerPage = () => (
                   </div>
                 </td>
 
-                <!-- MACD 15m -->
+                <!-- MACD 30m -->
                 <td class="px-4 py-3.5 border-r border-alabaster">
                   \${macdBadge}
                   <span class="ml-2 font-mono text-xs text-slategrey font-bold">(\${stock.macd_value})</span>
@@ -1120,7 +1120,7 @@ export const MTFScreenerPage = () => (
                       </div>
                       <div class="space-y-1.5 text-[11px]">
                         <div class="flex justify-between text-paleslate">
-                          <span class="font-sans text-paleslate2">15m MACD Histogram:</span>
+                          <span class="font-sans text-paleslate2">30m MACD Histogram:</span>
                           <span class="font-extrabold text-snow">\${stock.macd_value}</span>
                         </div>
                         <div class="flex justify-between text-paleslate">

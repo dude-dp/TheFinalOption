@@ -18,7 +18,7 @@ import { brokerAdapter } from './broker-adapter.js';
 import { AIManager } from './ai/ai-manager.js';
 import { initializeCronJobs } from './cron-prewarmer.js';
 import { OptionChainFetcher } from './option-chain-fetcher.js';
-import { run15MinScreener, startMTFTriggerListener } from './mtf-screener.js';
+import { run30MinScreener, startMTFTriggerListener } from './mtf-screener.js';
 import { startArchiverCron } from './archiver.js';
 import { startPortfolioPoller } from './mtf-portfolio.js';
 import { startMorningBriefingCron } from './morning-briefing.js';
@@ -202,7 +202,7 @@ connectWithRetry().then(() => {
   // ⚡ Start MTF Quant Screener Offset Scheduler & Trigger Listener
   startMTFTriggerListener();
   setTimeout(() => {
-    run15MinScreener().catch(err => logError(`[MTF-SCREENER] Initial boot scan failed: ${err.message}`));
+    run30MinScreener().catch(err => logError(`[MTF-SCREENER] Initial boot scan failed: ${err.message}`));
   }, 15000);
 
   setInterval(() => {
@@ -216,7 +216,7 @@ connectWithRetry().then(() => {
     const isEODSweep = hour === 15 && minute === 35;
 
     if (isMarketHours && (isOffsetMinute || isEODSweep)) {
-      run15MinScreener().catch(err => logError(`[MTF-SCREENER] Cron scan error: ${err.message}`));
+      run30MinScreener().catch(err => logError(`[MTF-SCREENER] Cron scan error: ${err.message}`));
     }
   }, 60000);
 }).catch(e => logError(`Fatal WS loop: ${e.message}`));
