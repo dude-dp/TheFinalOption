@@ -84,7 +84,7 @@ export class EnsembleEngine {
        riskLevel = 'MEDIUM'; 
        
        const winningVotes = votes.filter(v => v.action === winningAction);
-       consensusReasoning = winningVotes.map(v => `[${v.modelId.split('/')[1]}]: ${v.reasoning}`).join(' || ');
+       consensusReasoning = winningVotes.map(v => `[${v.modelId.split('/').pop() || v.modelId}]: ${v.reasoning}`).join(' || ');
        
        logInfo(`[ENSEMBLE] ✅ CONSENSUS REACHED: ${winningAction} | Votes: ${actionCounts[winningAction]}/3 | Avg Confidence: ${avgConfidence}%`);
     } else {

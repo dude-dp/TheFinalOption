@@ -855,7 +855,8 @@ export class ExecutionEngine {
         const netProfitTarget = state.startingCapital * 0.02;
         const grossPoints = calculateGrossTargetPoints(fillPrice, lots, netProfitTarget, NIFTY_LOT_SIZE_2026);
         const targetPrice = parseFloat((fillPrice + grossPoints).toFixed(2));
-        const stopLossPrice = parseFloat((fillPrice - 1.5).toFixed(2));
+        const stopLossPoints = Math.max(grossPoints / 2, 5);
+        const stopLossPrice = parseFloat((fillPrice - stopLossPoints).toFixed(2));
         tracker.paperTargetPrice = targetPrice;
         tracker.paperStopLossPrice = stopLossPrice;
 
@@ -1069,7 +1070,8 @@ export class ExecutionEngine {
       );
 
       const targetPrice = parseFloat((fillPrice + grossPoints).toFixed(2));
-      const stopLossPrice = parseFloat((fillPrice - 1.5).toFixed(2));
+      const stopLossPoints = Math.max(grossPoints / 2, 5);
+      const stopLossPrice = parseFloat((fillPrice - stopLossPoints).toFixed(2));
 
       logInfo(
         `[GTT-OCO] Anchoring bracket | Fill: ₹${fillPrice} | ` +
