@@ -86,7 +86,7 @@ export class AIManager {
           dbModelIds.add(dbModel.model_id);
           return {
             id: dbModel.model_id,
-            name: dbModel.model_id.split('-')[0] || dbModel.model_id,
+            name: dbModel.model_id,
             context_length: 8192, 
             pricing: { prompt: 0, completion: 0 } // Groq tier is rate-limit based, cost is 0
           };
@@ -102,7 +102,7 @@ export class AIManager {
         if (!dbModelIds.has(modelId)) {
           this.availableModels.push({
             id: modelId,
-            name: modelId.split('-')[0] || modelId,
+            name: modelId,
             context_length: 8192,
             pricing: { prompt: 0, completion: 0 }
           });
@@ -247,9 +247,10 @@ export class AIManager {
       logWarn(`[AI-MANAGER] ⚠️ Model ${targetModel} request failed: ${error.message}`);
       const latency = Date.now() - startTime;
       const isParseError = error.message.includes('Invalid action') || error.message.includes('JSON');
+      const isRateLimit = error.message.includes('429') || error.message.includes('Rate limit') || error.message.includes('rate_limit');
       
       this.updateModelHealth(targetModel, latency, false, !isParseError);
-      this.recordFailure(targetModel);
+      this.recordFailure(targetModel, isRateLimit);
 
       return {
         content: '',
@@ -321,14 +322,14 @@ export class AIManager {
   // CIRCUIT BREAKER & HEALTH TELEMETRY
   // ==========================================
 
-  private static recordFailure(modelId: string) {
+  private static recordFailure(modelId: string, isRateLimit: boolean = false) {
     const state = this.circuitBreaker.get(modelId) || { failures: 0, cooldownUntil: 0 };
-    state.failures += 1;
+    state.failures += isRateLimit ? this.MAX_FAILURES : 1;
     
-    if (state.failures === this.MAX_FAILURES) {
-      state.cooldownUntil = Date.now() + this.COOLDOWN_MS;
-      logWarn(`[AI-MANAGER] 🛑 Model ${modelId} hit max failures. Placed in 1-hour cooldown.`);
-    } else if (state.failures > this.MAX_FAILURES) {
+    if (state.failures >= this.MAX_FAILURES) {
+      if (state.cooldownUntil <= Date.now()) {
+        logWarn(`[AI-MANAGER] 🛑 Model ${modelId} hit ${isRateLimit ? 'Rate Limit (429)' : 'max failures'}. Placed in 1-hour cooldown.`);
+      }
       state.cooldownUntil = Date.now() + this.COOLDOWN_MS;
     }
     
