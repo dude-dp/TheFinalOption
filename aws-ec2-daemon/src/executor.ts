@@ -530,10 +530,14 @@ export class ExecutionEngine {
 
   private async evaluateCircuitBreakers(): Promise<boolean> {
     if (isPreMarket()) {
+      logWarn('[EXECUTOR] Trade blocked: Pre-market session is active.');
       return false;
     }
     const state = tracker.getState();
-    if (state.isHalted) return false;
+    if (state.isHalted) {
+      logWarn(`[EXECUTOR] Trade blocked: System HALTED (Reason: ${state.haltReason || 'Manual/Emergency Halt'}).`);
+      return false;
+    }
 
     if (tracker.isMaxTradesReached()) {
       logWarn('[EXECUTOR] Circuit Breaker Active: Max Trades (10) Reached for the day.');

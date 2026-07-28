@@ -261,36 +261,38 @@ export class StateEngine {
     const prompt = `${TRADING_SYSTEM_PROMPT}\n\nLive Snapshot:\n${JSON.stringify(minifiedSnapshot)}`;
     const ensembleResult = await EnsembleEngine.getConsensus(prompt, 2);
     
-    // ESCALATION ARCHITECTURE (Boss validation)
+    // ESCALATION ARCHITECTURE (Dynamic Boss / Rotation validation)
     if (ensembleResult.decision.action !== 'WAIT') {
-      logInfo(`[ESCALATION] 🚨 8B/9B ensemble voted ${ensembleResult.decision.action}. Waking up 70B Boss model for final validation...`);
+      const ensembleUsedModelIds = ensembleResult.votes.map(v => v.modelId);
+      logInfo(`[ESCALATION] 🚨 Ensemble voted ${ensembleResult.decision.action}. Requesting escalation validation...`);
       try {
-        const bossResponse = await AIManager.askSpecificModel(prompt, 'llama-3.3-70b-versatile');
+        const bossResponse = await AIManager.askEscalationModel(prompt, ensembleUsedModelIds);
         if (bossResponse.parsed) {
+          const usedModelName = bossResponse.modelUsed;
           if (bossResponse.parsed.action === ensembleResult.decision.action) {
-            logInfo(`[ESCALATION] ✅ Boss validated the trade: ${bossResponse.parsed.action}`);
-            // Append boss vote
+            logInfo(`[ESCALATION] ✅ Escalation model (${usedModelName}) validated the trade: ${bossResponse.parsed.action}`);
+            // Append escalation vote
             ensembleResult.votes.push({
-              modelId: 'llama-3.3-70b-versatile',
+              modelId: usedModelName,
               action: bossResponse.parsed.action,
               confidence: bossResponse.parsed.confidence,
               reasoning: bossResponse.parsed.reasoning,
               latencyMs: bossResponse.latencyMs
             });
-            // Update decision reasoning to include boss reasoning
-            ensembleResult.decision.reasoning = `[Boss 70B]: ${bossResponse.parsed.reasoning} || [Ensemble]: ${ensembleResult.decision.reasoning}`;
-            // Boost confidence since boss agreed
+            // Update decision reasoning to include escalation reasoning
+            ensembleResult.decision.reasoning = `[Escalation ${usedModelName}]: ${bossResponse.parsed.reasoning} || [Ensemble]: ${ensembleResult.decision.reasoning}`;
+            // Boost confidence since escalation model agreed
             ensembleResult.decision.confidence = Math.min(100, ensembleResult.decision.confidence + 10);
           } else {
-            logInfo(`[ESCALATION] ❌ Boss rejected the trade (voted ${bossResponse.parsed.action}). Overriding ensemble and falling back to WAIT.`);
+            logInfo(`[ESCALATION] ❌ Escalation model (${usedModelName}) rejected the trade (voted ${bossResponse.parsed.action}). Overriding ensemble and falling back to WAIT.`);
             ensembleResult.decision.action = 'WAIT';
-            ensembleResult.decision.reasoning = `[Boss Override]: 70B rejected the ensemble's ${ensembleResult.decision.action} signal. Reason: ${bossResponse.parsed.reasoning}`;
+            ensembleResult.decision.reasoning = `[Escalation Override]: ${usedModelName} rejected the ensemble's ${ensembleResult.decision.action} signal. Reason: ${bossResponse.parsed.reasoning}`;
           }
         } else {
-           logWarn(`[ESCALATION] ⚠️ Boss model failed to return a valid JSON. Proceeding with original ensemble decision.`);
+           logWarn(`[ESCALATION] ⚠️ Escalation validation unavailable (${bossResponse.error || 'All models failed'}). Proceeding with original ensemble decision.`);
         }
       } catch (err) {
-        logWarn(`[ESCALATION] ⚠️ Boss model request failed: ${err}. Proceeding with original ensemble decision.`);
+        logWarn(`[ESCALATION] ⚠️ Escalation request failed: ${err}. Proceeding with original ensemble decision.`);
       }
     }
 

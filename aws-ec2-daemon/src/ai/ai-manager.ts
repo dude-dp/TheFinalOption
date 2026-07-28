@@ -191,7 +191,22 @@ export class AIManager {
     return this.generateEmergencyFallback();
   }
 
+  public static isModelInCooldown(modelId: string): boolean {
+    const state = this.circuitBreaker.get(modelId);
+    if (!state) return false;
+    return state.cooldownUntil > Date.now();
+  }
+
   public static async askSpecificModel(prompt: string, targetModel: string): Promise<AIResponse & { parsed?: TradingDecision }> {
+    if (this.isModelInCooldown(targetModel)) {
+      return {
+        content: '',
+        modelUsed: targetModel,
+        latencyMs: 0,
+        error: `Model ${targetModel} is currently in circuit breaker cooldown.`
+      };
+    }
+
     const startTime = Date.now();
     try {
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -208,14 +223,18 @@ export class AIManager {
         })
       });
 
-      if (!response.ok) throw new Error(`API Error ${response.status}`);
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        throw new Error(`API Error ${response.status} - ${response.statusText}: ${errorText}`);
+      }
 
       const result = await response.json() as any;
       const latency = Date.now() - startTime;
-      const rawContent = result.choices[0].message.content;
+      const rawContent = result.choices[0]?.message?.content || '';
 
       const parsedDecision = this.parseTradingDecision(rawContent);
       this.updateModelHealth(targetModel, latency, true, true);
+      this.resetCircuitBreaker(targetModel);
 
       return {
         content: rawContent,
@@ -225,6 +244,7 @@ export class AIManager {
       };
 
     } catch (error: any) {
+      logWarn(`[AI-MANAGER] ⚠️ Model ${targetModel} request failed: ${error.message}`);
       const latency = Date.now() - startTime;
       const isParseError = error.message.includes('Invalid action') || error.message.includes('JSON');
       
@@ -240,6 +260,63 @@ export class AIManager {
     }
   }
 
+  /**
+   * Dynamic Escalation Model Validation:
+   * Rotates through high-capacity models when the primary Boss model is unavailable or in cooldown.
+   */
+  public static async askEscalationModel(
+    prompt: string,
+    excludeModelIds: string[] = []
+  ): Promise<AIResponse & { parsed?: TradingDecision }> {
+    const escalationPriority = [
+      'llama-3.3-70b-versatile',
+      'llama3-70b-8192',
+      'mixtral-8x7b-32768',
+      'gemma2-9b-it'
+    ];
+
+    const healthyModels = this.getHealthyModels();
+    const candidateIds: string[] = [];
+
+    for (const modelId of escalationPriority) {
+      if (!excludeModelIds.includes(modelId) && !this.isModelInCooldown(modelId)) {
+        candidateIds.push(modelId);
+      }
+    }
+
+    for (const model of healthyModels) {
+      if (!candidateIds.includes(model.id) && !excludeModelIds.includes(model.id)) {
+        candidateIds.push(model.id);
+      }
+    }
+
+    if (candidateIds.length === 0) {
+      logWarn('[AI-MANAGER] ⚠️ No healthy models available for escalation validation.');
+      return {
+        content: '',
+        modelUsed: 'NONE',
+        latencyMs: 0,
+        error: 'No escalation models available'
+      };
+    }
+
+    for (const targetModel of candidateIds) {
+      logInfo(`[ESCALATION] 🚨 Escalation validation using model: ${targetModel}`);
+      const response = await this.askSpecificModel(prompt, targetModel);
+      if (response.parsed) {
+        return response;
+      }
+      logWarn(`[ESCALATION] ⚠️ Escalation candidate ${targetModel} failed. Rotating to next model...`);
+    }
+
+    return {
+      content: '',
+      modelUsed: 'NONE',
+      latencyMs: 0,
+      error: 'All escalation models failed'
+    };
+  }
+
   // ==========================================
   // CIRCUIT BREAKER & HEALTH TELEMETRY
   // ==========================================
@@ -248,9 +325,11 @@ export class AIManager {
     const state = this.circuitBreaker.get(modelId) || { failures: 0, cooldownUntil: 0 };
     state.failures += 1;
     
-    if (state.failures >= this.MAX_FAILURES) {
+    if (state.failures === this.MAX_FAILURES) {
       state.cooldownUntil = Date.now() + this.COOLDOWN_MS;
       logWarn(`[AI-MANAGER] 🛑 Model ${modelId} hit max failures. Placed in 1-hour cooldown.`);
+    } else if (state.failures > this.MAX_FAILURES) {
+      state.cooldownUntil = Date.now() + this.COOLDOWN_MS;
     }
     
     this.circuitBreaker.set(modelId, state);

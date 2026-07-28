@@ -69,12 +69,15 @@ export class EnsembleEngine {
     let avgConfidence = 0;
     let riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' = 'HIGH';
 
-    const actualRequiredVotes = Math.min(requiredVotes, targetModels.length);
+    // Trade consensus strictly requires at least requiredVotes matching votes (minimum 2 matching votes)
+    const minVotesRequired = Math.max(2, requiredVotes);
 
-    if (actionCounts.BUY_CE >= actualRequiredVotes) {
+    if (actionCounts.BUY_CE >= minVotesRequired) {
       winningAction = 'BUY_CE';
-    } else if (actionCounts.BUY_PE >= actualRequiredVotes) {
+    } else if (actionCounts.BUY_PE >= minVotesRequired) {
       winningAction = 'BUY_PE';
+    } else if (actionCounts.BUY_CE > 0 || actionCounts.BUY_PE > 0) {
+      logWarn(`[ENSEMBLE] ⚠️ Directional vote count insufficient for consensus (BUY_CE: ${actionCounts.BUY_CE}, BUY_PE: ${actionCounts.BUY_PE}, Required: ${minVotesRequired}). Defaulting to WAIT.`);
     }
 
     // Calculate aggregated confidence and generate reasoning string
