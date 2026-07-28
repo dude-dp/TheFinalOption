@@ -140,6 +140,7 @@ class PortfolioTracker {
   // Paper GTT targets
   public paperTargetPrice: number = 0;
   public paperStopLossPrice: number = 0;
+  public activePositionEntryTime: number = 0;
 
   public incrementTradeCount(): void {
     this.state.dailyTradeCount += 1;
@@ -364,6 +365,7 @@ class PortfolioTracker {
     this.activePositionQty = qty;
     this.activePositionEntry = entryPrice;
     this.activePositionSymbol = symbol;
+    this.activePositionEntryTime = Date.now();
     this.highestLtp = entryPrice;
     this.trailingSlActivated = false;
   }
@@ -374,6 +376,7 @@ class PortfolioTracker {
     this.activePositionEntry = 0;
     this.activePositionSymbol = "";
     this.activePositionLtp = 0;
+    this.activePositionEntryTime = 0;
     this.state.activeUnrealizedPnL = 0;
     this.paperTargetPrice = 0;
     this.paperStopLossPrice = 0;
@@ -402,10 +405,6 @@ class PortfolioTracker {
 
     if (this.state.dailyRealizedPnL >= this.state.dailyHaltCeiling) {
       return "10% Daily Target Hit. Trading Halted.";
-    }
-    
-    if (this.state.dailyTradeCount >= 10) {
-      return "Max Trades (10) Reached";
     }
 
     if (this.state.dailyRealizedPnL >= this.state.secureTarget) {

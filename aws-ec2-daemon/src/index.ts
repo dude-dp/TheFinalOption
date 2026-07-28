@@ -155,24 +155,7 @@ async function bootstrapEngine() {
   (wsClient as any).aggregator.seedHistoricalData(historicalData);
 
   const onSignal = async (signalPayload: any) => {
-    logInfo(`[SIGNAL] Candle Closed. MACD: ${signalPayload.currentMacd.toFixed(2)} | Vol: ${signalPayload.volume} | Signal: ${signalPayload.signal}`);
-
-
-    // 🗑️ DELETED the duplicate DataEngine.recordLiveCandle here.
-    // ws-client.ts natively handles pushing the candle to Supabase!
-
-    // Gatekeeper: Block trades if UI is stopped
-    if (StateEngine.botStatus !== 'RUNNING') return;
-
-    if (signalPayload.signal.startsWith('BUY')) {
-      await executor.evaluateAndExecuteTrade(
-        signalPayload.signal,
-        CONFIG.defaultTradeQty,
-        signalPayload.spotPrice, // 🟢 FIXED: Changed from .close to .spotPrice
-        signalPayload.depth,
-        signalPayload.crossoverDelta || 50
-      );
-    }
+    logInfo(`[SIGNAL] Candle Closed. MACD: ${signalPayload.currentMacd.toFixed(2)} | Vol: ${signalPayload.volume} | Indicator Signal: ${signalPayload.signal}`);
   };
 
   const connectWithRetry = async () => {

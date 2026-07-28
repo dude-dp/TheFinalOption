@@ -590,6 +590,12 @@ export class ExecutionEngine {
     const token = tracker.activePositionToken;
     if (!token) return;
 
+    // Enforce 30-second post-entry grace period to prevent false premature tape exits
+    const timeSinceEntryMs = Date.now() - tracker.activePositionEntryTime;
+    if (tracker.activePositionEntryTime > 0 && timeSinceEntryMs < 30000) {
+      return;
+    }
+
     const isLong = token.endsWith('CE') || token.includes('CE-');
     const isShort = token.endsWith('PE') || token.includes('PE-');
 
@@ -598,10 +604,10 @@ export class ExecutionEngine {
     const dynamicThreshold = Math.max(this.ABSOLUTE_DELTA_FLOOR, liveVolume * this.RELATIVE_DELTA_DOMINANCE);
 
     if (isLong && liveDelta <= -dynamicThreshold) {
-      logWarn(`[TAPE EXIT] 🚨 Institutional SELLING Wall Detected! Front-running the dump!`);
+      logWarn(`[TAPE EXIT] 🚨 Institutional SELLING Wall Detected after ${Math.round(timeSinceEntryMs / 1000)}s! Front-running the dump!`);
       await this.executeOrderFlowExit('CE Tape Exhaustion / Absorption Trap');
     } else if (isShort && liveDelta >= dynamicThreshold) {
-      logWarn(`[TAPE EXIT] 🚨 Institutional BUYING Wall Detected! Front-running the short squeeze!`);
+      logWarn(`[TAPE EXIT] 🚨 Institutional BUYING Wall Detected after ${Math.round(timeSinceEntryMs / 1000)}s! Front-running the short squeeze!`);
       await this.executeOrderFlowExit('PE Tape Exhaustion / Squeeze');
     }
   }
@@ -902,8 +908,16 @@ export class ExecutionEngine {
         const state = tracker.getState();
         const netProfitTarget = state.startingCapital * 0.02;
         const grossPoints = calculateGrossTargetPoints(fillPrice, lots, netProfitTarget, NIFTY_LOT_SIZE_2026);
-        const targetPrice = parseFloat((fillPrice + grossPoints).toFixed(2));
-        const stopLossPoints = Math.max(grossPoints / 2, 5);
+        
+        // Realistic target & SL scaling: Cap target at 15% of option premium for small lot positions
+        const maxRealisticTargetPoints = fillPrice * 0.15;
+        const targetPoints = Math.min(grossPoints, maxRealisticTargetPoints);
+        
+        const minStopLossPoints = 3.0;
+        const calculatedSlPoints = targetPoints * 0.5; // ~1:2 Risk:Reward ratio
+        const stopLossPoints = Math.max(calculatedSlPoints, minStopLossPoints);
+
+        const targetPrice = parseFloat((fillPrice + targetPoints).toFixed(2));
         const stopLossPrice = parseFloat((fillPrice - stopLossPoints).toFixed(2));
         tracker.paperTargetPrice = targetPrice;
         tracker.paperStopLossPrice = stopLossPrice;
