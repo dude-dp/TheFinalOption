@@ -21,6 +21,7 @@ export interface ConfluenceSignal {
   ema9: number;
   ema21: number;
   rsi: number;
+  adx?: number;
   volumeRatio: number; // currentCandle.volume / smaVolume — audit trail
 }
 

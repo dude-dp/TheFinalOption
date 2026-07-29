@@ -187,9 +187,14 @@ class PortfolioTracker {
 
   // 🟢 Live Option Chain Snapshot (enriched by OptionChainFetcher)
   public oiData: OptionChainSnapshot | null = null;
+  public latestATR: number = 6.0;
 
   public setOIData(snapshot: OptionChainSnapshot) {
     this.oiData = snapshot;
+  }
+
+  public setLatestATR(atr: number): void {
+    if (atr > 0) this.latestATR = atr;
   }
 
   /**

@@ -692,11 +692,28 @@ export class ExecutionEngine {
 
         tracker.setActivePosition(instrumentToken, orderPayload.quantity, fillPrice, orderPayload.tradingSymbol);
         
-        // Initial SL Logic: Must be at least 3 points away to avoid instant spread whipsaws
-        const minStopLossPoints = 3.0;
-        const initialStopLoss = Number((fillPrice - minStopLossPoints).toFixed(2));
+        // Hybrid Rule Risk Math:
+        // Premium-based SL (8% of premium) + ATR-based SL (0.8x ATR) capped between 5.0 and 12.0 points
+        const atr = tracker.latestATR || 6.0;
+        const atrSL = Math.max(5.0, atr * 0.8);
+        const premiumSL = fillPrice * 0.08;
+        const stopLossPoints = Number(Math.max(5.0, Math.min(atrSL, premiumSL, 12.0)).toFixed(2));
+        
+        // Target set to 1.5x Stop Loss (min 7.5 pts) for 1:1.5 Risk:Reward Expectancy
+        const targetPoints = Number((stopLossPoints * 1.5).toFixed(2));
+
+        if (stopLossPoints < 4.5) {
+          logWarn(`[EXECUTOR] Trade aborted: Stop loss distance (${stopLossPoints} pts) is too narrow (< 4.5 pts).`);
+          return;
+        }
+
+        const initialStopLoss = Number((fillPrice - stopLossPoints).toFixed(2));
+        const initialTargetPrice = Number((fillPrice + targetPoints).toFixed(2));
+
         tracker.paperStopLossPrice = initialStopLoss;
+        tracker.paperTargetPrice = initialTargetPrice;
         tracker.incrementTradeCount();
+        logInfo(`TRADE: [🔒 GTT OCO PAPER] Target: ₹${initialTargetPrice} | SL: ₹${initialStopLoss} (Risk: ${stopLossPoints} pts, Target: ${targetPoints} pts)`);
         
         if (activeWsClient) activeWsClient.subscribe(instrumentToken);
 

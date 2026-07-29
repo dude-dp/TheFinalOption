@@ -359,8 +359,56 @@ export class StateEngine {
       return;
     }
 
+    const oiData = tracker.oiData;
+    const spotPCR = oiData?.pcr ?? 1.0;
+    const spotADX = indicatorSignal.adx ?? 0;
+    const spotRSI = indicatorSignal.rsi ?? 50;
+
+    if (!this.validateSignalAgainstHardGates(signal, spotRSI, spotPCR, spotADX)) {
+      logWarn(`[SIGNAL-GATE] ✋ Pre-flight quantitative hard gates blocked ${signal.signal}.`);
+      return;
+    }
+
     logInfo(`[SIGNAL] ⚡ ${signal.signal} confirmed! Routing to executor...`);
     await executor.executeConfluentTrade(signal, token);
+  }
+
+  public static validateSignalAgainstHardGates(
+    signal: any,
+    spotRSI: number,
+    spotPCR: number,
+    spotADX: number = 0
+  ): boolean {
+    if (signal.signal === 'NONE' || signal.signal === 'WAIT') return true;
+
+    // Dynamic regime-aware bounds (looser in high-trend ADX > 25)
+    const isStrongTrend = spotADX > 25;
+    const maxCE_RSI = isStrongTrend ? 74 : 68;
+    const minPE_RSI = isStrongTrend ? 26 : 32;
+
+    if (signal.signal === 'BUY_CE') {
+      if (spotRSI > maxCE_RSI) {
+        logWarn(`[SIGNAL-GATE] 🛑 REJECTED BUY_CE: Spot RSI (${spotRSI.toFixed(2)}) > ${maxCE_RSI} (Overbought Peak Trap)`);
+        return false;
+      }
+      if (spotPCR < 0.90) {
+        logWarn(`[SIGNAL-GATE] 🛑 REJECTED BUY_CE: Spot PCR (${spotPCR.toFixed(2)}) < 0.90 (Lack of Put Writing Support)`);
+        return false;
+      }
+    }
+
+    if (signal.signal === 'BUY_PE') {
+      if (spotRSI < minPE_RSI) {
+        logWarn(`[SIGNAL-GATE] 🛑 REJECTED BUY_PE: Spot RSI (${spotRSI.toFixed(2)}) < ${minPE_RSI} (Oversold Bottom Trap)`);
+        return false;
+      }
+      if (spotPCR > 0.85) {
+        logWarn(`[SIGNAL-GATE] 🛑 REJECTED BUY_PE: Spot PCR (${spotPCR.toFixed(2)}) > 0.85 (Lack of Call Writing Support)`);
+        return false;
+      }
+    }
+
+    return true;
   }
 
   // ============================================================
