@@ -543,10 +543,20 @@ export const MTFScreenerPage = () => (
         }
         window.toggleBriefingPanel = toggleBriefingPanel;
 
+        function getAuthHeaders() {
+          const authKey = localStorage.getItem('tfo_auth_key') || btoa('vdineshprabu:Healthywealth007#');
+          return {
+            'Authorization': 'Basic ' + authKey
+          };
+        }
+
         async function fetchMTFSetups() {
           try {
-            const res = await fetch('/api/mtf-screener');
-            if (!res.ok) return;
+            const res = await fetch('/api/mtf-screener', { headers: getAuthHeaders() });
+            if (!res.ok) {
+              console.error("fetchMTFSetups HTTP status:", res.status);
+              return;
+            }
             const response = await res.json();
             if (response.success) {
               allStocks = response.data || [];
@@ -561,7 +571,7 @@ export const MTFScreenerPage = () => (
           const btn = document.getElementById('portfolio-refresh-btn');
           if (btn) btn.innerText = 'REFRESHING...';
           try {
-            const res = await fetch('/api/mtf-portfolio');
+            const res = await fetch('/api/mtf-portfolio', { headers: getAuthHeaders() });
             if (!res.ok) return;
             const response = await res.json();
             if (response.success) {
@@ -587,7 +597,7 @@ export const MTFScreenerPage = () => (
             document.getElementById('copy-briefing-btn').style.display = 'none';
             document.getElementById('briefing-timestamp').innerText = 'SYNCING...';
 
-            const res = await fetch('/api/morning-briefing');
+            const res = await fetch('/api/morning-briefing', { headers: getAuthHeaders() });
             if (!res.ok) throw new Error('Network response was not ok');
             const response = await res.json();
             
@@ -1223,7 +1233,7 @@ export const MTFScreenerPage = () => (
           if (btnText) btnText.innerText = 'SCANNING...';
           
           try {
-            await fetch('/api/mtf-screener/trigger', { method: 'POST' });
+            await fetch('/api/mtf-screener/trigger', { method: 'POST', headers: getAuthHeaders() });
             showToast('SCAN TRIGGERED ON EC2');
           } catch (e) {
             console.error('Trigger request error:', e);

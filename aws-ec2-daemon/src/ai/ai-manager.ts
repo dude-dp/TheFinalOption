@@ -44,14 +44,14 @@ export class AIManager {
         logWarn(`[AI-MANAGER] Failed to fetch Groq models: ${err}`);
       }
 
-      // Hardcoded whitelist of the fastest and smartest models on Groq for algorithmic trading
+      // Hardcoded whitelist of the fastest and smartest active models on Groq for algorithmic trading
       const topTradingModels = [
         'llama-3.1-8b-instant',
         'llama-3.3-70b-versatile',
-        'llama3-70b-8192',
-        'llama3-8b-8192',
-        'gemma2-9b-it',
-        'mixtral-8x7b-32768'
+        'qwen/qwen3.6-27b',
+        'openai/gpt-oss-120b',
+        'openai/gpt-oss-20b',
+        'groq/compound-mini'
       ];
       
       // Use whitelist, but if we successfully fetched from Groq, ensure they exist on Groq
@@ -271,9 +271,10 @@ export class AIManager {
   ): Promise<AIResponse & { parsed?: TradingDecision }> {
     const escalationPriority = [
       'llama-3.3-70b-versatile',
-      'llama3-70b-8192',
-      'mixtral-8x7b-32768',
-      'gemma2-9b-it'
+      'openai/gpt-oss-120b',
+      'qwen/qwen3.6-27b',
+      'openai/gpt-oss-20b',
+      'groq/compound-mini'
     ];
 
     const healthyModels = this.getHealthyModels();

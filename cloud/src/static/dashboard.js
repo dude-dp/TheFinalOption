@@ -687,8 +687,13 @@
     setupDragAndDropSL(container);
   }
 
+  let lastCandleTime = 0;
+
   function loadHistoricalCandles(historicalData, macdData, signalData, histogramData) {
-    if (candleSeries && historicalData) candleSeries.setData(historicalData);
+    if (candleSeries && historicalData && historicalData.length > 0) {
+      candleSeries.setData(historicalData);
+      lastCandleTime = historicalData[historicalData.length - 1].time;
+    }
     if (macdSeries && macdData) macdSeries.setData(macdData);
     if (signalSeries && signalData) signalSeries.setData(signalData);
     if (histogramSeries && histogramData) histogramSeries.setData(histogramData);
@@ -697,29 +702,43 @@
   function updateLiveChart(latestTick) {
     if (!candleSeries || !latestTick) return;
     
-    const tvTick = {
-      time: Math.floor(new Date(latestTick.timestamp).getTime() / 1000), // UNIX seconds
-      open: latestTick.open,
-      high: latestTick.high,
-      low: latestTick.low,
-      close: latestTick.ltp // The current live price
-    };
-
-    candleSeries.update(tvTick);
-    
-    // Also update MACD if present
-    if (macdSeries && latestTick.macd_line !== undefined) {
-      macdSeries.update({
-        time: tvTick.time,
-        value: latestTick.macd_line
-      });
+    let timeInSec = Math.floor(new Date(latestTick.timestamp).getTime() / 1000);
+    if (!timeInSec || isNaN(timeInSec)) {
+      timeInSec = Math.floor(Date.now() / 1000);
     }
 
-    if (vwapSeries && latestTick.vwap !== undefined) {
-      vwapSeries.update({
-        time: tvTick.time,
-        value: latestTick.vwap
-      });
+    // Lightweight-Charts requires time >= last candle time
+    if (lastCandleTime && timeInSec < lastCandleTime) {
+      timeInSec = lastCandleTime;
+    }
+
+    const tvTick = {
+      time: timeInSec,
+      open: Number(latestTick.open || latestTick.ltp || 0),
+      high: Number(latestTick.high || latestTick.ltp || 0),
+      low: Number(latestTick.low || latestTick.ltp || 0),
+      close: Number(latestTick.ltp || 0)
+    };
+
+    try {
+      candleSeries.update(tvTick);
+      lastCandleTime = timeInSec;
+      
+      if (macdSeries && latestTick.macd_line !== undefined && !isNaN(Number(latestTick.macd_line))) {
+        macdSeries.update({
+          time: timeInSec,
+          value: Number(latestTick.macd_line)
+        });
+      }
+
+      if (vwapSeries && latestTick.vwap !== undefined && !isNaN(Number(latestTick.vwap))) {
+        vwapSeries.update({
+          time: timeInSec,
+          value: Number(latestTick.vwap)
+        });
+      }
+    } catch (err) {
+      console.warn('[TV-CHART] Skipped tick update:', err.message);
     }
   }
   let lastActivePosition = null;
