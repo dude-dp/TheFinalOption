@@ -271,13 +271,13 @@ export const MTFScreenerPage = () => (
                 onclick="toggleTableCollapse()"
                 class="px-3 py-1.5 bg-snow hover:bg-carbon hover:text-snow text-carbon text-xs font-extrabold border border-alabaster transition-colors cursor-pointer uppercase tracking-wider"
               >
-                <span id="table-collapse-text">EXPAND TABLE</span>
+                <span id="table-collapse-text">COLLAPSE TABLE</span>
               </button>
             </div>
           </div>
 
-          {/* COLLAPSED SUMMARY TICKER TAPE (COLLAPSED BY DEFAULT) */}
-          <div id="table-collapsed-summary" class="bg-platinum text-carbon px-4 py-2 border-b border-alabaster flex items-center justify-between text-xs">
+          {/* COLLAPSED SUMMARY TICKER TAPE (HIDDEN WHEN EXPANDED) */}
+          <div id="table-collapsed-summary" class="hidden bg-platinum text-carbon px-4 py-2 border-b border-alabaster flex items-center justify-between text-xs">
             <div class="flex items-center gap-3 overflow-x-auto py-0.5">
               <span class="text-slategrey font-bold uppercase tracking-wider shrink-0 text-[10px]">COLLAPSED TICKERS:</span>
               <div id="collapsed-tickers-list" class="flex items-center gap-2 shrink-0">
@@ -292,8 +292,8 @@ export const MTFScreenerPage = () => (
             </button>
           </div>
 
-          {/* TERMINAL TABLE MATRIX WRAPPER (HIDDEN BY DEFAULT WHEN COLLAPSED) */}
-          <div id="screener-table-container" class="hidden overflow-x-auto transition-all duration-200 max-h-0 opacity-0">
+          {/* TERMINAL TABLE MATRIX WRAPPER (EXPANDED BY DEFAULT) */}
+          <div id="screener-table-container" class="overflow-x-auto transition-all duration-200 opacity-100 max-h-[2500px]">
             <table class="w-full text-left text-xs whitespace-nowrap border-collapse">
               <thead class="bg-platinum border-b border-alabaster uppercase text-[10px] font-extrabold text-gunmetal tracking-wider">
                 <tr>
@@ -507,7 +507,7 @@ export const MTFScreenerPage = () => (
         let allStocks = [];
         let allPortfolio = [];
         let activeTab = 'ALL';
-        let isTableCollapsed = true; // COLLAPSED BY DEFAULT
+        let isTableCollapsed = false; // EXPANDED BY DEFAULT
         let expandedRows = new Set();
         let isPortfolioPanelOpen = false;
         let isBriefingPanelOpen = false;
