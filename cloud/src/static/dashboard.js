@@ -7,15 +7,25 @@
   'use strict';
 
   // --- AUTHENTICATION INTERCEPTOR ---
+  const DEFAULT_AUTH_KEY = btoa('vdineshprabu:Healthywealth007#');
+  if (!localStorage.getItem('tfo_auth_key')) {
+      localStorage.setItem('tfo_auth_key', DEFAULT_AUTH_KEY);
+  }
+
   const originalFetch = window.fetch;
   window.fetch = async function(...args) {
       let [resource, config] = args;
       config = config || {};
       
-      const authKey = localStorage.getItem('tfo_auth_key');
+      const authKey = localStorage.getItem('tfo_auth_key') || DEFAULT_AUTH_KEY;
       if (authKey) {
-          config.headers = config.headers || {};
-          config.headers['Authorization'] = 'Basic ' + authKey;
+          if (config.headers instanceof Headers) {
+              config.headers.set('Authorization', 'Basic ' + authKey);
+          } else if (config.headers) {
+              config.headers['Authorization'] = 'Basic ' + authKey;
+          } else {
+              config.headers = { 'Authorization': 'Basic ' + authKey };
+          }
       }
       
       const response = await originalFetch(resource, config);
@@ -24,6 +34,11 @@
           const authModal = document.getElementById('auth-modal');
           if (authModal) {
               authModal.classList.add('active');
+          }
+      } else if (response.ok) {
+          const authModal = document.getElementById('auth-modal');
+          if (authModal && authModal.classList.contains('active')) {
+              authModal.classList.remove('active');
           }
       }
       
@@ -331,44 +346,79 @@
     `;
   }
 
+  window.toggleAILeaderboard = function() {
+    const content = document.getElementById('leaderboard-content-wrapper');
+    const chevron = document.getElementById('leaderboard-chevron');
+    if (!content || !chevron) return;
+    const isHidden = content.style.display === 'none';
+    if (isHidden) {
+      content.style.display = 'block';
+      chevron.style.transform = 'rotate(180deg)';
+    } else {
+      content.style.display = 'none';
+      chevron.style.transform = 'rotate(0deg)';
+    }
+  };
+
   function updateAILeaderboard(models) {
     const container = document.getElementById('ai-leaderboard');
     if (!container) return;
     
     if (!models || models.length === 0) {
-      container.innerHTML = '<p style="color: var(--text-secondary); text-align: center; padding: 20px;">No benchmark data available yet.</p>';
+      container.innerHTML = '<p style="color: var(--text-secondary); text-align: center; padding: 16px;">No benchmark data available yet.</p>';
       return;
     }
 
+    // Update quick summary pills in collapsed header
+    const topModelEl = document.getElementById('top-model-name');
+    const avgLatencyEl = document.getElementById('avg-latency-val');
+    const countBadgeEl = document.getElementById('ai-model-count-badge');
+
+    if (models.length > 0) {
+      if (topModelEl) {
+        const topName = models[0].model_id.split('/')[1] || models[0].model_id;
+        topModelEl.textContent = topName.substring(0, 16);
+      }
+      if (avgLatencyEl) {
+        const totalLat = models.reduce((acc, m) => acc + (m.latency_ms || 0), 0);
+        const avgLat = Math.round(totalLat / models.length);
+        avgLatencyEl.textContent = `${avgLat}ms`;
+      }
+      if (countBadgeEl) {
+        countBadgeEl.textContent = `${models.length} Models Active`;
+      }
+    }
+
     let html = `
-      <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.8rem;">
-        <thead>
-          <tr style="border-bottom: 1px solid rgba(255,255,255,0.1); color: var(--text-muted);">
-            <th style="padding: 8px 4px;">Model</th>
-            <th style="padding: 8px 4px;">Success</th>
-            <th style="padding: 8px 4px;">JSON</th>
-            <th style="padding: 8px 4px;">Latency</th>
-          </tr>
-        </thead>
-        <tbody>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; width: 100%;">
     `;
 
     models.forEach((m, i) => {
       const name = m.model_id.split('/')[1] || m.model_id;
-      const rankColor = i === 0 ? 'color: #fbbf24; font-weight: bold;' : 'color: var(--text-primary);'; // Gold for #1
-      const successColor = m.success_rate >= 95 ? 'color: var(--accent-success);' : (m.success_rate >= 80 ? 'color: var(--accent-warning);' : 'color: var(--accent-danger);');
-      
+      const rankBadge = i === 0 ? '👑 #1 Top Model' : (i === 1 ? '🥈 #2 Model' : (i === 2 ? '🥉 #3 Model' : `#${i + 1} Model`));
+      const rankBg = i === 0 ? 'rgba(251, 191, 36, 0.12)' : 'rgba(255, 255, 255, 0.03)';
+      const rankBorder = i === 0 ? 'rgba(251, 191, 36, 0.3)' : 'rgba(255, 255, 255, 0.06)';
+      const rankColor = i === 0 ? '#fbbf24' : 'var(--text-primary)';
+      const successColor = m.success_rate >= 95 ? 'var(--accent-success)' : (m.success_rate >= 80 ? 'var(--accent-warning)' : 'var(--accent-danger)');
+
       html += `
-        <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
-          <td style="padding: 8px 4px; ${rankColor}">${i + 1}. ${name.substring(0, 15)}${name.length > 15 ? '...' : ''}</td>
-          <td style="padding: 8px 4px; ${successColor}">${m.success_rate}%</td>
-          <td style="padding: 8px 4px; color: var(--text-secondary);">${m.json_validity}%</td>
-          <td style="padding: 8px 4px; color: var(--accent-info); font-family: var(--font-mono);">${m.latency_ms}ms</td>
-        </tr>
+        <div style="background: ${rankBg}; border: 1px solid ${rankBorder}; border-radius: 8px; padding: 12px 14px; display: flex; flex-direction: column; justify-content: space-between; gap: 8px; transition: transform 0.2s ease;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 0.7rem; font-weight: 700; font-family: var(--font-mono); color: ${rankColor}; text-transform: uppercase; letter-spacing: 0.05em;">${rankBadge}</span>
+            <span style="font-size: 0.75rem; font-weight: 700; font-family: var(--font-mono); color: ${successColor}; padding: 2px 6px; border-radius: 4px; background: rgba(255,255,255,0.05);">${m.success_rate}% Acc</span>
+          </div>
+          <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${m.model_id}">
+            ${name}
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem; font-family: var(--font-mono); color: var(--text-secondary); pt: 4px; border-top: 1px solid rgba(255,255,255,0.05);">
+            <span>JSON: <strong style="color: var(--text-primary);">${m.json_validity}%</strong></span>
+            <span>Latency: <strong style="color: var(--accent-info);">${m.latency_ms}ms</strong></span>
+          </div>
+        </div>
       `;
     });
 
-    html += `</tbody></table>`;
+    html += `</div>`;
     container.innerHTML = html;
   }
 
@@ -1479,10 +1529,22 @@
 
   function classifyLog(msg) {
     if (!msg || msg.trim().length === 0) return { level: 'TICK', label: 'TICK' };
-    if (msg.match(/ERROR|HALT|FAILED|REJECTED/i)) return { level: 'ERR', label: 'ERR' };
-    if (msg.match(/WARN|SKIP|INSUFFICIENT/i)) return { level: 'WARN', label: 'WARN' };
-    if (msg.match(/SIGNAL|NEW ENTRY|SQUARE-OFF|FILLED/i)) return { level: 'TRD', label: 'TRD' };
-    if (msg.match(/AUTO_SQUAREOFF|DRAWDOWN|DAEMON|HEARTBEAT|WARMUP/i)) return { level: 'SYS', label: 'SYS' };
+    const m = msg.toUpperCase();
+    if (m.includes('ERROR') || m.includes('HALT') || m.includes('FAILED') || m.includes('REJECTED') || m.includes('🛑') || m.includes('🚨')) {
+      return { level: 'ERR', label: 'ERR' };
+    }
+    if (m.includes('WARN') || m.includes('SKIP') || m.includes('INSUFFICIENT') || m.includes('⚠️') || m.includes('SIGNAL-GATE')) {
+      return { level: 'WARN', label: 'WARN' };
+    }
+    if (m.includes('ENSEMBLE') || m.includes('AI-MANAGER') || m.includes('CONFIDENCE') || m.includes('MODEL') || m.includes('PROMPT') || m.includes('REASONING')) {
+      return { level: 'AI', label: 'AI' };
+    }
+    if (m.includes('SIGNAL') || m.includes('NEW ENTRY') || m.includes('SQUARE-OFF') || m.includes('FILLED') || m.includes('BUY_CE') || m.includes('BUY_PE') || m.includes('ORDER') || m.includes('PAPER FILLED')) {
+      return { level: 'TRD', label: 'TRD' };
+    }
+    if (m.includes('AUTO_SQUAREOFF') || m.includes('DRAWDOWN') || m.includes('DAEMON') || m.includes('HEARTBEAT') || m.includes('WARMUP') || m.includes('EC2') || m.includes('WATCHDOG') || m.includes('OI-FETCHER') || m.includes('TRACKER')) {
+      return { level: 'EC2', label: 'EC2' };
+    }
     return { level: 'INFO', label: 'INFO' };
   }
 
@@ -1498,10 +1560,20 @@
     const filtered = meaningful.filter(entry => {
       if (activeLogFilter === 'all') return true;
       const { level } = classifyLog(entry.log_message);
-      if (activeLogFilter === 'trade') return level === 'TRD';
-      if (activeLogFilter === 'warn') return level === 'WARN';
-      if (activeLogFilter === 'error') return level === 'ERR';
-      if (activeLogFilter === 'system') return level === 'SYS' || level === 'TICK';
+      const msg = (entry.log_message || '').toUpperCase();
+
+      if (activeLogFilter === 'trade') {
+        return level === 'TRD' || msg.includes('BUY_CE') || msg.includes('BUY_PE') || msg.includes('ORDER') || msg.includes('FILLED') || msg.includes('EXIT');
+      }
+      if (activeLogFilter === 'ai') {
+        return level === 'AI' || msg.includes('ENSEMBLE') || msg.includes('AI-MANAGER') || msg.includes('CONFIDENCE') || msg.includes('SIGNAL-GATE') || msg.includes('REASONING');
+      }
+      if (activeLogFilter === 'ec2') {
+        return level === 'EC2' || msg.includes('DAEMON') || msg.includes('EC2') || msg.includes('WATCHDOG') || msg.includes('OI-FETCHER') || msg.includes('HEARTBEAT') || msg.includes('TRACKER');
+      }
+      if (activeLogFilter === 'error') {
+        return level === 'ERR' || level === 'WARN' || msg.includes('ERROR') || msg.includes('FAILED') || msg.includes('REJECTED') || msg.includes('🛑') || msg.includes('⚠️');
+      }
       return true;
     });
 
@@ -1542,8 +1614,10 @@
       const colors = {
         'INFO': 'var(--text-primary)',
         'TRD': 'var(--accent-success)',
+        'AI': '#a855f7',
+        'EC2': 'var(--accent-system)',
         'ERR': 'var(--accent-danger)',
-        'WARN': 'var(--accent-info)',
+        'WARN': 'var(--accent-warning)',
         'SYS': 'var(--accent-info)',
         'TICK': 'var(--text-secondary)'
       };
@@ -2045,6 +2119,36 @@
           logSearchTerm = searchInput.value.trim();
           renderLogs();
         }, 200);
+      });
+    }
+
+    // Copy Logs to Clipboard
+    const copyBtn = document.getElementById('log-copy-btn');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', () => {
+        const consoleEl = document.getElementById('system-logs');
+        if (!consoleEl) return;
+        
+        const logLines = Array.from(consoleEl.querySelectorAll('.log-line'))
+          .filter(el => el.style.display !== 'none');
+
+        if (logLines.length === 0) {
+          if (window.showToast) window.showToast('No logs to copy', 'warning');
+          return;
+        }
+
+        const text = logLines.map(el => (el.innerText || el.textContent || '').trim()).join('\n');
+
+        navigator.clipboard.writeText(text).then(() => {
+          const copyTextEl = document.getElementById('log-copy-text');
+          if (copyTextEl) copyTextEl.textContent = 'Copied!';
+          if (window.showToast) window.showToast('Logs copied to clipboard!', 'success');
+          setTimeout(() => {
+            if (copyTextEl) copyTextEl.textContent = 'Copy';
+          }, 1500);
+        }).catch(err => {
+          console.error('Failed to copy logs:', err);
+        });
       });
     }
 

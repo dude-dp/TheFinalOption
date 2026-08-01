@@ -105,6 +105,54 @@ dashboard.get('/', (c) => {
   </header>
 
   <div class="dashboard-wrapper">
+    <!-- Collapsible AI Leaderboard Banner (Right Below Header) -->
+    <div id="ai-leaderboard-card" class="ai-leaderboard-banner" style="margin: 0 auto 16px auto; width: 100%; max-width: 1600px; padding: 0 24px; box-sizing: border-box;">
+      <div style="background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 12px; overflow: hidden; transition: all 0.3s ease;">
+        <!-- Header (Clickable for Collapse/Expand) -->
+        <button type="button" id="leaderboard-toggle-btn" onclick="toggleAILeaderboard()" style="width: 100%; display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; background: rgba(255, 255, 255, 0.02); border: none; cursor: pointer; text-align: left; transition: background 0.2s ease;">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <div style="width: 28px; height: 28px; border-radius: 8px; background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(168, 85, 247, 0.2)); border: 1px solid rgba(139, 92, 246, 0.3); display: flex; align-items: center; justify-content: center; font-size: 14px;">
+              🌐
+            </div>
+            <div style="display: flex; flex-direction: column;">
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <span style="font-size: 0.95rem; font-weight: 600; color: var(--text-primary); letter-spacing: 0.02em;">AI Model Leaderboard</span>
+                <span id="ai-model-count-badge" class="badge live" style="font-size: 10px; font-weight: 700;">6 Models Active</span>
+              </div>
+              <span style="font-size: 0.75rem; color: var(--text-secondary);">Real-time multi-model performance, accuracy & latency metrics</span>
+            </div>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 14px;">
+            <!-- Quick Summary Pills when Collapsed -->
+            <div id="leaderboard-quick-summary" style="display: flex; align-items: center; gap: 12px; font-size: 0.75rem; font-family: var(--font-mono); color: var(--text-secondary);">
+              <span style="display: flex; align-items: center; gap: 4px;">
+                <span style="width: 6px; height: 6px; border-radius: 50%; background: var(--accent-success);"></span>
+                Top: <strong id="top-model-name" style="color: #fbbf24; font-weight: 600;">llama-3.1-8b</strong>
+              </span>
+              <span style="color: var(--border-color);">|</span>
+              <span>Avg Latency: <strong id="avg-latency-val" style="color: var(--accent-info);">--ms</strong></span>
+            </div>
+
+            <!-- Chevron Icon -->
+            <div id="leaderboard-chevron" style="width: 24px; height: 24px; border-radius: 50%; background: rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: center; transition: transform 0.3s ease; color: var(--text-secondary);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </div>
+          </div>
+        </button>
+
+        <!-- Collapsible Content (Collapsed by default) -->
+        <div id="leaderboard-content-wrapper" style="display: none; padding: 16px 18px 18px 18px; border-top: 1px solid rgba(255, 255, 255, 0.05); background: rgba(0, 0, 0, 0.2);">
+          <div id="ai-leaderboard" style="overflow-x: auto; width: 100%;">
+             <!-- Injected via dashboard.js -->
+             <p style="color: var(--text-secondary); text-align: center; padding: 16px;">Loading AI Model performance data...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Quant Analytics Ratios Banner -->
     <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin: 0 auto 16px auto; width: 100%; max-width: 1600px; padding: 0 24px; box-sizing: border-box;">
       <div class="metric-card" style="display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 12px 16px;">
@@ -155,6 +203,7 @@ dashboard.get('/', (c) => {
     <!-- Main Content -->
     <!-- Bento Grid Content -->
     <main class="bento-grid">
+      <!-- 1. TV Chart (Left Side of Row 1) -->
       <section class="bento-item chart-section">
         <div class="chart-header-overlay">
           <h2 class="bento-title">Market Data</h2>
@@ -166,7 +215,43 @@ dashboard.get('/', (c) => {
         <div id="tv-chart-container" style="width: 100%; height: 100%;"></div>
       </section>
 
-      <!-- Position Metrics -->
+      <!-- 2. System Execution Logs (Right Side of Chart - Row 1) -->
+      <section class="bento-item logs-section">
+        <div class="bento-header" style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <h2 class="bento-title" style="margin: 0;">System Execution Logs</h2>
+            <span class="pulse-dot" style="width: 6px; height: 6px;" title="Live log stream active"></span>
+          </div>
+          
+          <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+            <div class="log-tabs">
+              <button class="log-tab active" data-filter="all">All</button>
+              <button class="log-tab" data-filter="trade">Trades</button>
+              <button class="log-tab" data-filter="ai">AI Signals</button>
+              <button class="log-tab" data-filter="ec2">EC2 Daemon</button>
+              <button class="log-tab" data-filter="error">Errors</button>
+            </div>
+            
+            <div style="display: flex; gap: 4px; align-items: center;">
+              <button id="log-copy-btn" class="btn btn-outline" style="padding: 4px 8px; font-size: 11px; display: flex; align-items: center; gap: 4px;" title="Copy Visible Logs to Clipboard">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <span id="log-copy-text">Copy</span>
+              </button>
+              <button id="log-export-btn" class="btn btn-outline" style="padding: 4px 8px; font-size: 11px; display: flex; align-items: center; gap: 4px;" title="Export Logs to TXT File">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              </button>
+              <button id="log-clear-btn" class="btn btn-outline" style="padding: 4px 8px; font-size: 11px; display: flex; align-items: center; gap: 4px;" title="Clear Logs View">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div id="system-logs" class="terminal" style="flex-grow: 1; height: 100%; min-height: 0; overflow-y: auto;">
+          <!-- Logs injected by JS -->
+        </div>
+      </section>
+
+      <!-- 3. Position Metrics (Moved Below Chart - Row 2 Left) -->
       <section class="bento-item position-section">
         <div class="bento-header">
           <h2 class="bento-title">Active Position</h2>
@@ -194,7 +279,7 @@ dashboard.get('/', (c) => {
         </div>
       </section>
 
-      <!-- Advanced Bot Intelligence Engine -->
+      <!-- 4. Advanced Bot Intelligence Engine (Moved Below Chart - Row 2 Right) -->
       <section class="bento-item bot-intel-section">
         <div class="bento-header" style="margin-bottom: 16px;">
           <h2 class="bento-title">Bot Intelligence</h2>
@@ -276,28 +361,7 @@ dashboard.get('/', (c) => {
         </div>
       </section>
 
-      <!-- Differentiated Terminal Logs -->
-      <section class="bento-item logs-section">
-        <div class="bento-header" style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
-          <h2 class="bento-title">System Execution Logs</h2>
-          <div style="display: flex; gap: 8px; align-items: center;">
-            <div class="log-tabs">
-              <button class="log-tab active" data-filter="all">All</button>
-              <button class="log-tab" data-filter="trade">Trades</button>
-              <button class="log-tab" data-filter="ec2">EC2 Daemon</button>
-              <button class="log-tab" data-filter="error">Errors</button>
-            </div>
-            <button id="log-export-btn" class="btn btn-outline" style="padding: 4px 8px; font-size: 11px;" title="Export Logs to CSV">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            </button>
-          </div>
-        </div>
-        <div id="system-logs" class="terminal">
-          <!-- Logs injected by JS -->
-        </div>
-      </section>
-
-      <!-- Ledger -->
+      <!-- 5. Order Ledger -->
       <section class="bento-item ledger-section">
         <div class="bento-header">
           <h2 class="bento-title">Order Ledger</h2>
@@ -319,24 +383,13 @@ dashboard.get('/', (c) => {
         </div>
       </section>
 
-      <!-- Equity Curve -->
+      <!-- 6. Equity Curve -->
       <section class="bento-item equity-section">
         <div class="bento-header">
           <h2 class="bento-title">Equity Curve</h2>
         </div>
         <div style="width: 100%; height: 100%; position: relative; min-height: 200px;">
           <canvas id="equity-chart"></canvas>
-        </div>
-      </section>
-
-      <!-- AI Leaderboard -->
-      <section class="bento-item leaderboard-section">
-        <div class="bento-header">
-          <h2 class="bento-title">🌐 AI Leaderboard</h2>
-        </div>
-        <div id="ai-leaderboard" style="overflow-x: auto; width: 100%;">
-           <!-- Injected via dashboard.js -->
-           <p style="color: var(--text-secondary); text-align: center; padding: 20px;">Loading leaderboard...</p>
         </div>
       </section>
     </main>

@@ -151,15 +151,14 @@ dialog::backdrop {
 .bento-title { font-size: 1rem; color: var(--text-secondary); font-weight: 500; display: flex; align-items: center; gap: 8px; }
 
 /* Panel Spans */
-.chart-section { grid-column: span 8; grid-row: span 2; min-height: 640px; padding: 0; }
+.chart-section { grid-column: span 7; min-height: 580px; height: 580px; padding: 0; }
 .chart-header-overlay { position: absolute; top: 24px; left: 24px; z-index: 10; pointer-events: none; display: flex; flex-direction: column; gap: 12px; }
 .chart-actions { display: flex; gap: 8px; pointer-events: auto; }
+.logs-section { grid-column: span 5; min-height: 580px; height: 580px; }
 .position-section { grid-column: span 4; }
-.bot-intel-section { grid-column: span 4; }
-.logs-section { grid-column: span 7; height: 380px; }
-.ledger-section { grid-column: span 5; height: 380px; }
-.equity-section { grid-column: span 7; height: 380px; }
-.leaderboard-section { grid-column: span 5; height: 380px; }
+.bot-intel-section { grid-column: span 8; }
+.ledger-section { grid-column: span 6; height: 380px; }
+.equity-section { grid-column: span 6; height: 380px; }
 .persona-section { grid-column: span 12; }
 
 /* Typography & Badges */
@@ -204,8 +203,12 @@ dialog::backdrop {
 .hide-desktop { display: none !important; }
 
 @media (max-width: 1200px) {
-  .chart-section { grid-column: span 12; grid-row: span 1; min-height: 500px; }
-  .position-section, .bot-intel-section { grid-column: span 6; }
+  .chart-section { grid-column: span 12; grid-row: span 1; min-height: 480px; height: 480px; }
+  .logs-section { grid-column: span 12; min-height: 440px; height: 440px; }
+  .position-section { grid-column: span 5; }
+  .bot-intel-section { grid-column: span 7; }
+  .ledger-section { grid-column: span 6; height: 380px; }
+  .equity-section { grid-column: span 6; height: 380px; }
 }
 @media (max-width: 900px) {
   .brand-text { display: none; }
@@ -213,7 +216,8 @@ dialog::backdrop {
   .hide-desktop { display: flex !important; }
 }
 @media (max-width: 768px) {
-  .logs-section, .ledger-section, .position-section, .bot-intel-section, .equity-section, .leaderboard-section { grid-column: span 12; }
+  .chart-section { grid-column: span 12; min-height: 380px; height: 380px; }
+  .logs-section, .ledger-section, .position-section, .bot-intel-section, .equity-section { grid-column: span 12; }
   .hide-mobile { display: none !important; }
   .topbar { padding: 12px 16px; }
   
@@ -226,43 +230,53 @@ dialog::backdrop {
 
 /* Journal Modal Overlay */
 .modal-overlay {
-    display: none;
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    background: rgba(0, 0, 0, 0.7);
-    z-index: 10000;
-    backdrop-filter: blur(5px);
-    align-items: center; 
-    justify-content: center;
+    display: none !important;
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    background: rgba(0, 0, 0, 0.8) !important;
+    z-index: 99999 !important;
+    backdrop-filter: blur(12px) !important;
+    -webkit-backdrop-filter: blur(12px) !important;
+    align-items: center !important; 
+    justify-content: center !important;
+    margin: 0 !important;
+    padding: 0 !important;
 }
 
 .modal-overlay.active {
-    display: flex;
+    display: flex !important;
 }
 
 .modal-content {
-    background: #121212;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 16px;
-    padding: 20px; /* Mobile first padding */
-    width: 92%;
-    max-width: 420px;
-    box-shadow: 0 15px 35px rgba(0,0,0,0.6);
-    transform: translateY(20px);
-    opacity: 0;
+    background: rgba(18, 18, 18, 0.95) !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    border-radius: 16px !important;
+    padding: 24px !important;
+    width: 92% !important;
+    max-width: 420px !important;
+    box-shadow: 0 25px 50px -12px rgba(0,0,0,0.8) !important;
+    position: relative !important;
+    z-index: 100000 !important;
+    margin: auto !important;
     animation: modalSlideUp 0.3s forwards cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @media (min-width: 600px) {
     .modal-content {
-        padding: 32px; /* Desktop padding */
+        padding: 32px !important;
     }
 }
 
 @keyframes modalSlideUp {
+    from {
+        transform: translateY(20px);
+        opacity: 0;
+    }
     to {
         transform: translateY(0);
         opacity: 1;
