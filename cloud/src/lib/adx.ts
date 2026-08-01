@@ -1,82 +1,59 @@
-import { UpstoxCandle } from './types';
+// ============================================
+// ADX — Average Directional Index (Period 14)
+// Two exports:
+//   calculateADX()       → single scalar (latest value)
+//   calculateADXSeries() → full array (used by screener)
+// ============================================
 
-export function calculateADX(candles: UpstoxCandle[], period = 14): number {
-  if (candles.length < period * 2) {
-    return 0; // Not enough data for smoothed ADX
-  }
+import type { Candle } from './atr';
 
-  let trSum = 0;
-  let pdmSum = 0;
-  let ndmSum = 0;
+/**
+ * Returns the full ADX series aligned to the input candles array.
+ * Used by the MTF Screener which indexes [adxSeries.length - 1].
+ */
+export function calculateADXSeries(candles: Candle[], period = 14): number[] {
+  const result = new Array(candles.length).fill(0);
+  if (candles.length < period * 2) return result;
 
-  // Initial True Range and Directional Movement
+  let trSum = 0, pdmSum = 0, ndmSum = 0;
+
   for (let i = 1; i <= period; i++) {
-    const current = candles[i];
-    const prev = candles[i - 1];
-
+    const cur = candles[i], prev = candles[i - 1];
     const tr = Math.max(
-      current.high - current.low,
-      Math.abs(current.high - prev.close),
-      Math.abs(current.low - prev.close)
+      cur.high - cur.low,
+      Math.abs(cur.high - prev.close),
+      Math.abs(cur.low  - prev.close)
     );
-
-    const upMove = current.high - prev.high;
-    const downMove = prev.low - current.low;
-
-    let pdm = 0;
-    let ndm = 0;
-
-    if (upMove > downMove && upMove > 0) {
-      pdm = upMove;
-    }
-    if (downMove > upMove && downMove > 0) {
-      ndm = downMove;
-    }
-
-    trSum += tr;
-    pdmSum += pdm;
-    ndmSum += ndm;
+    const upMove   = cur.high - prev.high;
+    const downMove = prev.low  - cur.low;
+    trSum  += tr;
+    pdmSum += (upMove > downMove && upMove > 0)   ? upMove   : 0;
+    ndmSum += (downMove > upMove && downMove > 0) ? downMove : 0;
   }
 
-  let smoothedTR = trSum;
-  let smoothedPDM = pdmSum;
-  let smoothedNDM = ndmSum;
-  let dxSum = 0;
-
-  let lastADX = 0;
+  let smoothedTR = trSum, smoothedPDM = pdmSum, smoothedNDM = ndmSum;
+  let dxSum = 0, lastADX = 0;
 
   for (let i = period + 1; i < candles.length; i++) {
-    const current = candles[i];
-    const prev = candles[i - 1];
-
+    const cur = candles[i], prev = candles[i - 1];
     const tr = Math.max(
-      current.high - current.low,
-      Math.abs(current.high - prev.close),
-      Math.abs(current.low - prev.close)
+      cur.high - cur.low,
+      Math.abs(cur.high - prev.close),
+      Math.abs(cur.low  - prev.close)
     );
+    const upMove   = cur.high - prev.high;
+    const downMove = prev.low  - cur.low;
+    const pdm = (upMove > downMove && upMove > 0)   ? upMove   : 0;
+    const ndm = (downMove > upMove && downMove > 0) ? downMove : 0;
 
-    const upMove = current.high - prev.high;
-    const downMove = prev.low - current.low;
-
-    let pdm = 0;
-    let ndm = 0;
-
-    if (upMove > downMove && upMove > 0) {
-      pdm = upMove;
-    }
-    if (downMove > upMove && downMove > 0) {
-      ndm = downMove;
-    }
-
-    smoothedTR = smoothedTR - (smoothedTR / period) + tr;
-    smoothedPDM = smoothedPDM - (smoothedPDM / period) + pdm;
-    smoothedNDM = smoothedNDM - (smoothedNDM / period) + ndm;
+    smoothedTR  = smoothedTR  - smoothedTR  / period + tr;
+    smoothedPDM = smoothedPDM - smoothedPDM / period + pdm;
+    smoothedNDM = smoothedNDM - smoothedNDM / period + ndm;
 
     const pdi = (smoothedPDM / smoothedTR) * 100;
     const ndi = (smoothedNDM / smoothedTR) * 100;
+    const dx  = (Math.abs(pdi - ndi) / (pdi + ndi)) * 100;
 
-    const dx = (Math.abs(pdi - ndi) / (pdi + ndi)) * 100;
-    
     if (i === period * 2 - 1) {
       dxSum += dx;
       lastADX = dxSum / period;
@@ -85,7 +62,18 @@ export function calculateADX(candles: UpstoxCandle[], period = 14): number {
     } else {
       dxSum += dx;
     }
+
+    result[i] = lastADX;
   }
 
-  return lastADX;
+  return result;
+}
+
+/**
+ * Returns the latest ADX scalar value.
+ * Used by the dashboard and legacy cron references.
+ */
+export function calculateADX(candles: Candle[], period = 14): number {
+  const series = calculateADXSeries(candles, period);
+  return series[series.length - 1] ?? 0;
 }

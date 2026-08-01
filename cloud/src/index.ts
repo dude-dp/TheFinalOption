@@ -1,31 +1,27 @@
 // ============================================
-// TheFinalOption — Main Entry Point
-// Exports: fetch (HTTP) + scheduled (Cron) + queue
+// TheFinalOption — Cloud Brain (MTF Only)
 // ============================================
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from './lib/types';
 import apiRoutes from './routes/api';
-import dashboardRoutes from './routes/dashboard';
-import { BacktestPage } from './routes/backtest';
 import { MTFScreenerPage } from './routes/mtf-screener';
 import { handleScheduled, takeConfigSnapshot } from './cron';
 import { handleQueue } from './queue';
 
 const app = new Hono<{ Bindings: Env }>();
 
-// --- Middleware ---
 app.use('*', cors());
 
-// --- Mount Routes ---
-// Dashboard at root
-app.route('/', dashboardRoutes);
+// Default dashboard is now the MTF Screener
+app.get('/', (c) => {
+  c.header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  c.header('Pragma', 'no-cache');
+  c.header('Expires', '0');
+  return c.html(MTFScreenerPage());
+});
 
-// NEW: Backtest UI Page
-app.get('/backtest', (c) => c.html(BacktestPage()));
-
-// NEW: Quant MTF Screener UI Page
 app.get('/mtf-screener', (c) => {
   c.header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
   c.header('Pragma', 'no-cache');
@@ -33,18 +29,14 @@ app.get('/mtf-screener', (c) => {
   return c.html(MTFScreenerPage());
 });
 
-// Handle favicon.ico to prevent 404 console warnings
 app.get('/favicon.ico', (c) => c.body(null, 204));
+app.route('/', apiRoutes); // Mount API routes for Supabase/DB interactions
 
-// API routes
-app.route('/', apiRoutes);
-
-// --- Export Handler ---
 export default {
-  // HTTP requests via Hono
   fetch: app.fetch,
 
-  // Cron trigger — fires every minute during market hours
+  // Cron: '30 18 * * *' = midnight IST config snapshot
+  //       All other crons = MTF Screener producer
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     if (event.cron === '30 18 * * *') {
       ctx.waitUntil(takeConfigSnapshot(env));
@@ -53,8 +45,8 @@ export default {
     }
   },
 
-  // Queue consumer — async order processing
-  async queue(batch: MessageBatch, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(handleQueue(batch as MessageBatch<any>, env));
-  },
+  // Queue: CF delivers batches from mtf-screener-queue here
+  async queue(batch: MessageBatch<import('./lib/types').MTFQueueMessage>, env: Env): Promise<void> {
+    await handleQueue(batch, env);
+  }
 };

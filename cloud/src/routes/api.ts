@@ -67,6 +67,7 @@ api.use('/api/summary', dashboardAuth);
 api.use('/api/config', dashboardAuth);
 api.use('/api/mtf-screener', dashboardAuth);
 api.use('/api/mtf-screener/*', dashboardAuth);
+api.use('/api/logs', dashboardAuth);
 
 async function getUpstoxAccessToken(c: any): Promise<string | null> {
   try {
@@ -85,8 +86,50 @@ async function getUpstoxAccessToken(c: any): Promise<string | null> {
 }
 
 // =====================
+// SYSTEM LOGS ENDPOINT
+// =====================
+
+/**
+ * GET /api/logs
+ * Returns the latest system_logs rows from Supabase.
+ * Replaces the old EC2 daemon's /api/logs endpoint.
+ * Auth: dashboardAuth (Basic Auth)
+ */
+api.get('/api/logs', async (c) => {
+  const limit = Math.min(Number(c.req.query('limit') ?? 150), 500);
+  const level = c.req.query('level'); // Optional: INFO | WARN | ERROR
+
+  try {
+    const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY);
+
+    let query = supabase
+      .from('system_logs')
+      .select('id, timestamp, level, source, message')
+      .order('timestamp', { ascending: false })
+      .limit(limit);
+
+    if (level && ['INFO', 'WARN', 'ERROR'].includes(level.toUpperCase())) {
+      query = query.eq('level', level.toUpperCase());
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error('[API/LOGS] Supabase query failed:', error.message);
+      return c.json({ error: 'DB query failed' }, 500);
+    }
+
+    return c.json({ logs: data ?? [], count: data?.length ?? 0 });
+  } catch (err: any) {
+    console.error('[API/LOGS] Unexpected error:', err.message);
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
+// =====================
 // DAEMON ENDPOINTS
 // =====================
+
 
 /**
  * POST /api/log

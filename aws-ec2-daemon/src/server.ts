@@ -4,161 +4,21 @@ import { Hono } from 'hono';
 import { basicAuth } from 'hono/basic-auth';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { createClient } from '@supabase/supabase-js';
 
 const app = new Hono();
 
-// Initialize Supabase Client using your environment configurations
-const supabaseUrl = process.env.SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '';
-const supabase = (supabaseUrl && supabaseKey)
-  ? createClient(supabaseUrl, supabaseKey)
-  : null;
-
-// Guard dashboard access securely
 app.use('/*', basicAuth({
   username: process.env.ADMIN_USER || 'dp',
   password: process.env.POLL_SECRET || 'Healthywealth007'
 }));
 
-// Helper to write dedicated backfill logs
-function logToBackfill(message: string) {
-  const timestamp = new Date().toISOString();
-  const formattedMessage = `[${timestamp}] ${message}\n`;
-  const logDir = path.resolve('logs');
-  if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
-  fs.appendFileSync(path.join(logDir, 'backfill.log'), formattedMessage, 'utf-8');
-}
+// Strictly fetch EC2 Daemon logs
+app.get('/api/logs/daemon', (c) => {
+  const logPath = path.resolve('logs', 'daemon.log');
+  if (!fs.existsSync(logPath)) return c.text('Log file empty or not initialized yet.');
 
-// 1. Live Upstox API Fetcher
-async function fetchUpstoxHistoricalData(dateStr: string) {
-  // Upstox API requires URL-encoded instrument keys. 'NSE_INDEX|Nifty 50' is the standard key for the NIFTY Spot.
-  const instrumentKey = encodeURIComponent('NSE_INDEX|Nifty 50');
-  const interval = '1minute';
-  
-  // Historical API Endpoint: /historical-candle/{instrumentKey}/{interval}/{to_date}/{from_date}
-  const url = `https://api.upstox.com/v2/historical-candle/${instrumentKey}/${interval}/${dateStr}/${dateStr}`;
-
-  try {
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        // Ensure you have UPSTOX_ACCESS_TOKEN or UPSTOX_TOKEN in your .env
-        'Authorization': `Bearer ${process.env.UPSTOX_ACCESS_TOKEN || process.env.UPSTOX_TOKEN || ''}` 
-      }
-    });
-
-    if (!response.ok) {
-      logToBackfill(`HTTP Error ${response.status} fetching data for ${dateStr}`);
-      return [];
-    }
-
-    const json = await response.json() as any;
-
-    // Upstox returns success but might have null data on weekends/holidays
-    if (json.status !== 'success' || !json.data || !json.data.candles) {
-      return []; 
-    }
-
-    // Upstox format: [ timestamp, open, high, low, close, volume, open_interest ]
-    const formattedCandles = json.data.candles.map((candleData: any[]) => {
-      const timestamp = candleData[0]; // e.g., "2026-07-13T09:15:00+05:30"
-      return {
-        timestamp: new Date(timestamp).toISOString(), // Format to ISO to match nifty_candles schema
-        open: parseFloat(candleData[1]),
-        high: parseFloat(candleData[2]),
-        low: parseFloat(candleData[3]),
-        close: parseFloat(candleData[4]),
-        volume: parseInt(candleData[5], 10)
-      };
-    });
-
-    // Upstox returns candles in descending order (newest first). 
-    // We reverse it so it goes chronologically (09:15 AM -> 03:30 PM).
-    return formattedCandles.reverse();
-
-  } catch (error: any) {
-    logToBackfill(`Network Error fetching Upstox data for ${dateStr}: ${error.message}`);
-    return [];
-  }
-}
-
-// 2. Updated Execution Engine (Using 'nifty_candles' table)
-async function runHistoricalBackfill(days: number) {
-  try {
-    logToBackfill(`STARTING BACKFILL: Initiating historical sync for the past ${days} days.`);
-    
-    for (let i = days; i >= 0; i--) {
-      const targetDate = new Date();
-      targetDate.setDate(targetDate.getDate() - i);
-      
-      // Format as YYYY-MM-DD for Upstox API
-      const dateStr = targetDate.toISOString().split('T')[0];
-      
-      logToBackfill(`PROCESSING: Fetching historical NIFTY Spot data from Upstox for date: ${dateStr}`);
-      
-      const candles = await fetchUpstoxHistoricalData(dateStr);
-      
-      if (!candles || candles.length === 0) {
-        logToBackfill(`WARN: 0 candles retrieved for ${dateStr}. (Likely a weekend or market holiday). Skipping.`);
-        continue;
-      }
-
-      logToBackfill(`INGESTION: Retrieved ${candles.length} real 1-min candles for ${dateStr}. Streaming to Supabase 'nifty_candles'...`);
-      
-      if (!supabase) {
-        logToBackfill(`WARNING: Supabase keys missing. Cannot write to database.`);
-        continue;
-      }
-
-      const { error } = await supabase
-        .from('nifty_candles')
-        .upsert(candles, { 
-          onConflict: 'timestamp',
-          ignoreDuplicates: false 
-        });
-      
-      if (error) {
-        throw new Error(`Supabase Insert Failed: ${error.message}`);
-      }
-      
-      logToBackfill(`SUCCESS: Successfully committed ${candles.length} session records to Supabase for ${dateStr}.`);
-      
-      // Artificial delay of 500ms between daily API calls to avoid hitting Upstox rate limits
-      await new Promise(resolve => setTimeout(resolve, 500)); 
-    }
-    
-    logToBackfill(`COMPLETED: Full backfill migration sequence finished cleanly.`);
-  } catch (error: any) {
-    logToBackfill(`FATAL ERROR DURING BACKFILL: ${error.message || error}`);
-  }
-}
-
-// Endpoint to trigger the backfill processing loop asynchronously
-app.post('/api/backfill', async (c) => {
-  const body = await c.req.json();
-  const days = parseInt(body.days, 10) || 1;
-
-  // Fire-and-forget backfill process in the background to prevent HTTP network timeouts
-  runHistoricalBackfill(days);
-
-  return c.json({ success: true, message: `Backfill routine started for ${days} days.` });
-});
-
-// Endpoint to retrieve specific target log files dynamically
-app.get('/api/logs/:type', (c) => {
-  const logType = c.req.param('type');
-  const filename = logType === 'backfill' ? 'backfill.log' : 'daemon.log';
-  const logPath = path.resolve('logs', filename);
-
-  if (!fs.existsSync(logPath)) {
-    return c.text('Log file allocation empty or not initialized yet.');
-  }
-
-  // Read the latest segment of the log file to maximize UI efficiency
   const fileStats = fs.statSync(logPath);
-  const maxReadBytes = 200000; // ~200KB chunk window
+  const maxReadBytes = 200000; 
   const startPos = Math.max(0, fileStats.size - maxReadBytes);
 
   const buffer = Buffer.alloc(fileStats.size - startPos);
@@ -169,121 +29,35 @@ app.get('/api/logs/:type', (c) => {
   return c.text(buffer.toString('utf-8'));
 });
 
-// Primary HTML UI Render
 app.get('/', (c) => {
   return c.html(`
     <!DOCTYPE html>
     <html lang="en">
     <head>
       <meta charset="UTF-8">
-      <title>TheFinalOption - EC2 Unified Terminal</title>
+      <title>MTF Screener - EC2 Terminal</title>
       <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-          background-color: #301934;
-          color: #e0d5e3;
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-          padding: 30px;
-        }
-        header {
-          border-bottom: 1px solid rgba(255,255,255,0.1);
-          padding-bottom: 20px;
-          margin-bottom: 30px;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
+        body { background-color: #301934; color: #e0d5e3; font-family: sans-serif; padding: 30px; }
+        header { border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 20px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: center; }
         h1 { color: #ffffff; font-size: 24px; font-weight: 600; }
         .badge { background: #00ff66; color: #1a081c; padding: 4px 8px; font-size: 12px; font-weight: bold; border-radius: 4px; }
-        
-        .card {
-          background: rgba(255,255,255,0.03);
-          border: 1px solid rgba(255,255,255,0.08);
-          border-radius: 8px;
-          padding: 24px;
-          margin-bottom: 24px;
-        }
+        .card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 24px; margin-bottom: 24px; }
         h2 { font-size: 18px; margin-bottom: 16px; color: #ffffff; }
-        
-        .form-group { margin-bottom: 16px; }
-        label { display: block; margin-bottom: 8px; font-size: 14px; color: #b5a4ba; }
-        input[type="number"] {
-          background: rgba(0,0,0,0.2);
-          border: 1px solid rgba(255,255,255,0.15);
-          color: #fff;
-          padding: 10px;
-          border-radius: 4px;
-          width: 100%;
-          max-width: 200px;
-          font-size: 16px;
-        }
-        
-        .btn {
-          background: #8e44ad;
-          color: #fff;
-          border: none;
-          padding: 10px 20px;
-          font-size: 14px;
-          font-weight: 600;
-          border-radius: 4px;
-          cursor: pointer;
-          transition: background 0.2s;
-        }
+        .btn { background: #8e44ad; color: #fff; border: none; padding: 10px 20px; font-size: 14px; font-weight: 600; border-radius: 4px; cursor: pointer; }
         .btn:hover { background: #9b59b6; }
-        .btn-secondary { background: rgba(255,255,255,0.1); color: #fff; margin-left: 10px; }
-        .btn-secondary:hover { background: rgba(255,255,255,0.2); }
-        
-        /* Modal Layer Styling */
-        .modal-overlay {
-          position: fixed;
-          top: 0; left: 0; right: 0; bottom: 0;
-          background: rgba(26, 8, 28, 0.85);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          opacity: 0; pointer-events: none;
-          transition: opacity 0.3s ease;
-          z-index: 1000;
-        }
+        .btn-secondary { background: rgba(255,255,255,0.1); margin-left: 10px; }
+        .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(26, 8, 28, 0.85); display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: 0.3s; z-index: 1000; }
         .modal-overlay.active { opacity: 1; pointer-events: auto; }
-        .modal {
-          background: #251228;
-          border: 1px solid rgba(255,255,255,0.15);
-          width: 90%;
-          max-width: 900px;
-          height: 80vh;
-          border-radius: 8px;
-          display: flex;
-          flex-direction: column;
-          overflow: hidden;
-          box-shadow: 0 20px 40px rgba(0,0,0,0.5);
-        }
-        .modal-header {
-          padding: 16px 24px;
-          border-bottom: 1px solid rgba(255,255,255,0.1);
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-        .modal-tabs { display: flex; gap: 10px; }
-        .tab-btn {
-          background: transparent; border: none; color: #b5a4ba;
-          padding: 8px 16px; cursor: pointer; font-size: 14px;
-          border-radius: 4px;
-        }
-        .tab-btn.active { background: rgba(255,255,255,0.1); color: #fff; font-weight: bold; }
-        .modal-body {
-          flex: 1; background: #160718; padding: 20px;
-          overflow-y: auto; font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-          font-size: 13px; line-height: 1.6; color: #00ff66; white-space: pre-wrap;
-        }
+        .modal { background: #251228; border: 1px solid rgba(255,255,255,0.15); width: 90%; max-width: 900px; height: 80vh; border-radius: 8px; display: flex; flex-direction: column; }
+        .modal-header { padding: 16px 24px; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center; }
+        .modal-body { flex: 1; background: #160718; padding: 20px; overflow-y: auto; font-family: monospace; font-size: 13px; color: #00ff66; white-space: pre-wrap; }
       </style>
     </head>
     <body>
-
       <header>
         <div>
-          <h1>TheFinalOption Execution Plane</h1>
+          <h1>MTF Screener Execution Plane</h1>
           <p style="font-size: 14px; color: #b5a4ba; margin-top: 4px;">Unified EC2 Standalone Deployment Instance</p>
         </div>
         <span class="badge">EC2 INSTANCE ACTIVE</span>
@@ -291,77 +65,39 @@ app.get('/', (c) => {
 
       <div class="card">
         <h2>System Telemetry Logs</h2>
-        <p style="font-size: 14px; margin-bottom: 20px; color: #b5a4ba;">
-          Monitor real-time system logs, trade executions, and server diagnostics directly from the EC2 daemon.
-        </p>
-        
-        <button class="btn" onclick="openLogModal('daemon')">View Live System Logs</button>
+        <p style="font-size: 14px; margin-bottom: 20px; color: #b5a4ba;">Monitor the 6-worker concurrent MTF screener.</p>
+        <button class="btn" onclick="openLogModal()">View Live System Logs</button>
       </div>
 
       <div class="modal-overlay" id="logModalOverlay">
         <div class="modal">
           <div class="modal-header">
-            <div class="modal-tabs">
-              <button class="tab-btn" id="tab-daemon" onclick="switchLogTab('daemon')">System Daemon Logs</button>
-              <button class="tab-btn" id="tab-backfill" onclick="switchLogTab('backfill')">Backfill Engine Logs</button>
-            </div>
-            <button class="btn btn-secondary" style="margin: 0;" onclick="closeLogModal()">Close Terminal</button>
+            <h2>System Daemon Logs</h2>
+            <button class="btn btn-secondary" onclick="closeLogModal()">Close Terminal</button>
           </div>
           <div class="modal-body" id="modalLogContent">Loading execution streams...</div>
         </div>
       </div>
 
       <script>
-        let activeLogType = 'daemon';
         let logInterval = null;
-
-        async function triggerBackfill() {
-          const daysValue = document.getElementById('backfillDays').value;
-          if(!confirm(\`Confirm historical record backfill migration for the last \${daysValue} days inside Supabase?\`)) return;
-          
-          try {
-            const res = await fetch('/api/backfill', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ days: daysValue })
-            });
-            const data = await res.json();
-            alert(data.message || 'Backfill successfully initialized.');
-            openLogModal('backfill');
-          } catch (err) {
-            alert('Failed to properly queue target migration run.');
-          }
-        }
-
-        function openLogModal(type = 'daemon') {
+        function openLogModal() {
           document.getElementById('logModalOverlay').classList.add('active');
-          switchLogTab(type);
-          // Start live poll sequence every 3 seconds while dashboard modal window is visible
+          fetchCurrentLogs();
           logInterval = setInterval(fetchCurrentLogs, 3000);
         }
-
         function closeLogModal() {
           document.getElementById('logModalOverlay').classList.remove('active');
           if(logInterval) clearInterval(logInterval);
         }
-
-        function switchLogTab(type) {
-          activeLogType = type;
-          document.getElementById('tab-daemon').classList.toggle('active', type === 'daemon');
-          document.getElementById('tab-backfill').classList.toggle('active', type === 'backfill');
-          fetchCurrentLogs();
-        }
-
         async function fetchCurrentLogs() {
           const contentDiv = document.getElementById('modalLogContent');
           try {
-            const res = await fetch(\`/api/logs/\${activeLogType}\`);
-            const text = await res.text();
-            contentDiv.textContent = text;
-            // Maintain layout pinning down at the bottom of standard stream traces
+            const res = await fetch('/api/logs/daemon');
+            contentDiv.textContent = await res.text();
             contentDiv.scrollTop = contentDiv.scrollHeight;
           } catch(e) {
-            contentDiv.textContent = "Error gathering execution logs from target stream server.";
+            contentDiv.textContent = "Error gathering execution logs.";
           }
         }
       </script>
@@ -372,5 +108,5 @@ app.get('/', (c) => {
 
 const port = Number(process.env.HEALTH_PORT) || 3847;
 serve({ fetch: app.fetch, port, hostname: '0.0.0.0' }, (info) => {
-  console.log(`[THEFINALOPTION] Unified Management Server listening on http://0.0.0.0:${info.port}`);
+  console.log(`[MTF-SCREENER] Management Server listening on http://0.0.0.0:${info.port}`);
 });

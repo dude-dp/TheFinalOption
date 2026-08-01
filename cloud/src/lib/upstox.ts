@@ -327,3 +327,87 @@ export async function fetchHistoricalCandlesRange(accessToken: string, fromDate:
     volume: c[5] || 0
   })).reverse(); // Upstox returns newest first; reverse to chronological ASC
 }
+
+// ============================================
+// MTF Screener Candle Fetcher
+// Fetches historical candles for any instrument
+// Used by the Queue Consumer worker
+// ============================================
+
+/**
+ * Fetch historical candles for a given instrument token.
+ * Supports '30minute' and 'day' intervals.
+ * Returns candles in oldest-first order.
+ *
+ * @param accessToken  Upstox Bearer token
+ * @param instrumentKey  e.g. "NSE_EQ|INE002A01018"
+ * @param interval  '30minute' | 'day'
+ * @param daysBack  Number of calendar days of history to fetch
+ */
+export async function fetchScreenerCandles(
+  accessToken: string,
+  instrumentKey: string,
+  interval: '30minute' | 'day',
+  daysBack: number = 5
+): Promise<import('./types').Candle[]> {
+  const encoded  = encodeURIComponent(instrumentKey);
+  const today    = new Date().toISOString().split('T')[0];
+  const past     = new Date(Date.now() - daysBack * 86_400_000).toISOString().split('T')[0];
+  const url      = `${BASE_URL}/v2/historical-candle/${encoded}/${interval}/${today}/${past}`;
+
+  const headers: Record<string, string> = {
+    'Accept':        'application/json',
+    'Authorization': `Bearer ${accessToken}`,
+    'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+  };
+
+  // --- Fetch with 3 retries + 429 back-off ---
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12_000);
+
+    try {
+      const res = await fetch(url, { headers, signal: controller.signal });
+      clearTimeout(timer);
+
+      if (res.status === 429) {
+        const wait = 3000 * attempt + Math.floor(Math.random() * 1000);
+        console.warn(`[UPSTOX] 429 on ${instrumentKey} — backing off ${wait}ms`);
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
+
+      if (!res.ok) {
+        console.warn(`[UPSTOX] HTTP ${res.status} for ${instrumentKey} (attempt ${attempt})`);
+        if (attempt < 3) {
+          await new Promise(r => setTimeout(r, 1000 * attempt));
+          continue;
+        }
+        return [];
+      }
+
+      const json: any = await res.json();
+      if (json?.status !== 'success' || !json?.data?.candles?.length) return [];
+
+      return (json.data.candles as any[][]).map(c => ({
+        timestamp: c[0] as string,
+        open:      Number(c[1]),
+        high:      Number(c[2]),
+        low:       Number(c[3]),
+        close:     Number(c[4]),
+        volume:    Number(c[5])
+      })).reverse(); // oldest → newest
+
+    } catch (err: any) {
+      clearTimeout(timer);
+      if (err.name === 'AbortError') {
+        console.warn(`[UPSTOX] Timeout for ${instrumentKey} (attempt ${attempt})`);
+      } else {
+        console.error(`[UPSTOX] Network error for ${instrumentKey}: ${err.message}`);
+      }
+      if (attempt < 3) await new Promise(r => setTimeout(r, 1000 * attempt));
+    }
+  }
+
+  return [];
+}

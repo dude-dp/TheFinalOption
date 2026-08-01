@@ -1,21 +1,21 @@
 {
   "name": "the-final-option",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "Hybrid NIFTY Options Trading Bot — Cloud Brain (Cloudflare) + Local Muscle (Node.js Daemon)",
+  "description": "TheFinalOption — Serverless MTF Screener (Cloudflare + Supabase)",
   "workspaces": [
-    "cloud",
-    "local-daemon"
+    "cloud"
   ],
   "scripts": {
-    "dev:cloud": "cd cloud && npx wrangler dev",
-    "deploy:cloud": "cd cloud && npx wrangler deploy",
-    "dev:daemon": "cd local-daemon && npx tsx src/index.ts",
-    "daemon:pm2": "cd local-daemon && npx pm2 start ecosystem.config.cjs",
-    "db:init": "cd cloud && npx wrangler d1 execute thefinaloption-db --remote --file=./schema.sql",
-    "db:init:local": "cd cloud && npx wrangler d1 execute thefinaloption-db --local --file=./schema.sql"
+    "dev":         "cd cloud && npx wrangler dev",
+    "deploy":      "cd cloud && npx wrangler deploy",
+    "tail":        "cd cloud && npx wrangler tail",
+    "type-check":  "cd cloud && npx tsc --noEmit",
+    "db:migrate":  "cd cloud && npx wrangler d1 execute thefinaloption-db --remote --file=./migrations/system_logs.sql",
+    "db:migrate:local": "cd cloud && npx wrangler d1 execute thefinaloption-db --local --file=./migrations/system_logs.sql"
   },
   "devDependencies": {
-    "wrangler": "^4.108.0"
+    "wrangler": "^4.110.0"
   }
 }
+
