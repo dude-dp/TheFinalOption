@@ -173,10 +173,29 @@ export async function getLTP(
   return ltpMap;
 }
 
+export async function getRawFunds(token: string): Promise<any> {
+  const data = await upstoxGet('/v2/user/get-funds-and-margin', token);
+  return data?.data || null;
+}
+
 // --- Positions ---
 
 export async function getPositions(token: string): Promise<any[]> {
   const data = await upstoxGet('/v2/portfolio/short-term-positions', token);
+  return data?.data || [];
+}
+
+// --- Holdings ---
+
+export async function getHoldings(token: string): Promise<any[]> {
+  const data = await upstoxGet('/v2/portfolio/long-term-holdings', token);
+  return data?.data || [];
+}
+
+// --- Order Book ---
+
+export async function getOrderBook(token: string): Promise<any[]> {
+  const data = await upstoxGet('/v2/order/retrieve-all', token);
   return data?.data || [];
 }
 

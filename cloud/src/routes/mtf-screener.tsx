@@ -14,6 +14,7 @@ export const MTFScreenerPage = () => (
       <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
       <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 
+      <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
       <script src="https://cdn.tailwindcss.com"></script>
       <script dangerouslySetInnerHTML={{
         __html: `
@@ -501,6 +502,38 @@ export const MTFScreenerPage = () => (
 
       </main>
 
+      {/* TRADINGVIEW INTERACTIVE CHART POPUP MODAL */}
+      <div id="tradingview-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6 bg-black/75 backdrop-blur-md hidden opacity-0 transition-opacity duration-200">
+        <div class="w-full max-w-6xl h-[85vh] bg-carbon border border-gunmetal rounded-xl shadow-2xl flex flex-col overflow-hidden">
+          {/* Modal Header */}
+          <div class="p-4 bg-gunmetal border-b border-irongrey flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <div class="w-8 h-8 rounded bg-emerald flex items-center justify-center text-carbon font-extrabold font-mono text-sm">TV</div>
+              <div>
+                <div class="flex items-center gap-2">
+                  <h3 id="tv-modal-symbol" class="font-sans font-extrabold text-snow text-lg">RELIANCE</h3>
+                  <span class="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-irongrey text-paleslate">NSE</span>
+                </div>
+                <span class="text-xs text-paleslate2 font-sans">TradingView Technical Chart</span>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <button id="tv-btn-copy" onclick="copyModalSymbol()" class="px-3 py-1.5 rounded bg-irongrey hover:bg-carbon text-snow text-xs font-sans font-bold flex items-center gap-1 transition-colors border border-paleslate/20 cursor-pointer">
+                📋 Copy Symbol
+              </button>
+              <button onclick="closeTradingViewModal()" class="w-8 h-8 rounded bg-irongrey hover:bg-carbon text-snow flex items-center justify-center transition-colors cursor-pointer text-base font-bold">
+                ✕
+              </button>
+            </div>
+          </div>
+          
+          {/* Chart Widget Container */}
+          <div class="flex-1 w-full h-full relative bg-carbon" id="tradingview-widget-wrapper">
+            <div id="tv_chart_container" class="w-full h-full"></div>
+          </div>
+        </div>
+      </div>
+
       {/* Client-Side Logic */}
       <script dangerouslySetInnerHTML={{
         __html: `
@@ -513,6 +546,75 @@ export const MTFScreenerPage = () => (
         let isBriefingPanelOpen = false;
         let currentSortColumn = 'macd';
         let currentSortDirection = 'desc';
+        let currentModalSymbol = 'RELIANCE';
+
+        function openTradingViewModal(symbol) {
+          currentModalSymbol = symbol || 'RELIANCE';
+          const modal = document.getElementById('tradingview-modal');
+          const title = document.getElementById('tv-modal-symbol');
+          if (title) title.innerText = currentModalSymbol;
+          if (modal) {
+            modal.classList.remove('hidden');
+            setTimeout(() => modal.classList.remove('opacity-0'), 10);
+          }
+
+          const container = document.getElementById('tv_chart_container');
+          if (container) {
+            container.innerHTML = '';
+            const cleanSymbol = currentModalSymbol.replace('NSE:', '');
+            const tvSymbol = (cleanSymbol === 'NIFTY 50' || cleanSymbol === 'NIFTY') ? 'NSE:NIFTY' : 
+                             (cleanSymbol === 'BANKNIFTY' || cleanSymbol === 'NIFTY BANK') ? 'NSE:BANKNIFTY' : 
+                             'NSE:' + cleanSymbol;
+
+            if (typeof TradingView !== 'undefined') {
+              new TradingView.widget({
+                "autosize": true,
+                "symbol": tvSymbol,
+                "interval": "D",
+                "timezone": "Asia/Kolkata",
+                "theme": "dark",
+                "style": "1",
+                "locale": "in",
+                "toolbar_bg": "#212529",
+                "enable_publishing": false,
+                "allow_symbol_change": true,
+                "container_id": "tv_chart_container",
+                "studies": ["RSI@tv-basicstudies", "MASimple@tv-basicstudies", "MACD@tv-basicstudies"]
+              });
+            } else {
+              container.innerHTML = \`
+                <iframe 
+                  src="https://s.tradingview.com/widgetembed/?symbol=\${encodeURIComponent(tvSymbol)}&interval=D&theme=dark&style=1&locale=in" 
+                  class="w-full h-full border-0" 
+                  allowtransparency="true" 
+                  scrolling="no">
+                </iframe>
+              \`;
+            }
+          }
+        }
+        window.openTradingViewModal = openTradingViewModal;
+
+        function closeTradingViewModal() {
+          const modal = document.getElementById('tradingview-modal');
+          if (modal) {
+            modal.classList.add('opacity-0');
+            setTimeout(() => modal.classList.add('hidden'), 200);
+          }
+        }
+        window.closeTradingViewModal = closeTradingViewModal;
+
+        function copyModalSymbol() {
+          navigator.clipboard.writeText(currentModalSymbol);
+          showToast('COPIED SYMBOL: ' + currentModalSymbol);
+        }
+        window.copyModalSymbol = copyModalSymbol;
+
+        document.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape') {
+            closeTradingViewModal();
+          }
+        });
 
         function sortScreenerTable(col) {
           if (currentSortColumn === col) {
@@ -746,14 +848,12 @@ export const MTFScreenerPage = () => (
                     >
                       COPY PLAN
                     </button>
-                    <a 
-                      href="https://in.tradingview.com/chart/?symbol=NSE:\${sym}" 
-                      target="_blank" 
-                      rel="noreferrer"
-                      class="px-2.5 py-1 text-xs font-sans font-extrabold bg-white hover:bg-carbon hover:text-snow text-carbon border border-alabaster transition-all uppercase"
+                    <button
+                      onclick="openTradingViewModal('\${sym}')"
+                      class="px-2.5 py-1 text-xs font-sans font-extrabold bg-white hover:bg-carbon hover:text-snow text-carbon border border-alabaster transition-all uppercase cursor-pointer"
                     >
-                      CHART ↗
-                    </a>
+                      CHART
+                    </button>
                   </div>
                 </td>
               </tr>
@@ -1098,14 +1198,12 @@ export const MTFScreenerPage = () => (
                 <!-- Actions -->
                 <td class="px-4 py-3.5 text-right">
                   <div class="flex items-center justify-end gap-2">
-                    <a 
-                      href="https://in.tradingview.com/chart/?symbol=NSE:\${sym}" 
-                      target="_blank" 
-                      rel="noreferrer"
-                      class="px-2.5 py-1 text-xs font-sans font-extrabold bg-white hover:bg-carbon hover:text-snow text-carbon border border-alabaster hover:border-carbon transition-all uppercase shadow-2xs"
+                    <button 
+                      onclick="openTradingViewModal('\${sym}')" 
+                      class="px-2.5 py-1 text-xs font-sans font-extrabold bg-white hover:bg-carbon hover:text-snow text-carbon border border-alabaster hover:border-carbon transition-all uppercase shadow-2xs cursor-pointer"
                     >
-                      CHART ↗
-                    </a>
+                      CHART
+                    </button>
                     <button
                       onclick="toggleRowDetails('\${sym}')"
                       class="px-2 py-1 bg-white hover:bg-platinum text-carbon border border-alabaster transition-colors cursor-pointer text-xs font-sans font-bold"
@@ -1201,14 +1299,12 @@ export const MTFScreenerPage = () => (
                         >
                           COPY TRADE PLAN
                         </button>
-                        <a
-                          href="https://in.tradingview.com/chart/?symbol=NSE:\${sym}"
-                          target="_blank"
-                          rel="noreferrer"
-                          class="px-3 py-1.5 text-xs font-sans font-extrabold bg-gunmetal hover:bg-irongrey text-snow border border-gunmetal uppercase transition-colors tracking-wider"
+                        <button
+                          onclick="openTradingViewModal('\${sym}')"
+                          class="px-3 py-1.5 text-xs font-sans font-extrabold bg-gunmetal hover:bg-irongrey text-snow border border-gunmetal uppercase transition-colors tracking-wider cursor-pointer"
                         >
                           CHART
-                        </a>
+                        </button>
                       </div>
                     </div>
 

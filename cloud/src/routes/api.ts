@@ -8,7 +8,7 @@ import { createClient } from '@supabase/supabase-js';
 import { basicAuth } from 'hono/basic-auth';
 import type { Env, BotState, ConfirmRequest, OrderPayload, PollResponse } from '../lib/types';
 import { KV_KEYS } from '../lib/types';
-import { getAuthorizationUrl, exchangeCodeForToken, fetchNiftyCandles, getOptionChain, getLTP, getFundsAndMargin, fetchHistoricalCandlesRange, notifyDiscord } from '../lib/upstox';
+import { getAuthorizationUrl, exchangeCodeForToken, fetchNiftyCandles, getOptionChain, getLTP, getFundsAndMargin, getRawFunds, getPositions, getHoldings, getOrderBook, fetchHistoricalCandlesRange, notifyDiscord } from '../lib/upstox';
 import { getPreferredStrikes, shouldRollExpiry, getNearestWeeklyExpiry } from '../lib/strike';
 import { calculateLots, lotsToQuantity } from '../lib/lot-sizing';
 import { getTodayDateStr, generateCorrelationId } from '../lib/time';
@@ -71,6 +71,9 @@ api.use('/api/mtf-screener/*', dashboardAuth);
 api.use('/api/mtf-portfolio', dashboardAuth);
 api.use('/api/morning-briefing', dashboardAuth);
 api.use('/api/logs', dashboardAuth);
+api.use('/api/portfolio/*', dashboardAuth);
+api.use('/api/upstox/*', dashboardAuth);
+api.use('/api/screener/*', dashboardAuth);
 
 async function getUpstoxAccessToken(c: any): Promise<string | null> {
   try {
@@ -1663,6 +1666,127 @@ api.get('/api/mtf-portfolio', async (c) => {
 
     if (error) throw error;
     return c.json({ success: true, count: data?.length || 0, data: data || [] });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+/**
+ * GET /api/portfolio/funds
+ * Action: Calls Upstox /v2/user/get-funds-and-margin.
+ * Purpose: Retrieves live available trading balance, used margin, and MTF limits.
+ */
+api.get('/api/portfolio/funds', async (c) => {
+  try {
+    const accessToken = await getUpstoxAccessToken(c);
+    if (!accessToken) {
+      return c.json({ success: false, error: 'No Upstox token found. Please login first.' }, 401);
+    }
+    const fundsData = await getRawFunds(accessToken);
+    return c.json({
+      success: true,
+      data: fundsData,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+/**
+ * GET /api/portfolio/positions
+ * Action: Calls Upstox /v2/portfolio/short-term-positions.
+ * Purpose: Fetches currently open intraday and MTF trades, displaying real-time M2M (Mark-to-Market) PnL.
+ */
+api.get('/api/portfolio/positions', async (c) => {
+  try {
+    const accessToken = await getUpstoxAccessToken(c);
+    if (!accessToken) {
+      return c.json({ success: false, error: 'No Upstox token found. Please login first.' }, 401);
+    }
+    const positions = await getPositions(accessToken);
+    return c.json({
+      success: true,
+      count: positions?.length || 0,
+      data: positions || [],
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+/**
+ * GET /api/portfolio/holdings
+ * Action: Calls Upstox /v2/portfolio/long-term-holdings.
+ * Purpose: Tracks long-term delivery portfolio.
+ */
+api.get('/api/portfolio/holdings', async (c) => {
+  try {
+    const accessToken = await getUpstoxAccessToken(c);
+    if (!accessToken) {
+      return c.json({ success: false, error: 'No Upstox token found. Please login first.' }, 401);
+    }
+    const holdings = await getHoldings(accessToken);
+    return c.json({
+      success: true,
+      count: holdings?.length || 0,
+      data: holdings || [],
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+/**
+ * GET /api/upstox/order-book
+ * Action: Calls Upstox /v2/order/retrieve-all.
+ * Purpose: Fetches today's trade history (to see if any manual orders were rejected or executed).
+ */
+api.get('/api/upstox/order-book', async (c) => {
+  try {
+    const accessToken = await getUpstoxAccessToken(c);
+    if (!accessToken) {
+      return c.json({ success: false, error: 'No Upstox token found. Please login first.' }, 401);
+    }
+    const orders = await getOrderBook(accessToken);
+    return c.json({
+      success: true,
+      count: orders?.length || 0,
+      data: orders || [],
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+/**
+ * GET /api/screener/history
+ * Action: Queries Supabase mtf_screened_stocks table.
+ * Purpose: Retrieves yesterday's or past "High Conviction" setups to track how they performed over time.
+ */
+api.get('/api/screener/history', async (c) => {
+  if (!c.env.SUPABASE_SERVICE_KEY) {
+    return c.json({ success: true, count: 0, data: [], warning: "SUPABASE_SERVICE_KEY secret not configured" });
+  }
+  try {
+    const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY);
+    const { data, error } = await supabase
+      .from('mtf_screened_stocks')
+      .select('*')
+      .order('conviction', { ascending: false })
+      .order('updated_at', { ascending: false })
+      .limit(100);
+
+    if (error) throw error;
+    return c.json({
+      success: true,
+      count: data?.length || 0,
+      data: data || [],
+      timestamp: new Date().toISOString()
+    });
   } catch (err: any) {
     return c.json({ success: false, error: err.message }, 500);
   }
