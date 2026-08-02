@@ -381,50 +381,35 @@ dashboard.get('/', (c) => {
 <!-- Main Content Area -->
 <div id="main-content-container" class="flex-1 md:ml-64 flex flex-col min-h-screen bg-background">
   <!-- Top Sticky Header -->
-  <header class="sticky top-0 z-30 bg-surface/90 dark:bg-primary/90 backdrop-blur-md border-b border-outline-variant px-margin-mobile md:px-margin-desktop h-16 flex items-center justify-between">
-    <div class="flex items-center md:hidden gap-2">
+  <header class="sticky top-0 z-30 bg-surface/90 dark:bg-primary/90 backdrop-blur-md border-b border-outline-variant px-margin-mobile md:px-margin-desktop h-16 flex items-center justify-between gap-3">
+    <div class="flex items-center md:hidden gap-2 flex-shrink-0">
       <div class="w-7 h-7 rounded bg-primary flex items-center justify-center text-on-primary font-bold font-data-mono text-xs">FO</div>
       <span class="font-display-lg text-display-lg font-black tracking-tight text-primary dark:text-primary-fixed">TheFinalOption</span>
     </div>
     
-    <div class="hidden md:flex items-center flex-1 max-w-md mx-md">
+    <!-- Search Bar matching reference image -->
+    <div class="hidden md:flex items-center flex-1 max-w-md mx-2">
       <div class="relative w-full">
         <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline text-[18px]">search</span>
-        <input id="ticker-search-input" onkeyup="filterRadarAndTable()" class="w-full bg-surface-container pl-10 pr-4 py-1.5 rounded-lg border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary text-body-sm font-body-sm placeholder:text-outline transition-all" placeholder="Search tickers, setups (e.g., RELIANCE, TCS)" type="text">
+        <input id="ticker-search-input" onkeyup="filterRadarAndTable()" class="w-full bg-surface-container-low dark:bg-surface-container pl-10 pr-4 py-2 rounded-md border border-outline-variant/60 focus:border-primary focus:ring-1 focus:ring-primary text-body-sm font-body-sm placeholder:text-outline transition-all" placeholder="Search Symbols..." type="text">
       </div>
     </div>
     
-    <div class="flex items-center gap-3 md:gap-4">
-      <!-- Upstox Broker Status Indicator -->
-      <div class="hidden sm:flex items-center gap-2 px-2.5 py-1 rounded-full bg-surface-container border border-outline-variant text-xs font-label-caps font-bold">
-        <span id="hdr-upstox-dot" class="w-2 h-2 rounded-full bg-secondary live-pulse"></span>
-        <span id="hdr-upstox-status" class="text-[11px] text-primary uppercase tracking-wider">UPSTOX READY</span>
-      </div>
-
-      <!-- Quick Account Balance Widget -->
-      <div onclick="openAccountDrawer('funds')" class="hidden lg:flex flex-col items-end cursor-pointer px-3 py-1 rounded-lg hover:bg-surface-container transition-colors">
-        <span class="font-label-caps text-[10px] text-outline uppercase tracking-wider">Trading Balance</span>
-        <div class="flex items-center gap-1.5">
-          <span id="hdr-avail-funds" class="font-data-mono font-bold text-sm text-primary tabular-nums">₹--,--,---</span>
-          <span id="hdr-pnl-pill" class="font-data-mono text-[11px] text-secondary bg-secondary/10 px-1.5 py-0.2 rounded font-semibold tabular-nums">
-            ₹0.00
-          </span>
-        </div>
-      </div>
-
-      <!-- Slide-out Account Drawer Button -->
-      <button onclick="openAccountDrawer('positions')" id="btn-portfolio-drawer" class="bg-primary hover:bg-primary/90 text-on-primary font-label-caps text-label-caps px-3.5 py-2 rounded-lg flex items-center gap-2 shadow-sm active:scale-95 transition-all">
-        <span class="text-sm">💼</span>
-        <span class="uppercase tracking-wider text-[11px] font-bold">Portfolio</span>
+    <!-- Right Actions matching reference image -->
+    <div class="flex items-center gap-2 md:gap-3 flex-shrink-0">
+      <!-- Notification Bell Placeholder Icon -->
+      <button onclick="showToast('Notifications: No new alerts', 'notifications')" title="Notifications" class="p-2 rounded-md text-on-surface-variant hover:text-primary hover:bg-surface-container transition-colors">
+        <span class="material-symbols-outlined text-[22px]">notifications</span>
       </button>
 
-      <!-- Sync Refresh Button -->
-      <button onclick="fetchAllDashboardData(true)" title="Refresh Live Data" class="w-9 h-9 rounded-lg bg-surface-container flex items-center justify-center hover:bg-surface-container-high transition-colors active:scale-95">
-        <span id="sync-icon" class="material-symbols-outlined text-on-surface-variant text-[20px]">refresh</span>
+      <!-- Settings Gear Placeholder Icon -->
+      <button onclick="showToast('Settings: All systems operational', 'settings')" title="Settings" class="p-2 rounded-md text-on-surface-variant hover:text-primary hover:bg-surface-container transition-colors">
+        <span class="material-symbols-outlined text-[22px]">settings</span>
       </button>
 
-      <a href="/mtf-screener" title="Open Full Screener" class="w-9 h-9 rounded-lg bg-surface-container flex items-center justify-center hover:bg-surface-container-high transition-colors active:scale-95">
-        <span class="material-symbols-outlined text-on-surface-variant text-[20px]">filter_alt</span>
+      <!-- Connect Button (Redirects to Upstox OAuth Login / Token Refresh) -->
+      <a href="/api/auth/login" title="Connect / Refresh Upstox Token" class="px-5 py-2 bg-black hover:bg-neutral-800 text-white font-sans font-bold text-xs rounded-md shadow-sm transition-all active:scale-95 flex items-center justify-center">
+        Connect
       </a>
     </div>
   </header>
@@ -1079,58 +1064,20 @@ dashboard.get('/', (c) => {
   function getConvictionBadge(conviction) {
     const c = (conviction || 'NORMAL').toUpperCase();
     if (c === 'HIGH' || c === 'BULLISH') {
-      return \`<span class="px-2 py-0.5 rounded-full text-[10px] font-bold font-label-caps bg-secondary/15 text-secondary uppercase tracking-wider">HIGH</span>\`;
+      return `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold font-label-caps bg-secondary/15 text-secondary uppercase tracking-wider">HIGH</span>`;
     }
-    return \`<span class="px-2 py-0.5 rounded-full text-[10px] font-bold font-label-caps bg-surface-container text-outline uppercase tracking-wider">NORMAL</span>\`;
+    return `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold font-label-caps bg-surface-container text-outline uppercase tracking-wider">NORMAL</span>`;
   }
 
   // ============================================================
-  // TRADINGVIEW INTEGRATION MODAL
+  // TRADINGVIEW DIRECT CHART OPENER
   // ============================================================
   function openTradingViewModal(symbol) {
-    currentModalSymbol = symbol || 'RELIANCE';
-    const modal = document.getElementById('tradingview-modal');
-    const title = document.getElementById('tv-modal-symbol');
-    if (title) title.innerText = currentModalSymbol;
-    if (modal) {
-      modal.classList.remove('hidden');
-      setTimeout(() => modal.classList.remove('opacity-0'), 10);
-    }
-
-    const container = document.getElementById('tv_chart_container');
-    if (container) {
-      container.innerHTML = '';
-      const cleanSymbol = currentModalSymbol.replace('NSE:', '');
-      const tvSymbol = (cleanSymbol === 'NIFTY 50' || cleanSymbol === 'NIFTY') ? 'NSE:NIFTY' : 
-                       (cleanSymbol === 'BANKNIFTY' || cleanSymbol === 'NIFTY BANK') ? 'NSE:BANKNIFTY' : 
-                       'NSE:' + cleanSymbol;
-
-      if (typeof TradingView !== 'undefined') {
-        new TradingView.widget({
-          "autosize": true,
-          "symbol": tvSymbol,
-          "interval": "D",
-          "timezone": "Asia/Kolkata",
-          "theme": "light",
-          "style": "1",
-          "locale": "in",
-          "toolbar_bg": "#f6faff",
-          "enable_publishing": false,
-          "allow_symbol_change": true,
-          "container_id": "tv_chart_container",
-          "studies": ["RSI@tv-basicstudies", "MASimple@tv-basicstudies", "MACD@tv-basicstudies"]
-        });
-      } else {
-        container.innerHTML = \`
-          <iframe 
-            src="https://s.tradingview.com/widgetembed/?symbol=\${encodeURIComponent(tvSymbol)}&interval=D&theme=light&style=1&locale=in" 
-            class="w-full h-full border-0" 
-            allowtransparency="true" 
-            scrolling="no">
-          </iframe>
-        \`;
-      }
-    }
+    currentModalSymbol = (symbol || 'RELIANCE').replace('NSE:', '').trim();
+    const tvSymbol = (currentModalSymbol === 'NIFTY 50' || currentModalSymbol === 'NIFTY') ? 'NIFTY' : 
+                     (currentModalSymbol === 'BANKNIFTY' || currentModalSymbol === 'NIFTY BANK') ? 'BANKNIFTY' : 
+                     currentModalSymbol;
+    window.open('https://in.tradingview.com/chart/?symbol=NSE:' + encodeURIComponent(tvSymbol), '_blank');
   }
   window.openTradingViewModal = openTradingViewModal;
 
@@ -1660,6 +1607,28 @@ dashboard.get('/', (c) => {
     }).join('');
   }
 
+  function formatISTDatetime(dateStr) {
+    if (!dateStr) return 'Recent';
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return 'Recent';
+      const dateFormatted = d.toLocaleDateString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        day: '2-digit',
+        month: 'short'
+      });
+      const timeFormatted = d.toLocaleTimeString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+      });
+      return dateFormatted + ', ' + timeFormatted;
+    } catch (e) {
+      return 'Recent';
+    }
+  }
+
   // Render Main Table
   function renderMainTable() {
     const tbody = document.getElementById('main-table-body');
@@ -1671,6 +1640,7 @@ dashboard.get('/', (c) => {
 
     if (activeMainTab === 'screener') {
       headerRow.innerHTML = \`
+        <th class="p-sm font-label-caps text-label-caps text-outline uppercase bg-surface-container-lowest">Updated (IST)</th>
         <th class="p-sm font-label-caps text-label-caps text-outline uppercase bg-surface-container-lowest">Symbol / Sector</th>
         <th class="p-sm font-label-caps text-label-caps text-outline uppercase text-right bg-surface-container-lowest">LTP (₹)</th>
         <th class="p-sm font-label-caps text-label-caps text-outline uppercase text-right bg-surface-container-lowest">VWAP Dev %</th>
@@ -1690,7 +1660,7 @@ dashboard.get('/', (c) => {
       if (filtered.length === 0) {
         tbody.innerHTML = \`
           <tr>
-            <td colspan="7" class="p-8 text-center text-outline">
+            <td colspan="8" class="p-8 text-center text-outline">
               <div class="flex flex-col items-center justify-center gap-2">
                 <span class="material-symbols-outlined text-[32px] text-outline">filter_list_off</span>
                 <span class="font-sans text-xs uppercase font-bold">No MTF screened setups match your search.</span>
@@ -1705,8 +1675,12 @@ dashboard.get('/', (c) => {
       tbody.innerHTML = filtered.map(s => {
         const sym = s.tradingsymbol || 'STOCK';
         const isBull = Number(s.macd_value || 0) >= 0;
+        const updatedTimeStr = formatISTDatetime(s.updated_at || s.created_at);
         return \`
           <tr onclick="openTradingViewModal('\${sym}')" class="table-row-hover border-b border-outline-variant/30 cursor-pointer">
+            <td class="p-sm text-xs font-data-mono text-outline font-bold whitespace-nowrap">
+              \${updatedTimeStr}
+            </td>
             <td class="p-sm font-data-mono">
               <div class="flex items-center gap-2">
                 <div>

@@ -184,15 +184,6 @@ export const MTFScreenerPage = () => (
 
         {/* RIGHT: Telemetry & Manual Trigger Button */}
         <div class="flex items-center gap-4">
-          {/* API Fuel Counter */}
-          <div class="hidden sm:flex items-center gap-2.5 px-3 py-1 bg-platinum border border-alabaster text-[10px]">
-            <span class="text-slategrey font-bold uppercase tracking-wider">FUEL:</span>
-            <div class="w-12 h-1 bg-alabaster overflow-hidden">
-              <div class="h-full bg-emerald" style="width: 95%"></div>
-            </div>
-            <span class="font-mono font-bold text-gunmetal">190/200</span>
-          </div>
-
           {/* System Status Indicator */}
           <div class="flex items-center gap-2 border-l border-alabaster pl-3">
             <span class="w-2 h-2 bg-emerald"></span>
@@ -201,6 +192,21 @@ export const MTFScreenerPage = () => (
               [60s]
             </span>
           </div>
+
+          {/* Notification Bell Placeholder */}
+          <button onclick="showToast('Notifications: No new alerts')" title="Notifications" class="p-1.5 hover:bg-platinum transition-colors text-carbon">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
+          </button>
+
+          {/* Settings Gear Placeholder */}
+          <button onclick="showToast('Settings: All systems operational')" title="Settings" class="p-1.5 hover:bg-platinum transition-colors text-carbon">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+          </button>
+
+          {/* Connect Button */}
+          <a href="/api/auth/login" title="Connect / Refresh Upstox Token" class="px-4 py-1.5 bg-black text-white hover:bg-neutral-800 text-xs font-bold font-sans uppercase tracking-wider transition-all">
+            Connect
+          </a>
 
           {/* Manual Run Scan Trigger */}
           <button
@@ -298,6 +304,9 @@ export const MTFScreenerPage = () => (
             <table class="w-full text-left text-xs whitespace-nowrap border-collapse">
               <thead class="bg-platinum border-b border-alabaster uppercase text-[10px] font-extrabold text-gunmetal tracking-wider">
                 <tr>
+                  <th class="px-4 py-3 border-r border-alabaster cursor-pointer hover:bg-snow select-none group" onclick="sortScreenerTable('time')">
+                    <div class="flex items-center justify-between">UPDATED (IST) <span class="sort-icon text-paleslate group-hover:text-irongrey transition-colors" data-col="time"></span></div>
+                  </th>
                   <th class="px-4 py-3 border-r border-alabaster cursor-pointer hover:bg-snow select-none group" onclick="sortScreenerTable('asset')">
                     <div class="flex items-center justify-between">ASSET & RVOL <span class="sort-icon text-paleslate group-hover:text-irongrey transition-colors" data-col="asset"></span></div>
                   </th>
@@ -526,7 +535,7 @@ export const MTFScreenerPage = () => (
               </button>
             </div>
           </div>
-          
+
           {/* Chart Widget Container */}
           <div class="flex-1 w-full h-full relative bg-carbon" id="tradingview-widget-wrapper">
             <div id="tv_chart_container" class="w-full h-full"></div>
@@ -1030,12 +1039,35 @@ export const MTFScreenerPage = () => (
         }
         window.copyTradePlan = copyTradePlan;
 
+        function formatISTDatetime(dateStr) {
+          if (!dateStr) return 'Recent';
+          try {
+            const d = new Date(dateStr);
+            if (isNaN(d.getTime())) return 'Recent';
+            const dateFormatted = d.toLocaleDateString('en-IN', {
+              timeZone: 'Asia/Kolkata',
+              day: '2-digit',
+              month: 'short'
+            });
+            const timeFormatted = d.toLocaleTimeString('en-IN', {
+              timeZone: 'Asia/Kolkata',
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: true
+            });
+            return dateFormatted + ', ' + timeFormatted;
+          } catch (e) {
+            return 'Recent';
+          }
+        }
+        window.formatISTDatetime = formatISTDatetime;
+
         function renderTable(stocks) {
           const tbody = document.getElementById('screener-table-body');
           if (!stocks || stocks.length === 0) {
             tbody.innerHTML = \`
               <tr>
-                <td colspan="7" class="px-6 py-16 text-center text-slategrey font-sans">
+                <td colspan="8" class="px-6 py-16 text-center text-slategrey font-sans">
                   <p class="text-carbon font-extrabold text-sm uppercase tracking-widest">[ NO ACTIVE MTF SETUPS MATCHING CRITERIA ]</p>
                   <p class="text-xs text-slategrey mt-1 uppercase font-mono">CONTINUOUS 30M / 3H UPSTOX CANDLE SCANNER RUNNING...</p>
                 </td>
@@ -1050,6 +1082,7 @@ export const MTFScreenerPage = () => (
             
             let valA, valB;
             switch(currentSortColumn) {
+              case 'time': valA = new Date(a.updated_at || a.created_at || 0).getTime(); valB = new Date(b.updated_at || b.created_at || 0).getTime(); break;
               case 'asset': valA = a.tradingsymbol; valB = b.tradingsymbol; break;
               case 'ltp': valA = Number(a.current_price || 0); valB = Number(b.current_price || 0); break;
               case 'vwap': valA = Number(a.distance_from_vwap_pct || 0); valB = Number(b.distance_from_vwap_pct || 0); break;
@@ -1127,10 +1160,16 @@ export const MTFScreenerPage = () => (
             const target1 = (priceNum + riskPerShare * 1.5).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
             const target2 = (priceNum + riskPerShare * 3.0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
             const adxVal = stock.adx_trend ? Number(stock.adx_trend).toFixed(1) : '24.5';
+            const updatedTimeStr = formatISTDatetime(stock.updated_at || stock.created_at);
 
             return \`
               <!-- SUMMARY ROW -->
               <tr class="table-row-terminal-light transition-all border-b border-alabaster \${isHighConviction ? 'bg-snow' : 'bg-white'}">
+                <!-- 1st Column: Updated Datetime (IST) -->
+                <td class="px-4 py-3.5 border-r border-alabaster font-mono text-[11px] text-slategrey font-bold whitespace-nowrap">
+                  \${updatedTimeStr}
+                </td>
+
                 <!-- Asset & Volume -->
                 <td class="px-4 py-3.5 border-r border-alabaster">
                   <div class="flex items-center gap-2">
@@ -1198,12 +1237,14 @@ export const MTFScreenerPage = () => (
                 <!-- Actions -->
                 <td class="px-4 py-3.5 text-right">
                   <div class="flex items-center justify-end gap-2">
-                    <button 
-                      onclick="openTradingViewModal('\${sym}')" 
-                      class="px-2.5 py-1 text-xs font-sans font-extrabold bg-white hover:bg-carbon hover:text-snow text-carbon border border-alabaster hover:border-carbon transition-all uppercase shadow-2xs cursor-pointer"
+                    <a 
+                      href="https://in.tradingview.com/chart/?symbol=NSE:\${sym}" 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      class="px-2.5 py-1 text-xs font-sans font-extrabold bg-white hover:bg-carbon hover:text-snow text-carbon border border-alabaster hover:border-carbon transition-all uppercase shadow-2xs cursor-pointer inline-flex items-center gap-1"
                     >
-                      CHART
-                    </button>
+                      CHART ↗
+                    </a>
                     <button
                       onclick="toggleRowDetails('\${sym}')"
                       class="px-2 py-1 bg-white hover:bg-platinum text-carbon border border-alabaster transition-colors cursor-pointer text-xs font-sans font-bold"
@@ -1217,7 +1258,7 @@ export const MTFScreenerPage = () => (
 
               <!-- EXPANDABLE ACCORDION DETAIL ROW -->
               <tr id="detail-row-\${sym}" class="\${isExpanded ? '' : 'hidden'} bg-carbon text-snow border-b border-gunmetal">
-                <td colSpan="7" class="p-4 sm:p-5">
+                <td colSpan="8" class="p-4 sm:p-5">
                   <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs font-mono">
                     
                     <!-- Panel 1: Technical Matrix -->
@@ -1299,12 +1340,14 @@ export const MTFScreenerPage = () => (
                         >
                           COPY TRADE PLAN
                         </button>
-                        <button
-                          onclick="openTradingViewModal('\${sym}')"
-                          class="px-3 py-1.5 text-xs font-sans font-extrabold bg-gunmetal hover:bg-irongrey text-snow border border-gunmetal uppercase transition-colors tracking-wider cursor-pointer"
+                        <a
+                          href="https://in.tradingview.com/chart/?symbol=NSE:\${sym}"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          class="px-3 py-1.5 text-xs font-sans font-extrabold bg-gunmetal hover:bg-irongrey text-snow border border-gunmetal uppercase transition-colors tracking-wider cursor-pointer inline-flex items-center gap-1"
                         >
-                          CHART
-                        </button>
+                          CHART ↗
+                        </a>
                       </div>
                     </div>
 
@@ -1330,7 +1373,7 @@ export const MTFScreenerPage = () => (
           
           try {
             await fetch('/api/mtf-screener/trigger', { method: 'POST', headers: getAuthHeaders() });
-            showToast('SCAN TRIGGERED ON EC2');
+            showToast('SCAN DISPATCHED');
           } catch (e) {
             console.error('Trigger request error:', e);
             showToast('TRIGGER FAILED', 'error');

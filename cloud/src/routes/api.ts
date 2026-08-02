@@ -77,6 +77,7 @@ api.use('/api/screener/*', dashboardAuth);
 
 async function getUpstoxAccessToken(c: any): Promise<string | null> {
   try {
+    if (!c.env.SUPABASE_URL || !c.env.SUPABASE_SERVICE_KEY) return null;
     const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY);
     const { data, error } = await supabase
       .from('system_state')
@@ -84,7 +85,7 @@ async function getUpstoxAccessToken(c: any): Promise<string | null> {
       .eq('id', 1)
       .single();
     if (error || !data) return null;
-    return data.upstox_access_token;
+    return data.upstox_access_token || null;
   } catch (err) {
     console.error('[DB ERR] Failed to fetch upstox access token from Supabase:', err);
     return null;
@@ -1642,8 +1643,8 @@ api.get('/api/mtf-screener', async (c) => {
  */
 api.post('/api/mtf-screener/trigger', async (c) => {
   try {
-    c.executionCtx.waitUntil(handleScheduled(c.env));
-    return c.json({ success: true, message: "On-demand MTF scan triggered successfully on Cloudflare Worker." });
+    c.executionCtx.waitUntil(handleScheduled(c.env, true));
+    return c.json({ success: true, message: "On-demand MTF scan dispatched to Cloudflare Queue pipeline." });
   } catch (err: any) {
     return c.json({ success: false, error: err.message }, 500);
   }
@@ -1680,7 +1681,7 @@ api.get('/api/portfolio/funds', async (c) => {
   try {
     const accessToken = await getUpstoxAccessToken(c);
     if (!accessToken) {
-      return c.json({ success: false, error: 'No Upstox token found. Please login first.' }, 401);
+      return c.json({ success: false, error: 'Upstox token not found. Please re-authenticate.', isAuthError: true }, 200);
     }
     const fundsData = await getRawFunds(accessToken);
     return c.json({
@@ -1689,7 +1690,7 @@ api.get('/api/portfolio/funds', async (c) => {
       timestamp: new Date().toISOString()
     });
   } catch (err: any) {
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: err.message || 'Failed to fetch Upstox funds', isAuthError: true, data: null }, 200);
   }
 });
 
@@ -1702,7 +1703,7 @@ api.get('/api/portfolio/positions', async (c) => {
   try {
     const accessToken = await getUpstoxAccessToken(c);
     if (!accessToken) {
-      return c.json({ success: false, error: 'No Upstox token found. Please login first.' }, 401);
+      return c.json({ success: false, error: 'Upstox token not found. Please re-authenticate.', isAuthError: true, count: 0, data: [] }, 200);
     }
     const positions = await getPositions(accessToken);
     return c.json({
@@ -1712,7 +1713,7 @@ api.get('/api/portfolio/positions', async (c) => {
       timestamp: new Date().toISOString()
     });
   } catch (err: any) {
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: err.message || 'Failed to fetch positions', isAuthError: true, count: 0, data: [] }, 200);
   }
 });
 
@@ -1725,7 +1726,7 @@ api.get('/api/portfolio/holdings', async (c) => {
   try {
     const accessToken = await getUpstoxAccessToken(c);
     if (!accessToken) {
-      return c.json({ success: false, error: 'No Upstox token found. Please login first.' }, 401);
+      return c.json({ success: false, error: 'Upstox token not found. Please re-authenticate.', isAuthError: true, count: 0, data: [] }, 200);
     }
     const holdings = await getHoldings(accessToken);
     return c.json({
@@ -1735,7 +1736,7 @@ api.get('/api/portfolio/holdings', async (c) => {
       timestamp: new Date().toISOString()
     });
   } catch (err: any) {
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: err.message || 'Failed to fetch holdings', isAuthError: true, count: 0, data: [] }, 200);
   }
 });
 
@@ -1748,7 +1749,7 @@ api.get('/api/upstox/order-book', async (c) => {
   try {
     const accessToken = await getUpstoxAccessToken(c);
     if (!accessToken) {
-      return c.json({ success: false, error: 'No Upstox token found. Please login first.' }, 401);
+      return c.json({ success: false, error: 'Upstox token not found. Please re-authenticate.', isAuthError: true, count: 0, data: [] }, 200);
     }
     const orders = await getOrderBook(accessToken);
     return c.json({
@@ -1758,37 +1759,68 @@ api.get('/api/upstox/order-book', async (c) => {
       timestamp: new Date().toISOString()
     });
   } catch (err: any) {
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: err.message || 'Failed to fetch order book', isAuthError: true, count: 0, data: [] }, 200);
   }
 });
 
 /**
  * GET /api/screener/history
- * Action: Queries Supabase mtf_screened_stocks table.
- * Purpose: Retrieves yesterday's or past "High Conviction" setups to track how they performed over time.
+ * Action: Queries archived setups from D1 mtf_suggestions_history table and Supabase.
+ * Purpose: Retrieves past setups to track how they performed over time.
  */
 api.get('/api/screener/history', async (c) => {
-  if (!c.env.SUPABASE_SERVICE_KEY) {
-    return c.json({ success: true, count: 0, data: [], warning: "SUPABASE_SERVICE_KEY secret not configured" });
-  }
   try {
-    const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY);
-    const { data, error } = await supabase
-      .from('mtf_screened_stocks')
-      .select('*')
-      .order('conviction', { ascending: false })
-      .order('updated_at', { ascending: false })
-      .limit(100);
+    // 1. Try D1 mtf_suggestions_history
+    try {
+      const d1Res = await c.env.TRADING_DB.prepare(
+        `SELECT * FROM mtf_suggestions_history ORDER BY updated_at DESC LIMIT 100`
+      ).all();
+      if (d1Res && d1Res.results && d1Res.results.length > 0) {
+        return c.json({
+          success: true,
+          count: d1Res.results.length,
+          data: d1Res.results,
+          timestamp: new Date().toISOString()
+        });
+      }
+    } catch {/* fallback to Supabase */}
 
-    if (error) throw error;
-    return c.json({
-      success: true,
-      count: data?.length || 0,
-      data: data || [],
-      timestamp: new Date().toISOString()
-    });
+    // 2. Fallback to Supabase mtf_suggestions_history or mtf_screened_stocks
+    if (c.env.SUPABASE_SERVICE_KEY) {
+      const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY);
+      
+      const { data: histData } = await supabase
+        .from('mtf_suggestions_history')
+        .select('*')
+        .order('updated_at', { ascending: false })
+        .limit(100);
+
+      if (histData && histData.length > 0) {
+        return c.json({
+          success: true,
+          count: histData.length,
+          data: histData,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      const { data } = await supabase
+        .from('mtf_screened_stocks')
+        .select('*')
+        .order('updated_at', { ascending: false })
+        .limit(100);
+
+      return c.json({
+        success: true,
+        count: data?.length || 0,
+        data: data || [],
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    return c.json({ success: true, count: 0, data: [] });
   } catch (err: any) {
-    return c.json({ success: false, error: err.message }, 500);
+    return c.json({ success: false, error: err.message, data: [] }, 200);
   }
 });
 
