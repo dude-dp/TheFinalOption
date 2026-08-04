@@ -36,7 +36,8 @@ export function parseUpstoxCandles(rawCandles: any[][]): Candle[] {
 
 export function detect30mSignals(candles: Candle[]): ScreenerSignalResult | null {
   const closes = candles.map(c => c.close);
-  if (closes.length < 35) return null;
+  // Increased from 35 to 65 to allow for 5-Day Base Depth & 50 EMA calculations
+  if (closes.length < 65) return null;
 
   const { macdLine, histogram } = calculateMACD(closes);
   if (macdLine.length < 3) return null;
@@ -60,11 +61,46 @@ export function detect30mSignals(candles: Candle[]): ScreenerSignalResult | null
 
   const currCandle = candles[candles.length - 1];
   const prevCandle = candles[candles.length - 2];
+  const currOpen = currCandle.open ?? currCandle.close;
+  const prevOpen = prevCandle.open ?? prevCandle.close;
 
-  // 1. Classic AutoBot Zero-Line Cross
+  // --- NEW: GOOGLE SHEET PRE-BREAKOUT LOGIC ---
+
+  // 1. Trend Stack Order (Perfect Stack: Price > EMA9 > EMA21 > EMA50)
+  const ema9  = calculateEMA(closes, 9);
+  const ema21 = calculateEMA(closes, 21);
+  const ema50 = calculateEMA(closes, 50);
+  const currE9  = ema9[ema9.length - 1], prevE9 = ema9[ema9.length - 2];
+  const currE21 = ema21[ema21.length - 1], prevE21 = ema21[ema21.length - 2];
+  const currE50 = ema50[ema50.length - 1];
+  
+  const isPerfectStack = price > currE9 && currE9 > currE21 && currE21 > currE50;
+  
+  // 2. Volume Exhaustion (🤫 SELLERS DEAD)
+  // Current volume is < 50% of the 20-period average, and the candle has a very tight body (indecision)
+  const last20Vols = candles.slice(-20).map(c => c.volume);
+  const avgVol20 = last20Vols.reduce((a, b) => a + b, 0) / 20;
+  const candleBodyPct = Math.abs(currCandle.close - currOpen) / currOpen;
+  const isSellersDead = currCandle.volume < (avgVol20 * 0.6) && candleBodyPct < 0.003;
+
+  // 3. 5-Day Base Depth (Tight Squeeze)
+  // In 30m timeframe, 1 day ≈ 13 candles. 5 days ≈ 65 candles.
+  const last65Candles = candles.slice(-65);
+  const maxHigh65 = Math.max(...last65Candles.map(c => c.high));
+  const minLow65 = Math.min(...last65Candles.map(c => c.low));
+  const baseDepthPct = ((maxHigh65 - minLow65) / minLow65) * 100;
+  const isTightBase = baseDepthPct < 4.5; // If 5-day range is strictly compressed under 4.5%
+
+  // 4. Intraday Coiling Ratio (Inside Bar / Volatility Contraction)
+  const isCoiling = currCandle.high < prevCandle.high && currCandle.low > prevCandle.low;
+
+  // 5. Support Proximity (The Dip Buy)
+  // Price is within 0.75% of the 21 EMA while the overall trend is up
+  const distE21 = Math.abs(price - currE21) / currE21;
+  const isDipBuy = distE21 < 0.0075 && currE21 > currE50 && currentRsi > 40 && currentRsi < 60;
+
+  // --- ORIGINAL REACTIVE LOGIC ---
   const isZeroLineCross30m = prevMacd30m <= 0 && currentMacd30m > 0;
-
-  // 2. Anticipatory "Approaching Zero" Logic
   const isApproachingZero =
     currentMacd30m < 0 &&
     currentMacd30m > prevMacd30m &&
@@ -72,18 +108,10 @@ export function detect30mSignals(candles: Candle[]): ScreenerSignalResult | null
     currentHist > 0 &&
     (currentMacd30m - prevMacd30m) > 0.5;
 
-  // 3. Candlestick Pattern Recognition
-  const currOpen = currCandle.open ?? currCandle.close;
-  const prevOpen = prevCandle.open ?? prevCandle.close;
-
   const isRedPrev   = prevCandle.close < prevOpen;
   const isGreenCurr = currCandle.close > currOpen;
-
-  const isBullishEngulfing =
-    isRedPrev && isGreenCurr &&
-    currCandle.close > prevOpen &&
-    currOpen < prevCandle.close;
-
+  const isBullishEngulfing = isRedPrev && isGreenCurr && currCandle.close > prevOpen && currOpen < prevCandle.close;
+  
   const body        = Math.abs(currCandle.close - currOpen);
   const lowerShadow = Math.min(currOpen, currCandle.close) - currCandle.low;
   const upperShadow = currCandle.high - Math.max(currOpen, currCandle.close);
@@ -92,13 +120,23 @@ export function detect30mSignals(candles: Candle[]): ScreenerSignalResult | null
   const hasBullishPriceAction = isBullishEngulfing || isHammer;
 
   // --- THE GATEKEEPER ---
-  if (!(isZeroLineCross30m || isApproachingZero || (hasBullishPriceAction && currentMacd30m > -0.5))) {
+  // Allow if it's a pre-breakout setup OR an active breakout setup
+  const isPreBreakout = (isTightBase && isSellersDead) || isDipBuy || (isPerfectStack && isCoiling);
+  
+  if (!(isZeroLineCross30m || isApproachingZero || (hasBullishPriceAction && currentMacd30m > -0.5) || isPreBreakout)) {
     return null;
   }
 
   // Build signal array
   const signals: string[] = [];
 
+  // Push high-conviction Pre-Breakout signals first
+  if (isTightBase && isSellersDead) signals.push('TIGHT_BASE_SQUEEZE');
+  if (isSellersDead)                signals.push('VOL_EXHAUSTION');
+  if (isDipBuy)                     signals.push('SUPPORT_DIP_BUY');
+  if (isPerfectStack && isCoiling)  signals.push('PERFECT_TREND_STACK');
+
+  // Push standard reactive signals
   if (isZeroLineCross30m)        signals.push('ZERO_LINE_CROSS');
   else if (isApproachingZero)    signals.push('APPROACHING_ZERO');
   else if (isBullishEngulfing)   signals.push('BULLISH_ENGULFING');
@@ -112,11 +150,7 @@ export function detect30mSignals(candles: Candle[]): ScreenerSignalResult | null
     if (r1 < 50  && r0 >= 50)            signals.push('RSI_50_CROSS');
   }
 
-  const ema9  = calculateEMA(closes, 9);
-  const ema21 = calculateEMA(closes, 21);
   if (ema9.length >= 2 && ema21.length > (21 - 9) + 1) {
-    const currE9  = ema9[ema9.length - 1],   prevE9  = ema9[ema9.length - 2];
-    const currE21 = ema21[ema21.length - 1], prevE21 = ema21[ema21.length - 2];
     if (prevE9 <= prevE21 && currE9 > currE21) signals.push('EMA_GOLDEN_CROSS');
   }
 
@@ -159,6 +193,7 @@ export function check3HConviction(dailyCandles: Candle[]): boolean {
 // ============================================================
 
 const SIGNAL_PRIORITY = [
+  'TIGHT_BASE_SQUEEZE', 'PERFECT_TREND_STACK', 'SUPPORT_DIP_BUY', 'VOL_EXHAUSTION', // New Predictive Signals Rank Highest
   'ZERO_LINE_CROSS', 'SIGNAL_LINE_CROSS', 'APPROACHING_ZERO',
   'EMA_GOLDEN_CROSS', 'BULLISH_ENGULFING', 'HAMMER_REVERSAL',
   'RSI_REVERSAL', 'RSI_50_CROSS', 'BULLISH_MOMENTUM'

@@ -1064,9 +1064,9 @@ dashboard.get('/', (c) => {
   function getConvictionBadge(conviction) {
     const c = (conviction || 'NORMAL').toUpperCase();
     if (c === 'HIGH' || c === 'BULLISH') {
-      return `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold font-label-caps bg-secondary/15 text-secondary uppercase tracking-wider">HIGH</span>`;
+      return \`<span class="px-2 py-0.5 rounded-full text-[10px] font-bold font-label-caps bg-secondary/15 text-secondary uppercase tracking-wider">HIGH</span>\`;
     }
-    return `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold font-label-caps bg-surface-container text-outline uppercase tracking-wider">NORMAL</span>`;
+    return \`<span class="px-2 py-0.5 rounded-full text-[10px] font-bold font-label-caps bg-surface-container text-outline uppercase tracking-wider">NORMAL</span>\`;
   }
 
   // ============================================================

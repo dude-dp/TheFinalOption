@@ -88,10 +88,10 @@ export async function handleQueue(
     const { token, symbol, sector, margin, accessToken } = msg.body;
 
     try {
-      // STEP A: Fetch 30-minute candles (5 trading days)
-      const candles30m = await fetchScreenerCandles(accessToken, token, '30minute', 5);
+      // STEP A: Fetch 30-minute candles (5+ trading days to ensure >= 65 candles)
+      const candles30m = await fetchScreenerCandles(accessToken, token, '30minute', 10);
 
-      if (candles30m.length < 35) {
+      if (candles30m.length < 65) {
         msg.ack(); // Not enough data — skip silently
         continue;
       }

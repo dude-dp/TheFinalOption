@@ -1104,6 +1104,13 @@ export const MTFScreenerPage = () => (
           }
 
           const signalMap = {
+            // --- NEW PREDICTIVE SIGNALS (PRE-BREAKOUT) ---
+            'TIGHT_BASE_SQUEEZE': { label: 'TIGHT BASE SQUEEZE', bg: 'bg-amber-light text-amber-dark border-amber-border font-extrabold' },
+            'PERFECT_TREND_STACK':{ label: 'PERFECT STACK', bg: 'bg-emerald text-snow border-emerald-dark font-extrabold shadow-sm' },
+            'SUPPORT_DIP_BUY':    { label: 'DIP BUY (SUPPORT)', bg: 'bg-[#e0f2fe] text-[#0369a1] border-[#bae6fd] font-extrabold' },
+            'VOL_EXHAUSTION':     { label: 'SELLERS DEAD', bg: 'bg-platinum text-irongrey border-paleslate font-extrabold' },
+            
+            // --- STANDARD REACTIVE SIGNALS ---
             'ZERO_LINE_CROSS':    { label: 'ZERO CROSS', bg: 'bg-emerald-light text-emerald-dark border-emerald-border font-extrabold' },
             'SIGNAL_LINE_CROSS':  { label: 'SIGNAL CROSS', bg: 'bg-platinum text-carbon border-alabaster font-extrabold' },
             'APPROACHING_ZERO':   { label: 'APPROACHING ZERO', bg: 'bg-snow text-slategrey border-alabaster font-bold' },
