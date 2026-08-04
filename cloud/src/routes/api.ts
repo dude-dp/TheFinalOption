@@ -1589,7 +1589,10 @@ api.get('/api/morning-briefing', async (c) => {
       .limit(1)
       .maybeSingle();
 
-    if (error) throw error;
+    if (error) {
+      console.error('[SUPABASE ERR] /api/morning-briefing:', error.message);
+      return c.json({ success: true, content: null, warning: error.message });
+    }
     
     c.header('Cache-Control', 'public, max-age=900, stale-while-revalidate=86400');
 
@@ -1608,7 +1611,8 @@ api.get('/api/morning-briefing', async (c) => {
       isToday: briefingDate === todayStr
     });
   } catch (err: any) {
-    return c.json({ success: false, error: err.message }, 500);
+    console.error('[EXCP ERR] /api/morning-briefing:', err?.message);
+    return c.json({ success: true, content: null, warning: err?.message || 'Unknown error' });
   }
 });
 
@@ -1630,11 +1634,15 @@ api.get('/api/mtf-screener', async (c) => {
       .order('macd_value', { ascending: false })
       .limit(500);
 
-    if (error) throw error;
+    if (error) {
+      console.error('[SUPABASE ERR] /api/mtf-screener:', error.message);
+      return c.json({ success: true, count: 0, data: [], warning: error.message });
+    }
 
     return c.json({ success: true, count: data?.length || 0, data: data || [] });
   } catch (err: any) {
-    return c.json({ success: false, error: err.message }, 500);
+    console.error('[EXCP ERR] /api/mtf-screener:', err?.message);
+    return c.json({ success: true, count: 0, data: [], warning: err?.message || 'Unknown error' });
   }
 });
 
@@ -1731,10 +1739,14 @@ api.get('/api/mtf-portfolio', async (c) => {
       .select('*')
       .order('unrealized_pnl', { ascending: false });
 
-    if (error) throw error;
+    if (error) {
+      console.error('[SUPABASE ERR] /api/mtf-portfolio:', error.message);
+      return c.json({ success: true, count: 0, data: [], warning: error.message });
+    }
     return c.json({ success: true, count: data?.length || 0, data: data || [] });
   } catch (err: any) {
-    return c.json({ success: false, error: err.message }, 500);
+    console.error('[EXCP ERR] /api/mtf-portfolio:', err?.message);
+    return c.json({ success: true, count: 0, data: [], warning: err?.message || 'Unknown error' });
   }
 });
 

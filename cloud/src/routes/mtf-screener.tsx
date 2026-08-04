@@ -1016,13 +1016,15 @@ export const MTFScreenerPage = () => (
           const risk = price - sl;
     const target1 = (price + risk * 1.5).toFixed(2);
     const target2 = (price + risk * 3.0).toFixed(2);
-    const planText = 'MTF TRADE PLAN — ' + symbol + '\n' +
-    'LTP: ₹' + price + '\n' +
-    'Stop Loss: ₹' + sl + ' (2x ATR: ₹' + atr + ')\n' +
-    'Target 1 (1.5R): ₹' + target1 + '\n' +
-    'Target 2 (3.0R): ₹' + target2 + '\n' +
-    'RVOL: ' + rvol + 'x\n' +
-    'Generated via TheFinalOption MTF Screener';
+    const planText = [
+      'MTF TRADE PLAN — ' + symbol,
+      'LTP: ₹' + price,
+      'Stop Loss: ₹' + sl + ' (2x ATR: ₹' + atr + ')',
+      'Target 1 (1.5R): ₹' + target1,
+      'Target 2 (3.0R): ₹' + target2,
+      'RVOL: ' + rvol + 'x',
+      'Generated via TheFinalOption MTF Screener'
+    ].join('\\n');
 
     if (navigator.clipboard) {
       navigator.clipboard.writeText(planText).then(() => {
