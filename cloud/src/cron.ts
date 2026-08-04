@@ -101,6 +101,8 @@ async function rotateAndClearOldSetups(env: Env): Promise<void> {
           atr_value REAL,
           suggested_sl REAL,
           conviction TEXT,
+          ai_catalyst TEXT,
+          catalyst_sentiment TEXT,
           updated_at TEXT,
           created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )`
@@ -144,13 +146,15 @@ async function rotateAndClearOldSetups(env: Env): Promise<void> {
           try {
             await env.TRADING_DB.prepare(
               `INSERT INTO mtf_suggestions_history 
-               (instrument_token, tradingsymbol, sector, current_price, mtf_margin_multiplier, distance_from_vwap_pct, rsi_14, macd_value, macd_signal, adx_trend, rvol, atr_value, suggested_sl, conviction, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+               (instrument_token, tradingsymbol, sector, current_price, mtf_margin_multiplier, distance_from_vwap_pct, rsi_14, macd_value, macd_signal, adx_trend, rvol, atr_value, suggested_sl, conviction, ai_catalyst, catalyst_sentiment, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
             ).bind(
               row.instrument_token || '', row.tradingsymbol || '', row.sector || 'EQUITY', row.current_price || 0,
               row.mtf_margin_multiplier || 3.5, row.distance_from_vwap_pct || 0, row.rsi_14 || 50,
               row.macd_value || 0, row.macd_signal || 'BULLISH', row.adx_trend || 0, row.rvol || 1,
-              row.atr_value || 0, row.suggested_sl || 0, row.conviction || 'NORMAL', row.updated_at || new Date().toISOString()
+              row.atr_value || 0, row.suggested_sl || 0, row.conviction || 'NORMAL',
+              row.ai_catalyst || null, row.catalyst_sentiment || 'BULLISH',
+              row.updated_at || new Date().toISOString()
             ).run();
           } catch {/* skip row error */}
         }

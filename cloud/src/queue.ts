@@ -9,32 +9,48 @@
 import type { Env, MTFQueueMessage, MTFSetupData } from './lib/types';
 import { detect30mSignals, check3HConviction, resolvePrimarySignal } from './lib/mtf-screener-logic';
 import { fetchScreenerCandles } from './lib/upstox';
+import { generateStockCatalyst } from './lib/ai-catalyst';
 
 // ============================================================
 // DISCORD SNIPER ALERT
-// Fires only for HIGH conviction ZERO_LINE_CROSS setups
+// Fires for HIGH conviction setups & enriched with AI Catalyst
 // ============================================================
 
 async function sendDiscordAlert(env: Env, stock: MTFSetupData): Promise<void> {
   if (!env.DISCORD_MTF_WEBHOOK) return;
 
+  const sentimentColor =
+    stock.catalyst_sentiment === 'BEARISH' ? 15548997 : // Crimson
+    stock.catalyst_sentiment === 'BULLISH' ? 1097865  : // Emerald
+    6514930; // Indigo
+
+  const fields: Array<{ name: string; value: string; inline?: boolean }> = [
+    { name: 'LTP',            value: `₹${stock.current_price}`,               inline: true  },
+    { name: 'Leverage',       value: `${stock.mtf_margin_multiplier}x`,        inline: true  },
+    { name: 'Sector',         value: `${stock.sector}`,                        inline: true  },
+    { name: 'Setup',          value: `**${stock.macd_signal}**`,               inline: true  },
+    { name: 'VWAP Ext.',      value: `${stock.distance_from_vwap_pct}%`,       inline: true  },
+    { name: 'RVOL',           value: `${stock.rvol}x`,                         inline: true  },
+    { name: 'RSI (14)',       value: `${stock.rsi_14}`,                         inline: true  },
+    { name: 'ADX',            value: `${stock.adx_trend}`,                     inline: true  },
+    { name: 'Target SL',      value: `₹${stock.suggested_sl} (2×ATR)`,         inline: true  },
+  ];
+
+  if (stock.ai_catalyst) {
+    fields.push({
+      name: `🤖 AI Catalyst (${stock.catalyst_sentiment || 'BULLISH'})`,
+      value: `> ${stock.ai_catalyst}`,
+      inline: false
+    });
+  }
+
   const embed = {
     embeds: [{
-      title: `🚨 MTF Breakout: ${stock.tradingsymbol}`,
-      color: 3447003, // Institutional blue
+      title: `🚨 MTF Quant Setup: ${stock.tradingsymbol} [${stock.conviction} CONVICTION]`,
+      color: sentimentColor,
       url:   `https://in.tradingview.com/chart/?symbol=NSE:${stock.tradingsymbol}`,
-      fields: [
-        { name: 'LTP',            value: `₹${stock.current_price}`,               inline: true  },
-        { name: 'Leverage',       value: `${stock.mtf_margin_multiplier}x`,        inline: true  },
-        { name: 'Sector',         value: `${stock.sector}`,                        inline: true  },
-        { name: 'Signal',         value: `**${stock.macd_signal}**`,               inline: true  },
-        { name: 'VWAP Ext.',      value: `${stock.distance_from_vwap_pct}%`,       inline: true  },
-        { name: 'RVOL',           value: `${stock.rvol}x`,                         inline: true  },
-        { name: 'RSI (14)',       value: `${stock.rsi_14}`,                         inline: true  },
-        { name: 'ADX',            value: `${stock.adx_trend}`,                     inline: true  },
-        { name: 'Target SL',      value: `₹${stock.suggested_sl} (2×ATR)`,         inline: false },
-      ],
-      footer:    { text: 'TheFinalOption • MTF Quant Screener' },
+      fields,
+      footer:    { text: 'TheFinalOption • MTF Quant Screener & AI Confluence' },
       timestamp: new Date().toISOString(),
     }]
   };
@@ -111,7 +127,40 @@ export async function handleQueue(
       // STEP D: Resolve primary signal label
       const primarySignal = resolvePrimarySignal(result.signals);
 
-      // STEP E: Build setup record
+      // STEP E: AI Catalyst Confluence (for top-tier setups or high conviction)
+      let aiCatalystSummary = '';
+      let aiCatalystSentiment: 'BULLISH' | 'NEUTRAL' | 'BEARISH' = 'BULLISH';
+
+      const isTopTier =
+        conviction === 'HIGH' ||
+        result.signals.includes('TIGHT_BASE_SQUEEZE') ||
+        result.signals.includes('VOL_EXHAUSTION') ||
+        result.signals.includes('PERFECT_TREND_STACK') ||
+        result.signals.includes('SUPPORT_DIP_BUY') ||
+        result.signals.includes('ZERO_LINE_CROSS');
+
+      if (isTopTier) {
+        try {
+          const aiResult = await generateStockCatalyst(env, symbol, {
+            price: result.price,
+            sector,
+            primarySignal,
+            macdValue: result.macdValue,
+            rsi: result.rsi,
+            adx: result.adx,
+            rvol: result.rvol,
+            atr: result.atr,
+            vwapDist: result.vwapDist,
+            conviction
+          });
+          aiCatalystSummary = aiResult.catalyst;
+          aiCatalystSentiment = aiResult.sentiment;
+        } catch (err: any) {
+          console.warn(`[CONSUMER] AI Catalyst fetch non-fatal error for ${symbol}: ${err?.message}`);
+        }
+      }
+
+      // STEP F: Build setup record
       const setupData: MTFSetupData = {
         instrument_token:        token,
         tradingsymbol:           symbol,
@@ -127,6 +176,8 @@ export async function handleQueue(
         atr_value:               Number(result.atr.toFixed(2)),
         suggested_sl:            result.suggestedSL,
         conviction,
+        ai_catalyst:             aiCatalystSummary || undefined,
+        catalyst_sentiment:      aiCatalystSentiment,
         updated_at:              new Date().toISOString(),
       };
 
@@ -137,11 +188,7 @@ export async function handleQueue(
         `MACD=${result.macdValue.toFixed(3)} RSI=${result.rsi.toFixed(1)} ADX=${result.adx.toFixed(1)}`
       );
 
-      // STEP F: Discord sniper — only for HIGH conviction zero-line events
-      const isTopTier =
-        conviction === 'HIGH' &&
-        (result.signals.includes('ZERO_LINE_CROSS') || result.signals.includes('SIGNAL_LINE_CROSS'));
-
+      // STEP G: Discord sniper
       if (isTopTier) {
         sendDiscordAlert(env, setupData).catch(err =>
           console.error(`[CONSUMER] Discord alert error for ${symbol}: ${err.message}`)
@@ -156,7 +203,7 @@ export async function handleQueue(
     }
   }
 
-  // STEP G: Bulk upsert all passing setups from this batch in one shot
+  // STEP H: Bulk upsert all passing setups from this batch in one shot
   await upsertToSupabase(env, upsertPayloads);
 
   if (upsertPayloads.length > 0) {

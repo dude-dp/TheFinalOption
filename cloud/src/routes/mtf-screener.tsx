@@ -1004,163 +1004,226 @@ export const MTFScreenerPage = () => (
           if (!container) return;
           const toast = document.createElement('div');
           toast.className = 'pointer-events-auto px-4 py-2 border text-xs font-extrabold flex items-center gap-2 bg-carbon text-snow border-gunmetal uppercase tracking-wider shadow-lg font-sans';
-          toast.innerHTML = \`
-            <span class="w-1.5 h-1.5 bg-emerald"></span>
-            <span>\${message}</span>
-          \`;
+          toast.innerHTML = '<span class="w-1.5 h-1.5 ' + (type === 'error' ? 'bg-crimson' : 'bg-emerald') + '"></span><span>' + message + '</span>';
           container.appendChild(toast);
           setTimeout(() => {
             toast.style.opacity = '0';
-            setTimeout(() => toast.remove(), 200);
-          }, 3000);
+            setTimeout(() => toast.remove(), 300);
+          }, 2500);
         }
 
-        function copyTradePlan(symbol, price, sl, atr, rvol) {
+    function copyTradePlan(symbol, price, sl, atr, rvol) {
           const risk = price - sl;
-          const target1 = (price + risk * 1.5).toFixed(2);
-          const target2 = (price + risk * 3.0).toFixed(2);
-          const planText = '🎯 MTF TRADE PLAN — ' + symbol + '\\n' +
-            'LTP: ₹' + price + '\\n' +
-            'Stop Loss: ₹' + sl + ' (2x ATR: ₹' + atr + ')\\n' +
-            'Target 1 (1.5R): ₹' + target1 + '\\n' +
-            'Target 2 (3.0R): ₹' + target2 + '\\n' +
-            'RVOL: ' + rvol + 'x\\n' +
-            'Generated via TheFinalOption MTF Screener';
-          
-          if (navigator.clipboard) {
-            navigator.clipboard.writeText(planText).then(() => {
-              showToast('COPIED ' + symbol + ' TRADE PLAN');
-            }).catch(() => {
-              showToast('COPY FAILED', 'error');
-            });
+    const target1 = (price + risk * 1.5).toFixed(2);
+    const target2 = (price + risk * 3.0).toFixed(2);
+    const planText = 'MTF TRADE PLAN — ' + symbol + '\n' +
+    'LTP: ₹' + price + '\n' +
+    'Stop Loss: ₹' + sl + ' (2x ATR: ₹' + atr + ')\n' +
+    'Target 1 (1.5R): ₹' + target1 + '\n' +
+    'Target 2 (3.0R): ₹' + target2 + '\n' +
+    'RVOL: ' + rvol + 'x\n' +
+    'Generated via TheFinalOption MTF Screener';
+
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(planText).then(() => {
+        showToast('COPIED ' + symbol + ' TRADE PLAN');
+      }).catch(() => {
+        showToast('COPY FAILED', 'error');
+      });
           } else {
-            showToast('COPIED ' + symbol + ' PLAN');
+      showToast('COPIED ' + symbol + ' PLAN');
           }
         }
-        window.copyTradePlan = copyTradePlan;
+    window.copyTradePlan = copyTradePlan;
 
-        function formatISTDatetime(dateStr) {
+    async function analyzeStockCatalyst(symbol) {
+          const stock = allStocks.find(s => s.tradingsymbol === symbol);
+    if (!stock) return;
+
+    const btn = document.getElementById('ai-analyze-btn-' + symbol);
+    const textElem = document.getElementById('ai-catalyst-text-' + symbol);
+
+    if (btn) {
+      btn.innerText = 'ANALYZING NEWS & SYNTHESIZING...';
+    btn.disabled = true;
+    btn.className = 'w-full mt-2 py-1.5 text-xs font-sans font-extrabold bg-platinum text-slategrey border border-alabaster uppercase tracking-wider cursor-not-allowed';
+          }
+    if (textElem) {
+      textElem.innerHTML = '<span class="text-amber animate-pulse font-bold">⚡ Querying Google/Yahoo RSS feeds & Groq Llama-3.3-70B Catalyst Engine...</span>';
+          }
+
+    try {
+            const res = await fetch('/api/mtf-screener/analyze-catalyst', {
+      method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({
+      tradingsymbol: symbol,
+    current_price: stock.current_price,
+    sector: stock.sector || 'EQUITY',
+    macd_signal: stock.macd_signal,
+    distance_from_vwap_pct: stock.distance_from_vwap_pct,
+    rsi_14: stock.rsi_14,
+    rvol: stock.rvol
+              })
+            });
+
+    const json = await res.json();
+    if (json.success && json.data) {
+      stock.ai_catalyst = json.data.ai_catalyst;
+    stock.catalyst_sentiment = json.data.sentiment || 'BULLISH';
+    showToast('AI CATALYST GENERATED FOR ' + symbol);
+
+    applyFilter();
+    expandedRows.add(symbol);
+    const detailRow = document.getElementById('detail-row-' + symbol);
+    if (detailRow) detailRow.classList.remove('hidden');
+            } else {
+      showToast('AI ANALYSIS FAILED: ' + (json.error || 'Server error'), 'error');
+    if (textElem) {
+      textElem.innerText = stock.ai_catalyst || 'Analysis failed. Please try again.';
+              }
+    if (btn) {
+      btn.innerText = '⚡ RETRY AI ANALYSIS';
+    btn.disabled = false;
+    btn.className = 'w-full mt-2 py-1.5 text-xs font-sans font-extrabold bg-crimson hover:bg-crimson-dark text-snow border border-crimson uppercase tracking-wider cursor-pointer';
+              }
+            }
+          } catch (err) {
+      console.error('AI Catalyst trigger error:', err);
+    showToast('NETWORK ERROR CALLING AI', 'error');
+    if (btn) {
+      btn.innerText = '⚡ RETRY AI ANALYSIS';
+    btn.disabled = false;
+    btn.className = 'w-full mt-2 py-1.5 text-xs font-sans font-extrabold bg-crimson hover:bg-crimson-dark text-snow border border-crimson uppercase tracking-wider cursor-pointer';
+            }
+          }
+        }
+    window.analyzeStockCatalyst = analyzeStockCatalyst;
+
+    function formatISTDatetime(dateStr) {
           if (!dateStr) return 'Recent';
-          try {
+    try {
             const d = new Date(dateStr);
-            if (isNaN(d.getTime())) return 'Recent';
-            const dateFormatted = d.toLocaleDateString('en-IN', {
-              timeZone: 'Asia/Kolkata',
-              day: '2-digit',
-              month: 'short'
+    if (isNaN(d.getTime())) return 'Recent';
+    const dateFormatted = d.toLocaleDateString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short'
             });
-            const timeFormatted = d.toLocaleTimeString('en-IN', {
-              timeZone: 'Asia/Kolkata',
-              hour: '2-digit',
-              minute: '2-digit',
-              hour12: true
+    const timeFormatted = d.toLocaleTimeString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
             });
-            return dateFormatted + ', ' + timeFormatted;
+    return dateFormatted + ', ' + timeFormatted;
           } catch (e) {
             return 'Recent';
           }
         }
-        window.formatISTDatetime = formatISTDatetime;
+    window.formatISTDatetime = formatISTDatetime;
 
-        function renderTable(stocks) {
+    function renderTable(stocks) {
           const tbody = document.getElementById('screener-table-body');
-          if (!stocks || stocks.length === 0) {
-            tbody.innerHTML = \`
-              <tr>
-                <td colspan="8" class="px-6 py-16 text-center text-slategrey font-sans">
-                  <p class="text-carbon font-extrabold text-sm uppercase tracking-widest">[ NO ACTIVE MTF SETUPS MATCHING CRITERIA ]</p>
-                  <p class="text-xs text-slategrey mt-1 uppercase font-mono">CONTINUOUS 30M / 3H UPSTOX CANDLE SCANNER RUNNING...</p>
-                </td>
-              </tr>\`;
-            return;
+    if (!stocks || stocks.length === 0) {
+      tbody.innerHTML = \`
+    <tr>
+      <td colspan="8" class="px-6 py-16 text-center text-slategrey font-sans">
+        <p class="text-carbon font-extrabold text-sm uppercase tracking-widest">[ NO ACTIVE MTF SETUPS MATCHING CRITERIA ]</p>
+        <p class="text-xs text-slategrey mt-1 uppercase font-mono">CONTINUOUS 30M / 3H UPSTOX CANDLE SCANNER RUNNING...</p>
+      </td>
+    </tr>\`;
+    return;
           }
 
           // Dynamic sorting based on column
           const sorted = [...stocks].sort((a, b) => {
             if (a.conviction === 'HIGH' && b.conviction !== 'HIGH') return -1;
-            if (b.conviction === 'HIGH' && a.conviction !== 'HIGH') return 1;
-            
-            let valA, valB;
-            switch(currentSortColumn) {
+    if (b.conviction === 'HIGH' && a.conviction !== 'HIGH') return 1;
+
+    let valA, valB;
+    switch(currentSortColumn) {
               case 'time': valA = new Date(a.updated_at || a.created_at || 0).getTime(); valB = new Date(b.updated_at || b.created_at || 0).getTime(); break;
-              case 'asset': valA = a.tradingsymbol; valB = b.tradingsymbol; break;
-              case 'ltp': valA = Number(a.current_price || 0); valB = Number(b.current_price || 0); break;
-              case 'vwap': valA = Number(a.distance_from_vwap_pct || 0); valB = Number(b.distance_from_vwap_pct || 0); break;
-              case 'macd': valA = Number(a.macd_value || 0); valB = Number(b.macd_value || 0); break;
-              case 'rsi': valA = Number(a.rsi_14 || 50); valB = Number(b.rsi_14 || 50); break;
-              case 'atr': valA = Number(a.atr_stop_loss || 0); valB = Number(b.atr_stop_loss || 0); break;
-              default: valA = Number(a.macd_value || 0); valB = Number(b.macd_value || 0); break;
+    case 'asset': valA = a.tradingsymbol; valB = b.tradingsymbol; break;
+    case 'ltp': valA = Number(a.current_price || 0); valB = Number(b.current_price || 0); break;
+    case 'vwap': valA = Number(a.distance_from_vwap_pct || 0); valB = Number(b.distance_from_vwap_pct || 0); break;
+    case 'macd': valA = Number(a.macd_value || 0); valB = Number(b.macd_value || 0); break;
+    case 'rsi': valA = Number(a.rsi_14 || 50); valB = Number(b.rsi_14 || 50); break;
+    case 'atr': valA = Number(a.atr_stop_loss || 0); valB = Number(b.atr_stop_loss || 0); break;
+    default: valA = Number(a.macd_value || 0); valB = Number(b.macd_value || 0); break;
             }
-            if (valA < valB) return currentSortDirection === 'asc' ? -1 : 1;
+    if (valA < valB) return currentSortDirection === 'asc' ? -1 : 1;
             if (valA > valB) return currentSortDirection === 'asc' ? 1 : -1;
-            return 0;
+    return 0;
           });
 
           // Update sort indicators
           document.querySelectorAll('.sort-icon').forEach(icon => icon.innerHTML = '');
-          const activeIcon = document.querySelector(\`.sort-icon[data-col="\${currentSortColumn}"]\`);
-          if (activeIcon) {
-            activeIcon.innerHTML = currentSortDirection === 'asc' ? '▲' : '▼';
+    const activeIcon = document.querySelector(\`.sort-icon[data-col="\${currentSortColumn}"]\`);
+    if (activeIcon) {
+      activeIcon.innerHTML = currentSortDirection === 'asc' ? '▲' : '▼';
           }
 
-          const signalMap = {
-            // --- NEW PREDICTIVE SIGNALS (PRE-BREAKOUT) ---
-            'TIGHT_BASE_SQUEEZE': { label: 'TIGHT BASE SQUEEZE', bg: 'bg-amber-light text-amber-dark border-amber-border font-extrabold' },
-            'PERFECT_TREND_STACK':{ label: 'PERFECT STACK', bg: 'bg-emerald text-snow border-emerald-dark font-extrabold shadow-sm' },
-            'SUPPORT_DIP_BUY':    { label: 'DIP BUY (SUPPORT)', bg: 'bg-[#e0f2fe] text-[#0369a1] border-[#bae6fd] font-extrabold' },
-            'VOL_EXHAUSTION':     { label: 'SELLERS DEAD', bg: 'bg-platinum text-irongrey border-paleslate font-extrabold' },
-            
-            // --- STANDARD REACTIVE SIGNALS ---
-            'ZERO_LINE_CROSS':    { label: 'ZERO CROSS', bg: 'bg-emerald-light text-emerald-dark border-emerald-border font-extrabold' },
-            'SIGNAL_LINE_CROSS':  { label: 'SIGNAL CROSS', bg: 'bg-platinum text-carbon border-alabaster font-extrabold' },
-            'APPROACHING_ZERO':   { label: 'APPROACHING ZERO', bg: 'bg-snow text-slategrey border-alabaster font-bold' },
-            'EMA_GOLDEN_CROSS':   { label: 'EMA GOLDEN CROSS', bg: 'bg-emerald-light text-emerald-dark border-emerald-border font-extrabold' },
-            'BULLISH_ENGULFING':  { label: 'BULLISH ENGULF', bg: 'bg-emerald-light text-emerald-dark border-emerald-border font-bold' },
-            'HAMMER':             { label: 'HAMMER', bg: 'bg-emerald-light text-emerald-dark border-emerald-border font-bold' },
-            'RSI_REVERSAL':       { label: 'RSI REVERSAL', bg: 'bg-[#e0f2fe] text-[#0369a1] border-[#bae6fd] font-bold' },
-            'RSI_50_CROSS':       { label: 'RSI 50 CROSS', bg: 'bg-[#e0f2fe] text-[#0369a1] border-[#bae6fd] font-bold' },
-            'BULLISH_MOMENTUM':   { label: 'BULLISH', bg: 'bg-emerald-light text-emerald-dark border-emerald-border font-bold' },
+    const signalMap = {
+      // --- NEW PREDICTIVE SIGNALS (PRE-BREAKOUT) ---
+      'TIGHT_BASE_SQUEEZE': {label: 'TIGHT BASE SQUEEZE', bg: 'bg-amber-light text-amber-dark border-amber-border font-extrabold' },
+    'PERFECT_TREND_STACK':{label: 'PERFECT STACK', bg: 'bg-emerald text-snow border-emerald-dark font-extrabold shadow-sm' },
+    'SUPPORT_DIP_BUY':    {label: 'DIP BUY (SUPPORT)', bg: 'bg-[#e0f2fe] text-[#0369a1] border-[#bae6fd] font-extrabold' },
+    'VOL_EXHAUSTION':     {label: 'SELLERS DEAD', bg: 'bg-platinum text-irongrey border-paleslate font-extrabold' },
+
+    // --- STANDARD REACTIVE SIGNALS ---
+    'ZERO_LINE_CROSS':    {label: 'ZERO CROSS', bg: 'bg-emerald-light text-emerald-dark border-emerald-border font-extrabold' },
+    'SIGNAL_LINE_CROSS':  {label: 'SIGNAL CROSS', bg: 'bg-platinum text-carbon border-alabaster font-extrabold' },
+    'APPROACHING_ZERO':   {label: 'APPROACHING ZERO', bg: 'bg-snow text-slategrey border-alabaster font-bold' },
+    'EMA_GOLDEN_CROSS':   {label: 'EMA GOLDEN CROSS', bg: 'bg-emerald-light text-emerald-dark border-emerald-border font-extrabold' },
+    'BULLISH_ENGULFING':  {label: 'BULLISH ENGULF', bg: 'bg-emerald-light text-emerald-dark border-emerald-border font-bold' },
+    'HAMMER':             {label: 'HAMMER', bg: 'bg-emerald-light text-emerald-dark border-emerald-border font-bold' },
+    'RSI_REVERSAL':       {label: 'RSI REVERSAL', bg: 'bg-[#e0f2fe] text-[#0369a1] border-[#bae6fd] font-bold' },
+    'RSI_50_CROSS':       {label: 'RSI 50 CROSS', bg: 'bg-[#e0f2fe] text-[#0369a1] border-[#bae6fd] font-bold' },
+    'BULLISH_MOMENTUM':   {label: 'BULLISH', bg: 'bg-emerald-light text-emerald-dark border-emerald-border font-bold' },
           };
 
           tbody.innerHTML = sorted.map(stock => {
             const sym = stock.tradingsymbol;
-            const isExpanded = expandedRows.has(sym);
+    const isExpanded = expandedRows.has(sym);
 
-            const sig = signalMap[stock.macd_signal] || signalMap['BULLISH_MOMENTUM'];
-            const macdBadge = \`<span class="px-2 py-0.5 text-[10px] font-sans font-extrabold tracking-wider uppercase border \${sig.bg}">
-                \${sig.label}
-              </span>\`;
+    const sig = signalMap[stock.macd_signal] || signalMap['BULLISH_MOMENTUM'];
+    const macdBadge = \`<span class="px-2 py-0.5 text-[10px] font-sans font-extrabold tracking-wider uppercase border \${sig.bg}">
+      \${sig.label}
+    </span>\`;
 
-            const rsiVal = Number(stock.rsi_14 || 50);
+    const rsiVal = Number(stock.rsi_14 || 50);
             const rsiClass = rsiVal > 60 ? 'text-emerald font-extrabold' : (rsiVal < 40 ? 'text-crimson font-extrabold' : 'text-irongrey font-bold');
-            
-            const rvolVal = Number(stock.rvol || 1.0);
+
+    const rvolVal = Number(stock.rvol || 1.0);
             const isHighRvol = rvolVal > 2.5;
-            const rvolBadgeClass = isHighRvol
-              ? 'bg-amber-light text-amber-dark border-amber-border font-extrabold'
-              : 'bg-platinum text-slategrey border-alabaster font-bold';
+    const rvolBadgeClass = isHighRvol
+    ? 'bg-amber-light text-amber-dark border-amber-border font-extrabold'
+    : 'bg-platinum text-slategrey border-alabaster font-bold';
 
-            const distVwap = Number(stock.distance_from_vwap_pct || 0);
+    const distVwap = Number(stock.distance_from_vwap_pct || 0);
             const vwapDistClass = distVwap > 2.0
-              ? 'text-amber-dark font-extrabold'
-              : (distVwap < 0 ? 'text-crimson font-extrabold' : 'text-emerald font-extrabold');
+    ? 'text-amber-dark font-extrabold'
+    : (distVwap < 0 ? 'text-crimson font-extrabold' : 'text-emerald font-extrabold');
 
-            const priceNum = Number(stock.current_price || 0);
-            const atrVal = Number(stock.atr_value || (priceNum * 0.015)).toFixed(2);
-            const rawSL = stock.suggested_sl || (priceNum - Number(atrVal) * 2);
-            const formattedSL = Number(rawSL).toLocaleString('en-IN', {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2
+    const priceNum = Number(stock.current_price || 0);
+    const atrVal = Number(stock.atr_value || (priceNum * 0.015)).toFixed(2);
+    const rawSL = stock.suggested_sl || (priceNum - Number(atrVal) * 2);
+    const formattedSL = Number(rawSL).toLocaleString('en-IN', {
+      minimumFractionDigits: 2,
+    maximumFractionDigits: 2
             });
 
             const isHighConviction = stock.conviction === 'HIGH';
             const convictionBadge = isHighConviction
-              ? \`<span class="px-1.5 py-0.5 text-[9px] font-sans font-extrabold tracking-widest bg-carbon text-snow uppercase shadow-2xs">
-                  HIGH
-                </span>\`
-              : \`<span class="px-1.5 py-0.5 text-[9px] font-sans font-bold tracking-widest bg-platinum text-slategrey border border-alabaster uppercase">
-                  30M
-                </span>\`;
+              ? '<span class="px-1.5 py-0.5 text-[9px] font-sans font-extrabold tracking-widest bg-carbon text-snow uppercase shadow-2xs">HIGH</span>'
+              : '<span class="px-1.5 py-0.5 text-[9px] font-sans font-bold tracking-widest bg-platinum text-slategrey border border-alabaster uppercase">30M</span>';
+
+            const aiSent = stock.catalyst_sentiment || 'BULLISH';
+            const aiSentClass = aiSent === 'BEARISH' ? 'bg-crimson text-snow' : (aiSent === 'NEUTRAL' ? 'bg-platinum text-carbon border border-alabaster' : 'bg-emerald text-snow');
+            const aiBadge = stock.ai_catalyst 
+              ? '<span class="px-1.5 py-0.5 text-[9px] font-sans font-extrabold tracking-wider ' + aiSentClass + ' uppercase shadow-2xs">⚡ ' + aiSent + '</span>'
+              : '';
 
             const marginMult = stock.mtf_margin_multiplier || 3.5;
             const riskPerShare = Math.max(0.05, priceNum - Number(rawSL));
@@ -1182,6 +1245,7 @@ export const MTFScreenerPage = () => (
                   <div class="flex items-center gap-2">
                     <button onclick="toggleRowDetails('\${sym}')" class="font-extrabold text-carbon text-sm hover:text-slategrey transition-colors cursor-pointer uppercase font-sans tracking-tight">\${sym}</button>
                     \${convictionBadge}
+                    \${aiBadge}
                     <span class="px-1.5 py-0.5 text-[9px] font-mono tracking-wider border \${rvolBadgeClass}">
                       RVOL \${rvolVal}x
                     </span>
@@ -1266,7 +1330,7 @@ export const MTFScreenerPage = () => (
               <!-- EXPANDABLE ACCORDION DETAIL ROW -->
               <tr id="detail-row-\${sym}" class="\${isExpanded ? '' : 'hidden'} bg-carbon text-snow border-b border-gunmetal">
                 <td colSpan="8" class="p-4 sm:p-5">
-                  <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs font-mono">
+                  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs font-mono">
                     
                     <!-- Panel 1: Technical Matrix -->
                     <div class="terminal-glass-panel-dark p-3.5 space-y-2">
@@ -1328,7 +1392,7 @@ export const MTFScreenerPage = () => (
                       </div>
                     </div>
 
-                    <!-- Panel 3: Execution & Copy Plan -->
+                    <!-- Panel 3: Margin & Execution -->
                     <div class="terminal-glass-panel-dark p-3.5 flex flex-col justify-between space-y-2">
                       <div>
                         <div class="flex items-center justify-between border-b border-gunmetal pb-1.5">
@@ -1345,7 +1409,7 @@ export const MTFScreenerPage = () => (
                           onclick="copyTradePlan('\${sym}', \${priceNum}, \${Number(rawSL).toFixed(2)}, \${atrVal}, \${rvolVal})"
                           class="flex-1 py-1.5 text-xs font-sans font-extrabold bg-snow hover:bg-platinum text-carbon uppercase transition-all cursor-pointer shadow-sm tracking-wider"
                         >
-                          COPY TRADE PLAN
+                          COPY PLAN
                         </button>
                         <a
                           href="https://in.tradingview.com/chart/?symbol=NSE:\${sym}"
@@ -1358,6 +1422,31 @@ export const MTFScreenerPage = () => (
                       </div>
                     </div>
 
+                    <!-- Panel 4: AI Catalyst Confluence -->
+                    <div class="terminal-glass-panel-dark p-3.5 flex flex-col justify-between space-y-2 border border-gunmetal">
+                      <div>
+                        <div class="flex items-center justify-between border-b border-gunmetal pb-1.5">
+                          <span class="font-sans font-extrabold uppercase tracking-wider text-paleslate2 text-[10px] flex items-center gap-1">
+                            <span class="text-amber">⚡</span> AI CATALYST (GROQ)
+                          </span>
+                          <span class="px-1.5 py-0.5 text-[9px] font-sans font-extrabold tracking-wider uppercase \${stock.catalyst_sentiment === 'BEARISH' ? 'bg-crimson text-snow' : (stock.catalyst_sentiment === 'NEUTRAL' ? 'bg-platinum text-carbon' : 'bg-emerald text-snow')}">
+                            \${stock.catalyst_sentiment || 'BULLISH'}
+                          </span>
+                        </div>
+                        <div id="ai-catalyst-text-\${sym}" class="text-[11px] font-sans text-paleslate leading-relaxed mt-2 p-2 bg-gunmetal/40 border border-gunmetal rounded-2xs min-h-[60px] max-h-[140px] overflow-y-auto">
+                          \${stock.ai_catalyst || '<span class=\"text-paleslate2 italic\">No catalyst analyzed yet. Click below to analyze news, quarterly earnings & sector tailwinds with Groq AI.</span>'}
+                        </div>
+                      </div>
+
+                      <button
+                        id="ai-analyze-btn-\${sym}"
+                        onclick="analyzeStockCatalyst('\${sym}')"
+                        class="w-full mt-2 py-1.5 text-xs font-sans font-extrabold \${stock.ai_catalyst ? 'bg-gunmetal hover:bg-irongrey text-snow border border-gunmetal' : 'bg-emerald hover:bg-emerald-dark text-snow border border-emerald-dark'} transition-all uppercase tracking-wider cursor-pointer shadow-sm active:translate-y-0.5"
+                      >
+                        ⚡ \${stock.ai_catalyst ? 'RE-ANALYZE WITH AI' : 'GENERATE AI CATALYST'}
+                      </button>
+                    </div>
+
                   </div>
                 </td>
               </tr>
@@ -1365,109 +1454,109 @@ export const MTFScreenerPage = () => (
           }).join('');
         }
 
-        // On-Demand Manual Scan Trigger Function
-        let isScanning = false;
-        async function triggerManualScan() {
-          if (isScanning) return;
-          isScanning = true;
-          const btn = document.getElementById('trigger-scan-btn');
-          const btnText = document.getElementById('trigger-scan-text');
-          
-          if (btn) {
-            btn.className = 'flex items-center gap-2 px-4 py-1.5 text-xs font-extrabold text-slategrey bg-platinum border border-alabaster cursor-not-allowed uppercase tracking-wider font-sans';
-          }
-          if (btnText) btnText.innerText = 'SCANNING...';
-          
-          try {
-            await fetch('/api/mtf-screener/trigger', { method: 'POST', headers: getAuthHeaders() });
-            showToast('SCAN DISPATCHED');
-          } catch (e) {
-            console.error('Trigger request error:', e);
-            showToast('TRIGGER FAILED', 'error');
-          }
+// On-Demand Manual Scan Trigger Function
+let isScanning = false;
+async function triggerManualScan() {
+  if (isScanning) return;
+  isScanning = true;
+  const btn = document.getElementById('trigger-scan-btn');
+  const btnText = document.getElementById('trigger-scan-text');
 
-          let polls = 0;
-          const pollInterval = setInterval(async () => {
-            await fetchMTFSetups();
-            polls++;
-            if (polls >= 6) {
-              clearInterval(pollInterval);
-              resetScanButton();
-            }
-          }, 5000);
-        }
+  if (btn) {
+    btn.className = 'flex items-center gap-2 px-4 py-1.5 text-xs font-extrabold text-slategrey bg-platinum border border-alabaster cursor-not-allowed uppercase tracking-wider font-sans';
+  }
+  if (btnText) btnText.innerText = 'SCANNING...';
 
-        function resetScanButton() {
-          isScanning = false;
-          const btn = document.getElementById('trigger-scan-btn');
-          const btnText = document.getElementById('trigger-scan-text');
-          if (btn) {
-            btn.className = 'flex items-center gap-2 px-4 py-1.5 text-xs font-extrabold text-snow bg-carbon hover:bg-gunmetal transition-all active:translate-y-0.5 cursor-pointer uppercase tracking-wider font-sans';
-          }
-          if (btnText) btnText.innerText = 'SCAN NOW';
-        }
+  try {
+    await fetch('/api/mtf-screener/trigger', { method: 'POST', headers: getAuthHeaders() });
+    showToast('SCAN DISPATCHED');
+  } catch (e) {
+    console.error('Trigger request error:', e);
+    showToast('TRIGGER FAILED', 'error');
+  }
 
-        window.triggerManualScan = triggerManualScan;
-        const btnElem = document.getElementById('trigger-scan-btn');
-        if (btnElem) {
-          btnElem.addEventListener('click', triggerManualScan);
-        }
+  let polls = 0;
+  const pollInterval = setInterval(async () => {
+    await fetchMTFSetups();
+    polls++;
+    if (polls >= 6) {
+      clearInterval(pollInterval);
+      resetScanButton();
+    }
+  }, 5000);
+}
 
-        // Live Cron Sync Countdown Timer (:01, :16, :31, :46 minutes)
-        function updateLiveScanCountdown() {
-          const now = new Date();
-          const m = now.getMinutes();
-          const targetMinutes = [1, 16, 31, 46];
-          
-          let targetM = targetMinutes.find(t => t > m);
-          let nextScanDate = new Date(now);
+function resetScanButton() {
+  isScanning = false;
+  const btn = document.getElementById('trigger-scan-btn');
+  const btnText = document.getElementById('trigger-scan-text');
+  if (btn) {
+    btn.className = 'flex items-center gap-2 px-4 py-1.5 text-xs font-extrabold text-snow bg-carbon hover:bg-gunmetal transition-all active:translate-y-0.5 cursor-pointer uppercase tracking-wider font-sans';
+  }
+  if (btnText) btnText.innerText = 'SCAN NOW';
+}
 
-          if (targetM !== undefined) {
-            nextScanDate.setMinutes(targetM, 0, 0);
-          } else {
-            nextScanDate.setHours(now.getHours() + 1, 1, 0, 0);
-          }
+window.triggerManualScan = triggerManualScan;
+const btnElem = document.getElementById('trigger-scan-btn');
+if (btnElem) {
+  btnElem.addEventListener('click', triggerManualScan);
+}
 
-          const diffMs = nextScanDate.getTime() - now.getTime();
-          const totalSeconds = Math.max(0, Math.floor(diffMs / 1000));
+// Live Cron Sync Countdown Timer (:01, :16, :31, :46 minutes)
+function updateLiveScanCountdown() {
+  const now = new Date();
+  const m = now.getMinutes();
+  const targetMinutes = [1, 16, 31, 46];
 
-          const mins = Math.floor(totalSeconds / 60);
-          const secs = totalSeconds % 60;
+  let targetM = targetMinutes.find(t => t > m);
+  let nextScanDate = new Date(now);
 
-          let timeString = '';
-          if (mins > 0) {
-            timeString = mins + 'M ' + (secs < 10 ? '0' : '') + secs + 'S';
-          } else {
-            timeString = secs + 'S';
-          }
+  if (targetM !== undefined) {
+    nextScanDate.setMinutes(targetM, 0, 0);
+  } else {
+    nextScanDate.setHours(now.getHours() + 1, 1, 0, 0);
+  }
 
-          const labelElem = document.getElementById('countdown-label');
-          if (labelElem) {
-            labelElem.innerText = '[' + timeString + ']';
-          }
+  const diffMs = nextScanDate.getTime() - now.getTime();
+  const totalSeconds = Math.max(0, Math.floor(diffMs / 1000));
 
-          if (totalSeconds === 0) {
-            setTimeout(fetchMTFSetups, 3000);
-          }
-        }
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
 
-        // Initialize Search Listener & Initial Data Fetch
-        document.getElementById('search-input').addEventListener('input', applyFilter);
-        fetchMTFSetups();
-        fetchPortfolioData();
-        fetchMorningBriefing();
+  let timeString = '';
+  if (mins > 0) {
+    timeString = mins + 'M ' + (secs < 10 ? '0' : '') + secs + 'S';
+  } else {
+    timeString = secs + 'S';
+  }
 
-        // 60-Second Data Loop
-        setInterval(() => {
-          fetchMTFSetups();
-          fetchPortfolioData();
-          fetchMorningBriefing();
-        }, 60000);
+  const labelElem = document.getElementById('countdown-label');
+  if (labelElem) {
+    labelElem.innerText = '[' + timeString + ']';
+  }
 
-        // Live 1-Second Countdown Counter
-        updateLiveScanCountdown();
-        setInterval(updateLiveScanCountdown, 1000);
-      ` }}></script>
+  if (totalSeconds === 0) {
+    setTimeout(fetchMTFSetups, 3000);
+  }
+}
+
+// Initialize Search Listener & Initial Data Fetch
+document.getElementById('search-input').addEventListener('input', applyFilter);
+fetchMTFSetups();
+fetchPortfolioData();
+fetchMorningBriefing();
+
+// 60-Second Data Loop
+setInterval(() => {
+  fetchMTFSetups();
+  fetchPortfolioData();
+  fetchMorningBriefing();
+}, 60000);
+
+// Live 1-Second Countdown Counter
+updateLiveScanCountdown();
+setInterval(updateLiveScanCountdown, 1000);
+` }}></script>
     </body>
   </html>
 );

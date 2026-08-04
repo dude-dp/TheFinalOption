@@ -18,12 +18,16 @@ CREATE TABLE IF NOT EXISTS mtf_screened_stocks (
     atr_value DECIMAL DEFAULT 0.0,
     suggested_sl DECIMAL DEFAULT 0.0,
     conviction VARCHAR NOT NULL DEFAULT 'NORMAL',
+    ai_catalyst TEXT,
+    catalyst_sentiment VARCHAR(20) DEFAULT 'BULLISH',
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Migrations (run if table exists):
 ALTER TABLE mtf_screened_stocks ADD COLUMN IF NOT EXISTS atr_value DECIMAL DEFAULT 0.0;
 ALTER TABLE mtf_screened_stocks ADD COLUMN IF NOT EXISTS conviction VARCHAR DEFAULT 'NORMAL';
+ALTER TABLE mtf_screened_stocks ADD COLUMN IF NOT EXISTS ai_catalyst TEXT;
+ALTER TABLE mtf_screened_stocks ADD COLUMN IF NOT EXISTS catalyst_sentiment VARCHAR(20) DEFAULT 'BULLISH';
 
 -- Index: HIGH conviction first, then by MACD momentum
 DROP INDEX IF EXISTS idx_mtf_screened_stocks_macd;

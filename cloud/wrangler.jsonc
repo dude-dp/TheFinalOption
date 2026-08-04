@@ -55,4 +55,5 @@
   //   wrangler secret put UPSTOX_CLIENT_SECRET
   //   wrangler secret put POLL_SECRET
   //   wrangler secret put DISCORD_MTF_WEBHOOK
+  //   wrangler secret put GROQ_API_KEY
 }

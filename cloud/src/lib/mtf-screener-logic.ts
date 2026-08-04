@@ -64,8 +64,8 @@ export function detect30mSignals(candles: Candle[]): ScreenerSignalResult | null
   const currOpen = currCandle.open ?? currCandle.close;
   const prevOpen = prevCandle.open ?? prevCandle.close;
 
-  // --- NEW: GOOGLE SHEET PRE-BREAKOUT LOGIC ---
-
+  // --- PHASE 2: DYNAMIC VOLATILITY THRESHOLDS (QUANT ATR UPGRADE) ---
+  
   // 1. Trend Stack Order (Perfect Stack: Price > EMA9 > EMA21 > EMA50)
   const ema9  = calculateEMA(closes, 9);
   const ema21 = calculateEMA(closes, 21);
@@ -76,28 +76,33 @@ export function detect30mSignals(candles: Candle[]): ScreenerSignalResult | null
   
   const isPerfectStack = price > currE9 && currE9 > currE21 && currE21 > currE50;
   
-  // 2. Volume Exhaustion (🤫 SELLERS DEAD)
-  // Current volume is < 50% of the 20-period average, and the candle has a very tight body (indecision)
+  // 2. Volume Exhaustion (🤫 SELLERS DEAD — ATR Adjusted)
+  // Current volume is < 60% of the 20-period average, and the candle body is <= 25% of 30m ATR (true volatility dead-zone)
   const last20Vols = candles.slice(-20).map(c => c.volume);
   const avgVol20 = last20Vols.reduce((a, b) => a + b, 0) / 20;
-  const candleBodyPct = Math.abs(currCandle.close - currOpen) / currOpen;
-  const isSellersDead = currCandle.volume < (avgVol20 * 0.6) && candleBodyPct < 0.003;
+  const candleBody = Math.abs(currCandle.close - currOpen);
+  const isSellersDead = currCandle.volume < (avgVol20 * 0.6) && (currentAtr > 0 ? candleBody <= (currentAtr * 0.25) : candleBody / currOpen < 0.003);
 
-  // 3. 5-Day Base Depth (Tight Squeeze)
+  // 3. 5-Day Base Depth (Tight Squeeze — ATR Adjusted)
   // In 30m timeframe, 1 day ≈ 13 candles. 5 days ≈ 65 candles.
+  // Dynamic threshold: Base range <= 1.5x Daily ATR (Daily ATR ≈ sqrt(13) * 30m ATR ≈ 3.6 * currentAtr).
+  // 1.5x Daily ATR = 1.5 * 3.6 * currentAtr ≈ 5.4 * currentAtr.
   const last65Candles = candles.slice(-65);
   const maxHigh65 = Math.max(...last65Candles.map(c => c.high));
   const minLow65 = Math.min(...last65Candles.map(c => c.low));
-  const baseDepthPct = ((maxHigh65 - minLow65) / minLow65) * 100;
-  const isTightBase = baseDepthPct < 4.5; // If 5-day range is strictly compressed under 4.5%
+  const baseRange65 = maxHigh65 - minLow65;
+  const baseDepthPct = (baseRange65 / minLow65) * 100;
+  const maxAllowedBaseRange = currentAtr > 0 ? currentAtr * 5.4 : minLow65 * 0.045;
+  const isTightBase = baseRange65 <= maxAllowedBaseRange;
 
   // 4. Intraday Coiling Ratio (Inside Bar / Volatility Contraction)
   const isCoiling = currCandle.high < prevCandle.high && currCandle.low > prevCandle.low;
 
-  // 5. Support Proximity (The Dip Buy)
-  // Price is within 0.75% of the 21 EMA while the overall trend is up
-  const distE21 = Math.abs(price - currE21) / currE21;
-  const isDipBuy = distE21 < 0.0075 && currE21 > currE50 && currentRsi > 40 && currentRsi < 60;
+  // 5. Support Proximity (The Dip Buy — ATR Adjusted)
+  // Price is within 0.75x 30m ATR of the 21 EMA while the overall trend is up
+  const distE21 = Math.abs(price - currE21);
+  const maxAllowedDipDist = currentAtr > 0 ? currentAtr * 0.75 : currE21 * 0.0075;
+  const isDipBuy = distE21 <= maxAllowedDipDist && currE21 > currE50 && currentRsi > 40 && currentRsi < 60;
 
   // --- ORIGINAL REACTIVE LOGIC ---
   const isZeroLineCross30m = prevMacd30m <= 0 && currentMacd30m > 0;

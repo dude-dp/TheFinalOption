@@ -17,6 +17,7 @@ import { executePaperTrade } from '../lib/paper';
 import { calculateMACD } from '../lib/macd';
 import { calculateATRArray } from '../lib/atr';
 import { handleScheduled } from '../cron';
+import { generateStockCatalyst } from '../lib/ai-catalyst';
 
 const api = new Hono<{ Bindings: Env }>();
 
@@ -1647,6 +1648,71 @@ api.post('/api/mtf-screener/trigger', async (c) => {
     return c.json({ success: true, message: "On-demand MTF scan dispatched to Cloudflare Queue pipeline." });
   } catch (err: any) {
     return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+/**
+ * POST /api/mtf-screener/analyze-catalyst
+ * On-demand AI Catalyst & News Analysis powered by Groq (Llama-3.3-70B)
+ */
+api.post('/api/mtf-screener/analyze-catalyst', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const symbol = body.symbol || body.tradingsymbol;
+    if (!symbol) {
+      return c.json({ success: false, error: "Symbol is required" }, 400);
+    }
+
+    const price = Number(body.price || body.current_price || 0);
+    const sector = body.sector || 'General';
+    const primarySignal = body.primarySignal || body.macd_signal || 'TIGHT_BASE_SQUEEZE';
+    const macdValue = body.macdValue !== undefined ? Number(body.macdValue) : body.macd_value !== undefined ? Number(body.macd_value) : 0;
+    const rsi = body.rsi !== undefined ? Number(body.rsi) : body.rsi_14 !== undefined ? Number(body.rsi_14) : 50;
+    const adx = body.adx !== undefined ? Number(body.adx) : body.adx_trend !== undefined ? Number(body.adx_trend) : 25;
+    const rvol = body.rvol !== undefined ? Number(body.rvol) : 1;
+    const atr = body.atr !== undefined ? Number(body.atr) : body.atr_value !== undefined ? Number(body.atr_value) : 0;
+    const vwapDist = body.vwapDist !== undefined ? Number(body.vwapDist) : body.distance_from_vwap_pct !== undefined ? Number(body.distance_from_vwap_pct) : 0;
+    const conviction = body.conviction || 'HIGH';
+
+    const result = await generateStockCatalyst(c.env, symbol, {
+      price,
+      sector,
+      primarySignal,
+      macdValue,
+      rsi,
+      adx,
+      rvol,
+      atr,
+      vwapDist,
+      conviction
+    });
+
+    // Update Supabase in background if configured
+    if (c.env.SUPABASE_SERVICE_KEY) {
+      c.executionCtx.waitUntil((async () => {
+        try {
+          const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_KEY);
+          await supabase
+            .from('mtf_screened_stocks')
+            .update({
+              ai_catalyst: result.catalyst,
+              catalyst_sentiment: result.sentiment,
+              updated_at: new Date().toISOString()
+            })
+            .eq('tradingsymbol', symbol);
+        } catch {
+          // ignore async update errors
+        }
+      })());
+    }
+
+    return c.json({
+      success: true,
+      symbol,
+      ...result
+    });
+  } catch (err: any) {
+    return c.json({ success: false, error: err?.message || 'Failed to analyze catalyst' }, 500);
   }
 });
 

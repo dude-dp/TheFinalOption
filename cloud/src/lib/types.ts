@@ -25,8 +25,29 @@ export interface Env {
   // Alerting
   DISCORD_MTF_WEBHOOK: string;
 
+  // AI Catalyst (Groq)
+  GROQ_API_KEY?: string;
+
   // Deployment
   ENVIRONMENT: string;
+}
+
+// --- AI Catalyst Confluence Types ---
+
+export interface NewsHeadlineItem {
+  title: string;
+  source: string;
+  published: string;
+  link?: string;
+}
+
+export interface AICatalystResult {
+  catalyst: string;
+  sentiment: 'BULLISH' | 'NEUTRAL' | 'BEARISH';
+  catalystType: 'EARNINGS' | 'ORDER_WIN' | 'SECTOR_ROTATION' | 'REGULATORY' | 'TECHNICAL_COIL' | 'GENERAL';
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  headlines: NewsHeadlineItem[];
+  modelUsed: string;
 }
 
 // --- MTF Screener Queue Message ---
@@ -60,6 +81,8 @@ export interface MTFSetupData {
   atr_value: number;
   suggested_sl: number;
   conviction: 'HIGH' | 'NORMAL';
+  ai_catalyst?: string;
+  catalyst_sentiment?: 'BULLISH' | 'NEUTRAL' | 'BEARISH';
   updated_at: string;
 }
 
