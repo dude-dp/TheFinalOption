@@ -32,7 +32,7 @@ function isMarketHours(): boolean {
 // Fallback: Supabase system_state table
 // ============================================================
 
-async function resolveAccessToken(env: Env): Promise<string | null> {
+export async function resolveAccessToken(env: Env): Promise<string | null> {
   // 1. Try KV first (O(1) latency)
   const kvToken = await env.TRADING_KV.get('upstox_access_token');
   if (kvToken) return kvToken;
@@ -194,17 +194,17 @@ export async function handleScheduled(env: Env, forceRun = false): Promise<void>
     return;
   }
 
-  // 2. Rotate and archive old active setups before enqueuing fresh scan run
-  await rotateAndClearOldSetups(env);
-
-  // 2. Resolve Upstox access token
+  // 2. Resolve Upstox access token FIRST before clearing active setups table
   const accessToken = await resolveAccessToken(env);
   if (!accessToken) {
     logError(env, '[PRODUCER] No Upstox access token found in KV or Supabase. Aborting scan.');
     return;
   }
 
-  // 3. Fetch high-liquidity watchlist from Supabase
+  // 3. Rotate and archive old active setups only after confirming access token is available
+  await rotateAndClearOldSetups(env);
+
+  // 4. Fetch high-liquidity watchlist from Supabase
   let instruments: any[] = [];
   try {
     const res = await fetch(

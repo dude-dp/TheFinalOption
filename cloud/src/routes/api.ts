@@ -16,7 +16,7 @@ import { addPendingOrder, removePendingOrder } from '../lib/orders';
 import { executePaperTrade } from '../lib/paper';
 import { calculateMACD } from '../lib/macd';
 import { calculateATRArray } from '../lib/atr';
-import { handleScheduled } from '../cron';
+import { handleScheduled, resolveAccessToken } from '../cron';
 import { generateStockCatalyst } from '../lib/ai-catalyst';
 
 const api = new Hono<{ Bindings: Env }>();
@@ -37,11 +37,13 @@ function requirePollSecret(c: any, next: any) {
 const dashboardAuth = async (c: any, next: any) => {
   const authHeader = c.req.header('Authorization');
   if (!authHeader) {
+    c.header('WWW-Authenticate', 'Basic realm="TheFinalOption"');
     return c.json({ error: 'Unauthorized' }, 401);
   }
   
   const match = authHeader.match(/^Basic\s+(.*)$/i);
   if (!match) {
+    c.header('WWW-Authenticate', 'Basic realm="TheFinalOption"');
     return c.json({ error: 'Unauthorized' }, 401);
   }
   
@@ -51,9 +53,11 @@ const dashboardAuth = async (c: any, next: any) => {
     if (username === 'vdineshprabu' && password === 'Healthywealth007#') {
       await next();
     } else {
+      c.header('WWW-Authenticate', 'Basic realm="TheFinalOption"');
       return c.json({ error: 'Unauthorized' }, 401);
     }
   } catch (e) {
+    c.header('WWW-Authenticate', 'Basic realm="TheFinalOption"');
     return c.json({ error: 'Unauthorized' }, 401);
   }
 };
@@ -1647,11 +1651,19 @@ api.get('/api/mtf-screener', async (c) => {
 });
 
 /**
- * POST /api/mtf-screener/trigger
+ * GET/POST /api/mtf-screener/trigger
  * Triggers an on-demand scan by invoking the MTF Screener Producer worker immediately.
  */
-api.post('/api/mtf-screener/trigger', async (c) => {
+api.on(['GET', 'POST'], '/api/mtf-screener/trigger', async (c) => {
   try {
+    const accessToken = await resolveAccessToken(c.env);
+    if (!accessToken) {
+      return c.json({ 
+        success: false, 
+        error: "No active Upstox access token found in KV or Supabase. Please re-authenticate Upstox." 
+      }, 400);
+    }
+
     c.executionCtx.waitUntil(handleScheduled(c.env, true));
     return c.json({ success: true, message: "On-demand MTF scan dispatched to Cloudflare Queue pipeline." });
   } catch (err: any) {
