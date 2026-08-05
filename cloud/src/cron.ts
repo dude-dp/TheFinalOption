@@ -7,6 +7,7 @@
 // ============================================
 
 import type { Env, MTFQueueMessage } from './lib/types';
+import { createClient } from '@supabase/supabase-js';
 import { logInfo, logError, logWarn } from './lib/logger';
 import { getTodayDateStr } from './lib/time';
 import { processSingleInstrument, upsertToSupabase } from './queue';
@@ -83,97 +84,51 @@ const DEFAULT_WATCHLIST = [
  */
 async function rotateAndClearOldSetups(env: Env): Promise<void> {
   try {
-    // 1. Ensure D1 history table exists
-    try {
-      await env.TRADING_DB.prepare(
-        `CREATE TABLE IF NOT EXISTS mtf_suggestions_history (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          instrument_token TEXT,
-          tradingsymbol TEXT,
-          sector TEXT,
-          current_price REAL,
-          mtf_margin_multiplier REAL,
-          distance_from_vwap_pct REAL,
-          rsi_14 REAL,
-          macd_value REAL,
-          macd_signal TEXT,
-          adx_trend REAL,
-          rvol REAL,
-          atr_value REAL,
-          suggested_sl REAL,
-          conviction TEXT,
-          ai_catalyst TEXT,
-          catalyst_sentiment TEXT,
-          updated_at TEXT,
-          created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )`
-      ).run();
-    } catch (e: any) {
-      logWarn(env, `[PRODUCER] D1 table creation warning: ${e.message}`);
-    }
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_KEY);
 
-    // 2. Fetch current active setups
-    const fetchRes = await fetch(
-      `${env.SUPABASE_URL}/rest/v1/mtf_screened_stocks?select=*`,
-      {
-        headers: {
-          'apikey': env.SUPABASE_SERVICE_KEY,
-          'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-        }
-      }
-    );
+    // 1. Fetch current active setups
+    const { data: oldRows, error: fetchErr } = await supabase
+      .from('mtf_screened_stocks')
+      .select('*');
 
-    if (fetchRes.ok) {
-      const oldRows = await fetchRes.json() as any[];
-      if (oldRows && oldRows.length > 0) {
-        logInfo(env, `[PRODUCER] Archiving ${oldRows.length} old setups before new scan...`);
-        
-        // 3. Try pushing old setups to Supabase mtf_suggestions_history (if table exists)
+    if (!fetchErr && oldRows && oldRows.length > 0) {
+      logInfo(env, `[PRODUCER] Archiving ${oldRows.length} old setups before new scan...`);
+      
+      // 2. Push old setups to Supabase mtf_suggestions_history
+      try {
+        await supabase
+          .from('mtf_suggestions_history')
+          .insert(oldRows);
+      } catch {/* non-critical */}
+
+      // 3. Archive into D1 history table
+      for (const row of oldRows) {
         try {
-          await fetch(`${env.SUPABASE_URL}/rest/v1/mtf_suggestions_history`, {
-            method: 'POST',
-            headers: {
-              'apikey': env.SUPABASE_SERVICE_KEY,
-              'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-              'Content-Type': 'application/json',
-              'Prefer': 'resolution=merge-duplicates',
-            },
-            body: JSON.stringify(oldRows),
-          });
-        } catch {/* non-critical if Supabase table created on-demand */}
+          await env.TRADING_DB.prepare(
+            `INSERT INTO mtf_suggestions_history 
+             (instrument_token, tradingsymbol, sector, current_price, mtf_margin_multiplier, distance_from_vwap_pct, rsi_14, macd_value, macd_signal, adx_trend, rvol, atr_value, suggested_sl, conviction, ai_catalyst, catalyst_sentiment, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).bind(
+            row.instrument_token || '', row.tradingsymbol || '', row.sector || 'EQUITY', row.current_price || 0,
+            row.mtf_margin_multiplier || 3.5, row.distance_from_vwap_pct || 0, row.rsi_14 || 50,
+            row.macd_value || 0, row.macd_signal || 'BULLISH', row.adx_trend || 0, row.rvol || 1,
+            row.atr_value || 0, row.suggested_sl || 0, row.conviction || 'NORMAL',
+            row.ai_catalyst || null, row.catalyst_sentiment || 'BULLISH',
+            row.updated_at || new Date().toISOString()
+          ).run();
+        } catch {/* skip row error */}
+      }
 
-        // 4. Always archive into D1 history table
-        for (const row of oldRows) {
-          try {
-            await env.TRADING_DB.prepare(
-              `INSERT INTO mtf_suggestions_history 
-               (instrument_token, tradingsymbol, sector, current_price, mtf_margin_multiplier, distance_from_vwap_pct, rsi_14, macd_value, macd_signal, adx_trend, rvol, atr_value, suggested_sl, conviction, ai_catalyst, catalyst_sentiment, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-            ).bind(
-              row.instrument_token || '', row.tradingsymbol || '', row.sector || 'EQUITY', row.current_price || 0,
-              row.mtf_margin_multiplier || 3.5, row.distance_from_vwap_pct || 0, row.rsi_14 || 50,
-              row.macd_value || 0, row.macd_signal || 'BULLISH', row.adx_trend || 0, row.rvol || 1,
-              row.atr_value || 0, row.suggested_sl || 0, row.conviction || 'NORMAL',
-              row.ai_catalyst || null, row.catalyst_sentiment || 'BULLISH',
-              row.updated_at || new Date().toISOString()
-            ).run();
-          } catch {/* skip row error */}
-        }
+      // 4. Clear active mtf_screened_stocks so new scan starts fresh
+      const { error: deleteErr } = await supabase
+        .from('mtf_screened_stocks')
+        .delete()
+        .not('tradingsymbol', 'is', null);
 
-        // 5. Clear active mtf_screened_stocks so new scan starts fresh
-        const deleteRes = await fetch(
-          `${env.SUPABASE_URL}/rest/v1/mtf_screened_stocks?tradingsymbol=neq.null`,
-          {
-            method: 'DELETE',
-            headers: {
-              'apikey': env.SUPABASE_SERVICE_KEY,
-              'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-            }
-          }
-        );
-        if (deleteRes.ok) {
-          logInfo(env, '[PRODUCER] Active mtf_screened_stocks table rotated & cleared cleanly.');
-        }
+      if (deleteErr) {
+        logWarn(env, `[PRODUCER] Clear mtf_screened_stocks warning: ${deleteErr.message}`);
+      } else {
+        logInfo(env, '[PRODUCER] Active mtf_screened_stocks table rotated & cleared cleanly.');
       }
     }
   } catch (err: any) {
@@ -186,11 +141,11 @@ async function rotateAndClearOldSetups(env: Env): Promise<void> {
 // Called by: export default → scheduled() or POST/GET /api/mtf-screener/trigger
 // ============================================================
 
-export async function handleScheduled(env: Env, forceRun = false): Promise<void> {
-  logInfo(env, `[SCREENER] ${forceRun ? 'On-demand/Manual' : 'Cron'} triggered — booting direct MTF Screener pipeline...`);
+export async function handleScheduled(env: Env, forceRun = false, offset = 0): Promise<void> {
+  logInfo(env, `[SCREENER] ${forceRun ? 'On-demand/Manual' : 'Cron'} triggered — booting direct MTF Screener pipeline (offset ${offset})...`);
 
-  // 1. Market hours gate (bypassed if forceRun is true)
-  if (!forceRun && !isMarketHours()) {
+  // 1. Market hours gate (bypassed if forceRun is true or offset > 0)
+  if (!forceRun && offset === 0 && !isMarketHours()) {
     logInfo(env, '[SCREENER] Outside market hours. Skipping scan.');
     return;
   }
@@ -202,11 +157,11 @@ export async function handleScheduled(env: Env, forceRun = false): Promise<void>
     return;
   }
 
-  // 3. Fetch watchlist instruments from Supabase
+  // 3. Fetch watchlist instruments from Supabase in chunks of 40 (to satisfy Cloudflare Worker subrequest quota)
   let instruments: any[] = [];
   try {
     const res = await fetch(
-      `${env.SUPABASE_URL}/rest/v1/mtf_instrument_master?liquidity_tier=eq.HIGH&is_active=eq.true&select=instrument_token,tradingsymbol,sector,mtf_bracket`,
+      `${env.SUPABASE_URL}/rest/v1/mtf_instrument_master?is_active=eq.true&select=instrument_token,tradingsymbol,sector,mtf_bracket&order=liquidity_tier.asc,tradingsymbol.asc&limit=40&offset=${offset}`,
       {
         headers: {
           'apikey':        env.SUPABASE_SERVICE_KEY,
@@ -219,41 +174,30 @@ export async function handleScheduled(env: Env, forceRun = false): Promise<void>
       instruments = await res.json() as any[];
     }
   } catch (err: any) {
-    logError(env, `[SCREENER] Primary instrument fetch error: ${err.message}`);
+    logError(env, `[SCREENER] Primary instrument fetch error (offset ${offset}): ${err.message}`);
   }
 
-  // Fallback 1: Query all active instruments if tier filter yields 0
-  if (!instruments || instruments.length === 0) {
-    try {
-      const resFallback = await fetch(
-        `${env.SUPABASE_URL}/rest/v1/mtf_instrument_master?select=instrument_token,tradingsymbol,sector,mtf_bracket&limit=300`,
-        {
-          headers: {
-            'apikey':        env.SUPABASE_SERVICE_KEY,
-            'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-          }
-        }
-      );
-      if (resFallback.ok) {
-        instruments = await resFallback.json() as any[];
-      }
-    } catch {/* fall through */}
-  }
-
-  // Fallback 2: Use default watchlist if Supabase table is empty
-  if (!instruments || instruments.length === 0) {
+  // Fallback 1: Use default watchlist if Supabase query returned 0 at offset 0
+  if ((!instruments || instruments.length === 0) && offset === 0) {
     logWarn(env, '[SCREENER] Supabase instrument table empty/unreachable. Falling back to default high-volume watchlist.');
     instruments = DEFAULT_WATCHLIST;
   }
 
-  logInfo(env, `[SCREENER] Loaded ${instruments.length} instruments from Supabase. Direct scanning candles...`);
+  if (!instruments || instruments.length === 0) {
+    logInfo(env, `[SCREENER] Full scan complete. No more instruments found at offset ${offset}.`);
+    return;
+  }
 
-  // 4. Archive old active setups into history table
-  await rotateAndClearOldSetups(env);
+  logInfo(env, `[SCREENER] Chunk offset ${offset}: Loaded ${instruments.length} instruments from Supabase. Direct scanning candles...`);
 
-  // 5. Direct parallel execution (batch chunks of 10 instruments)
-  const CONCURRENCY = 10;
-  const setupResults: any[] = [];
+  // 4. Archive old active setups ONLY on the initial chunk (offset 0)
+  if (offset === 0) {
+    await rotateAndClearOldSetups(env);
+  }
+
+  // 5. Direct parallel execution (batch chunks of 5 instruments)
+  const CONCURRENCY = 5;
+  let chunkPassingCount = 0;
 
   for (let i = 0; i < instruments.length; i += CONCURRENCY) {
     const batch = instruments.slice(i, i + CONCURRENCY);
@@ -265,17 +209,33 @@ export async function handleScheduled(env: Env, forceRun = false): Promise<void>
     }, accessToken));
 
     const results = await Promise.all(promises);
-    for (const res of results) {
-      if (res) setupResults.push(res);
+    const batchSetups = results.filter((res): res is any => res !== null);
+
+    if (batchSetups.length > 0) {
+      chunkPassingCount += batchSetups.length;
+      // Upsert batch results immediately so setups populate Supabase and dashboard in real-time
+      await upsertToSupabase(env, batchSetups);
     }
   }
 
-  // 6. Upsert passing setups directly into Supabase mtf_screened_stocks
-  if (setupResults.length > 0) {
-    await upsertToSupabase(env, setupResults);
-    logInfo(env, `[SCREENER] Scan complete: ${setupResults.length} quantitative setups upserted to Supabase.`);
+  logInfo(env, `[SCREENER] Chunk offset ${offset} complete: ${chunkPassingCount} setups found in this chunk.`);
+
+  // 6. Automatically chain next chunk if 40 instruments were processed
+  if (instruments.length === 40) {
+    const nextOffset = offset + 40;
+    logInfo(env, `[SCREENER] Chaining next scan chunk at offset ${nextOffset}...`);
+    try {
+      const triggerUrl = `https://thefinaloption.thefinaloptionautomation.workers.dev/api/mtf-screener/trigger?offset=${nextOffset}&forceRun=${forceRun ? 'true' : 'false'}`;
+      await fetch(triggerUrl, {
+        headers: {
+          'Authorization': `Basic ${btoa('vdineshprabu:Healthywealth007#')}`
+        }
+      });
+    } catch (err: any) {
+      logWarn(env, `[SCREENER] Failed to trigger next scan chunk at offset ${nextOffset}: ${err.message}`);
+    }
   } else {
-    logInfo(env, `[SCREENER] Scan complete: 0 instruments met quantitative conviction criteria.`);
+    logInfo(env, `[SCREENER] ✅ FULL SCAN COMPLETED across all instruments in Supabase master table!`);
   }
 
   // 7. Update last_scan_time in system_controls

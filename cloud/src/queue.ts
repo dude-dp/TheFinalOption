@@ -7,6 +7,8 @@
 // ============================================
 
 import type { Env, MTFQueueMessage, MTFSetupData } from './lib/types';
+import { createClient } from '@supabase/supabase-js';
+import { logInfo, logError } from './lib/logger';
 import { detect30mSignals, check3HConviction, resolvePrimarySignal } from './lib/mtf-screener-logic';
 import { fetchScreenerCandles } from './lib/upstox';
 import { generateStockCatalyst } from './lib/ai-catalyst';
@@ -168,59 +170,23 @@ export async function processSingleInstrument(
 export async function upsertToSupabase(env: Env, rows: MTFSetupData[]): Promise<void> {
   if (rows.length === 0) return;
 
-  const res = await fetch(`${env.SUPABASE_URL}/rest/v1/mtf_screened_stocks`, {
-    method: 'POST',
-    headers: {
-      'apikey':        env.SUPABASE_SERVICE_KEY,
-      'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-      'Content-Type':  'application/json',
-      'Prefer':        'resolution=merge-duplicates',
-    },
-    body: JSON.stringify(rows),
-  });
+  try {
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_KEY);
+    const { error } = await supabase
+      .from('mtf_screened_stocks')
+      .insert(rows);
 
-  if (!res.ok) {
-    const body = await res.text();
-    console.error(`[CONSUMER] Supabase upsert failed (${res.status}): ${body}`);
-  }
-}
-
-// ============================================================
-// MAIN QUEUE HANDLER
-// Called by: export default → queue()
-// ============================================================
-
-export async function handleQueue(
-  batch: MessageBatch<MTFQueueMessage>,
-  env: Env
-): Promise<void> {
-  const upsertPayloads: MTFSetupData[] = [];
-
-  for (const msg of batch.messages) {
-    const { token, symbol, sector, margin, accessToken, items } = msg.body;
-
-    const targetItems = items && items.length > 0
-      ? items
-      : (token && symbol ? [{ token, symbol, sector: sector || 'EQUITY', margin: margin || 3.5 }] : []);
-
-    try {
-      for (const item of targetItems) {
-        const setup = await processSingleInstrument(env, item, accessToken);
-        if (setup) {
-          upsertPayloads.push(setup);
-        }
-      }
-      msg.ack();
-    } catch (err: any) {
-      console.error(`[CONSUMER] Error processing batch message: ${err.message}`);
-      msg.retry(); // Back to queue — CF will retry up to max_retries
+    if (error) {
+      console.error(`[CONSUMER] Supabase insert failed: ${error.message}`);
+      logError(env, `[CONSUMER] Supabase insert failed: ${error.message}`);
+    } else {
+      console.log(`[CONSUMER] ✅ Successfully inserted ${rows.length} quantitative setups to Supabase mtf_screened_stocks.`);
+      logInfo(env, `[CONSUMER] ✅ Successfully inserted ${rows.length} quantitative setups to Supabase mtf_screened_stocks.`);
     }
-  }
-
-  // STEP H: Bulk upsert all passing setups from this batch in one shot
-  await upsertToSupabase(env, upsertPayloads);
-
-  if (upsertPayloads.length > 0) {
-    console.log(`[CONSUMER] Batch complete: ${upsertPayloads.length} setups upserted to Supabase.`);
+  } catch (err: any) {
+    console.error(`[CONSUMER] Supabase insert exception: ${err.message}`);
+    logError(env, `[CONSUMER] Supabase insert exception: ${err.message}`);
   }
 }
+
+

@@ -223,8 +223,12 @@ api.on(['GET', 'POST'], '/api/mtf-screener/trigger', async (c) => {
       }, 400);
     }
 
-    c.executionCtx.waitUntil(handleScheduled(c.env, true));
-    return c.json({ success: true, message: "On-demand MTF scan triggered successfully." });
+    const offset = parseInt(c.req.query('offset') || '0', 10);
+    const forceRunParam = c.req.query('forceRun');
+    const forceRun = forceRunParam !== undefined ? forceRunParam === 'true' : true;
+
+    c.executionCtx.waitUntil(handleScheduled(c.env, forceRun, offset));
+    return c.json({ success: true, message: `MTF scan triggered successfully for offset ${offset}.` });
   } catch (err: any) {
     return c.json({ success: false, error: err.message }, 500);
   }

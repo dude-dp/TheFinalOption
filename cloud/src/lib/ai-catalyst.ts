@@ -137,10 +137,25 @@ export async function generateStockCatalyst(
   const cleanSymbol = symbol.replace(/^(NSE_|BSE_)/i, '').replace(/-(EQ|BE|SM)$/i, '').trim();
   const apiKey = env.GROQ_API_KEY || (env as any).VARS?.GROQ_API_KEY || '';
 
-  // 1. Fetch live news
+  // 1. Check KV Cache (TTL 12 hours) to avoid redundant API calls & rate limits
+  const cacheKey = `catalyst:${cleanSymbol}`;
+  if (env.TRADING_KV) {
+    try {
+      const cachedStr = await env.TRADING_KV.get(cacheKey);
+      if (cachedStr) {
+        const cachedObj = JSON.parse(cachedStr);
+        return {
+          ...cachedObj,
+          modelUsed: 'Groq (Cached)'
+        };
+      }
+    } catch {/* cache lookup failure is non-blocking */}
+  }
+
+  // 2. Fetch live news
   const headlines = await fetchStockNews(cleanSymbol);
 
-  // 2. Format setup description for LLM
+  // 3. Format setup description for LLM
   const signalName = setupInfo.primarySignal.replace(/_/g, ' ');
   const newsContext = headlines.length > 0
     ? headlines.map((h, i) => `${i + 1}. [${h.source}] ${h.title} (${h.published})`).join('\n')
@@ -172,62 +187,84 @@ Respond strictly in valid JSON format with this exact structure:
   "confidence": "HIGH" | "MEDIUM" | "LOW"
 }`;
 
-  // 3. Call Groq API
+  // 4. Call Groq API with model fallback chain
   if (apiKey) {
-    try {
-      const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
-          messages: [
-            {
-              role: 'system',
-              content: 'You are an elite quantitative hedge fund analyst specializing in Indian Equities (NSE). You provide concise, ultra-high-conviction catalyst synthesis combining technical squeeze dynamics and fundamental news events. Output strictly valid JSON.'
-            },
-            {
-              role: 'user',
-              content: prompt
-            }
-          ],
-          temperature: 0.2,
-          max_tokens: 300,
-          response_format: { type: 'json_object' }
-        })
-      });
+    const modelsToTry = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
 
-      if (groqRes.ok) {
-        const data = await groqRes.json() as any;
-        const rawContent = data.choices?.[0]?.message?.content;
-        if (rawContent) {
-          try {
-            const parsed = JSON.parse(rawContent);
-            return {
-              catalyst: parsed.catalyst || `${cleanSymbol} is compressing in a ${signalName.toLowerCase()} pattern.`,
-              sentiment: (['BULLISH', 'NEUTRAL', 'BEARISH'].includes(parsed.sentiment?.toUpperCase()) ? parsed.sentiment.toUpperCase() : 'BULLISH') as any,
-              catalystType: (parsed.catalystType || 'TECHNICAL_COIL') as any,
-              confidence: (parsed.confidence || 'HIGH') as any,
-              headlines: headlines.slice(0, 3),
-              modelUsed: 'Groq (Llama-3.3-70B)'
-            };
-          } catch {
-            // If JSON parsing fails, fallback below
+    for (const model of modelsToTry) {
+      try {
+        const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              {
+                role: 'system',
+                content: 'You are an elite quantitative hedge fund analyst specializing in Indian Equities (NSE). You provide concise, ultra-high-conviction catalyst synthesis combining technical squeeze dynamics and fundamental news events. Output strictly valid JSON.'
+              },
+              {
+                role: 'user',
+                content: prompt
+              }
+            ],
+            temperature: 0.2,
+            max_tokens: 300,
+            response_format: { type: 'json_object' }
+          })
+        });
+
+        if (groqRes.ok) {
+          const data = await groqRes.json() as any;
+          const rawContent = data.choices?.[0]?.message?.content;
+          if (rawContent) {
+            try {
+              const parsed = JSON.parse(rawContent);
+              const result: AICatalystResult = {
+                catalyst: parsed.catalyst || `${cleanSymbol} is compressing in a ${signalName.toLowerCase()} pattern.`,
+                sentiment: (['BULLISH', 'NEUTRAL', 'BEARISH'].includes(parsed.sentiment?.toUpperCase()) ? parsed.sentiment.toUpperCase() : 'BULLISH') as any,
+                catalystType: (parsed.catalystType || 'TECHNICAL_COIL') as any,
+                confidence: (parsed.confidence || 'HIGH') as any,
+                headlines: headlines.slice(0, 3),
+                modelUsed: `Groq (${model})`
+              };
+
+              // Cache in KV for 12 hours
+              if (env.TRADING_KV) {
+                try {
+                  await env.TRADING_KV.put(cacheKey, JSON.stringify(result), { expirationTtl: 43200 });
+                } catch {/* non-critical */}
+              }
+
+              return result;
+            } catch {
+              // If JSON parsing fails, fallback below
+            }
           }
+        } else if (groqRes.status === 429) {
+          // Rate limited on current model — silently try next fallback model in loop
+          continue;
         }
-      } else {
-        const errText = await groqRes.text();
-        logWarn(env, `Groq API returned ${groqRes.status}: ${errText.slice(0, 100)}`, 'ai-catalyst');
+      } catch {
+        // Silently catch fetch errors and try next model or fallback
       }
-    } catch (err: any) {
-      logError(env, `Groq API fetch failed for ${cleanSymbol}: ${err?.message || err}`, 'ai-catalyst');
     }
   }
 
-  // 4. Resilient Fallback if Groq API is unavailable
-  return generateFallbackCatalyst(cleanSymbol, setupInfo, headlines);
+  // 5. Resilient Fallback if Groq API is rate-limited or unavailable
+  const fallbackResult = generateFallbackCatalyst(cleanSymbol, setupInfo, headlines);
+
+  // Cache fallback catalyst in KV for 2 hours to avoid spamming Groq API while rate-limited
+  if (env.TRADING_KV) {
+    try {
+      await env.TRADING_KV.put(cacheKey, JSON.stringify(fallbackResult), { expirationTtl: 7200 });
+    } catch {/* non-critical */}
+  }
+
+  return fallbackResult;
 }
 
 /**
