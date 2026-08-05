@@ -9,7 +9,6 @@ import apiRoutes from './routes/api';
 import dashboardRoutes from './routes/dashboard';
 import { MTFScreenerPage } from './routes/mtf-screener';
 import { handleScheduled, takeConfigSnapshot } from './cron';
-import { handleQueue } from './queue';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -34,7 +33,7 @@ export default {
   fetch: app.fetch,
 
   // Cron: '30 18 * * *' = midnight IST config snapshot
-  //       All other crons = MTF Screener producer
+  //       All other crons = MTF Screener runner
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     if (event.cron === '30 18 * * *') {
       ctx.waitUntil(takeConfigSnapshot(env));
@@ -43,8 +42,6 @@ export default {
     }
   },
 
-  // Queue: CF delivers batches from mtf-screener-queue here
-  async queue(batch: MessageBatch<import('./lib/types').MTFQueueMessage>, env: Env): Promise<void> {
-    await handleQueue(batch, env);
-  }
+  // No-op queue handler to satisfy existing Cloudflare dashboard queue consumer trigger
+  async queue(): Promise<void> {}
 };

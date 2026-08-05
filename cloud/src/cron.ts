@@ -9,6 +9,7 @@
 import type { Env, MTFQueueMessage } from './lib/types';
 import { logInfo, logError, logWarn } from './lib/logger';
 import { getTodayDateStr } from './lib/time';
+import { processSingleInstrument, upsertToSupabase } from './queue';
 
 // ============================================================
 // MARKET HOURS GATE
@@ -181,30 +182,27 @@ async function rotateAndClearOldSetups(env: Env): Promise<void> {
 }
 
 // ============================================================
-// MAIN PRODUCER HANDLER
-// Called by: export default → scheduled() or POST /api/mtf-screener/trigger
+// MAIN SCREENER HANDLER (100% Direct Supabase Pipeline)
+// Called by: export default → scheduled() or POST/GET /api/mtf-screener/trigger
 // ============================================================
 
 export async function handleScheduled(env: Env, forceRun = false): Promise<void> {
-  logInfo(env, `[PRODUCER] ${forceRun ? 'On-demand/Manual' : 'Cron'} triggered — booting MTF Screener pipeline...`);
+  logInfo(env, `[SCREENER] ${forceRun ? 'On-demand/Manual' : 'Cron'} triggered — booting direct MTF Screener pipeline...`);
 
   // 1. Market hours gate (bypassed if forceRun is true)
   if (!forceRun && !isMarketHours()) {
-    logInfo(env, '[PRODUCER] Outside market hours. Skipping scan.');
+    logInfo(env, '[SCREENER] Outside market hours. Skipping scan.');
     return;
   }
 
-  // 2. Resolve Upstox access token FIRST before clearing active setups table
+  // 2. Resolve Upstox access token FIRST
   const accessToken = await resolveAccessToken(env);
   if (!accessToken) {
-    logError(env, '[PRODUCER] No Upstox access token found in KV or Supabase. Aborting scan.');
+    logError(env, '[SCREENER] No Upstox access token found in KV or Supabase. Aborting scan.');
     return;
   }
 
-  // 3. Rotate and archive old active setups only after confirming access token is available
-  await rotateAndClearOldSetups(env);
-
-  // 4. Fetch high-liquidity watchlist from Supabase
+  // 3. Fetch watchlist instruments from Supabase
   let instruments: any[] = [];
   try {
     const res = await fetch(
@@ -221,7 +219,7 @@ export async function handleScheduled(env: Env, forceRun = false): Promise<void>
       instruments = await res.json() as any[];
     }
   } catch (err: any) {
-    logError(env, `[PRODUCER] Primary instrument fetch error: ${err.message}`);
+    logError(env, `[SCREENER] Primary instrument fetch error: ${err.message}`);
   }
 
   // Fallback 1: Query all active instruments if tier filter yields 0
@@ -244,40 +242,43 @@ export async function handleScheduled(env: Env, forceRun = false): Promise<void>
 
   // Fallback 2: Use default watchlist if Supabase table is empty
   if (!instruments || instruments.length === 0) {
-    logWarn(env, '[PRODUCER] Supabase instrument table empty/unreachable. Falling back to default high-volume watchlist.');
+    logWarn(env, '[SCREENER] Supabase instrument table empty/unreachable. Falling back to default high-volume watchlist.');
     instruments = DEFAULT_WATCHLIST;
   }
 
-  logInfo(env, `[PRODUCER] Loaded ${instruments.length} instruments. Dispatching to queue...`);
+  logInfo(env, `[SCREENER] Loaded ${instruments.length} instruments from Supabase. Direct scanning candles...`);
 
-  // 4. Chunk into batches of 10 and send to MTF_QUEUE
-  const BATCH_SIZE = 10;
-  let totalBatches = 0;
+  // 4. Archive old active setups into history table
+  await rotateAndClearOldSetups(env);
 
-  for (let i = 0; i < instruments.length; i += BATCH_SIZE) {
-    const chunk = instruments.slice(i, i + BATCH_SIZE);
+  // 5. Direct parallel execution (batch chunks of 10 instruments)
+  const CONCURRENCY = 10;
+  const setupResults: any[] = [];
 
-    const messages: MessageSendRequest<MTFQueueMessage>[] = chunk.map(inst => ({
-      body: {
-        token:       inst.instrument_token,
-        symbol:      inst.tradingsymbol,
-        sector:      inst.sector     || 'EQUITY',
-        margin:      Number(inst.mtf_bracket) || 3.5,
-        accessToken, // Embed token per-scan so consumer workers are stateless
-      }
-    }));
+  for (let i = 0; i < instruments.length; i += CONCURRENCY) {
+    const batch = instruments.slice(i, i + CONCURRENCY);
+    const promises = batch.map(inst => processSingleInstrument(env, {
+      token: inst.instrument_token,
+      symbol: inst.tradingsymbol,
+      sector: inst.sector || 'EQUITY',
+      margin: Number(inst.mtf_bracket) || 3.5
+    }, accessToken));
 
-    try {
-      await env.MTF_QUEUE.sendBatch(messages);
-      totalBatches++;
-    } catch (err: any) {
-      logError(env, `[PRODUCER] sendBatch failed at offset ${i}: ${err.message}`);
+    const results = await Promise.all(promises);
+    for (const res of results) {
+      if (res) setupResults.push(res);
     }
   }
 
-  logInfo(env, `[PRODUCER] Dispatched ${totalBatches} batches (${instruments.length} stocks) to MTF_QUEUE.`);
+  // 6. Upsert passing setups directly into Supabase mtf_screened_stocks
+  if (setupResults.length > 0) {
+    await upsertToSupabase(env, setupResults);
+    logInfo(env, `[SCREENER] Scan complete: ${setupResults.length} quantitative setups upserted to Supabase.`);
+  } else {
+    logInfo(env, `[SCREENER] Scan complete: 0 instruments met quantitative conviction criteria.`);
+  }
 
-  // 5. Update last_scan_time in system_controls
+  // 7. Update last_scan_time in system_controls
   try {
     await fetch(`${env.SUPABASE_URL}/rest/v1/system_controls`, {
       method: 'POST',

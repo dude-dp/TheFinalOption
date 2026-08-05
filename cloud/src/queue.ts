@@ -69,7 +69,103 @@ async function sendDiscordAlert(env: Env, stock: MTFSetupData): Promise<void> {
 // Uses the REST API with Prefer: resolution=merge-duplicates
 // ============================================================
 
-async function upsertToSupabase(env: Env, rows: MTFSetupData[]): Promise<void> {
+export async function processSingleInstrument(
+  env: Env,
+  inst: { token: string; symbol: string; sector: string; margin: number },
+  accessToken: string
+): Promise<MTFSetupData | null> {
+  const { token, symbol, sector, margin } = inst;
+  try {
+    // STEP A: Fetch 30-minute candles
+    const candles30m = await fetchScreenerCandles(accessToken, token, '30minute', 10);
+    if (candles30m.length < 65) return null;
+
+    // STEP B: Quantitative gatekeeper
+    const result = detect30mSignals(candles30m);
+    if (!result) return null;
+
+    // STEP C: 3H / Daily conviction check
+    const dailyCandles = await fetchScreenerCandles(accessToken, token, 'day', 40);
+    const is3HAligned  = check3HConviction(dailyCandles);
+    const conviction   = is3HAligned ? 'HIGH' : 'NORMAL';
+
+    // STEP D: Resolve primary signal label
+    const primarySignal = resolvePrimarySignal(result.signals);
+
+    // STEP E: AI Catalyst Confluence
+    let aiCatalystSummary = '';
+    let aiCatalystSentiment: 'BULLISH' | 'NEUTRAL' | 'BEARISH' = 'BULLISH';
+
+    const isTopTier =
+      conviction === 'HIGH' ||
+      result.signals.includes('TIGHT_BASE_SQUEEZE') ||
+      result.signals.includes('VOL_EXHAUSTION') ||
+      result.signals.includes('PERFECT_TREND_STACK') ||
+      result.signals.includes('SUPPORT_DIP_BUY') ||
+      result.signals.includes('ZERO_LINE_CROSS');
+
+    if (isTopTier) {
+      try {
+        const aiResult = await generateStockCatalyst(env, symbol, {
+          price: result.price,
+          sector,
+          primarySignal,
+          macdValue: result.macdValue,
+          rsi: result.rsi,
+          adx: result.adx,
+          rvol: result.rvol,
+          atr: result.atr,
+          vwapDist: result.vwapDist,
+          conviction
+        });
+        aiCatalystSummary = aiResult.catalyst;
+        aiCatalystSentiment = aiResult.sentiment;
+      } catch (err: any) {
+        console.warn(`[CONSUMER] AI Catalyst fetch non-fatal error for ${symbol}: ${err?.message}`);
+      }
+    }
+
+    // STEP F: Build setup record
+    const setupData: MTFSetupData = {
+      instrument_token:        token,
+      tradingsymbol:           symbol,
+      sector,
+      current_price:           Number(result.price.toFixed(2)),
+      mtf_margin_multiplier:   margin,
+      distance_from_vwap_pct:  Number(result.vwapDist.toFixed(2)),
+      rsi_14:                  Number(result.rsi.toFixed(2)),
+      macd_value:              Number(result.macdValue.toFixed(4)),
+      macd_signal:             primarySignal,
+      adx_trend:               Number(result.adx.toFixed(2)),
+      rvol:                    Number(result.rvol.toFixed(2)),
+      atr_value:               Number(result.atr.toFixed(2)),
+      suggested_sl:            result.suggestedSL,
+      conviction,
+      ai_catalyst:             aiCatalystSummary || undefined,
+      catalyst_sentiment:      aiCatalystSentiment,
+      updated_at:              new Date().toISOString(),
+    };
+
+    console.log(
+      `[CONSUMER] ✅ ${symbol}: ${primarySignal} (${conviction}) ` +
+      `MACD=${result.macdValue.toFixed(3)} RSI=${result.rsi.toFixed(1)} ADX=${result.adx.toFixed(1)}`
+    );
+
+    // STEP G: Discord sniper
+    if (isTopTier) {
+      sendDiscordAlert(env, setupData).catch(err =>
+        console.error(`[CONSUMER] Discord alert error for ${symbol}: ${err.message}`)
+      );
+    }
+
+    return setupData;
+  } catch (err: any) {
+    console.error(`[CONSUMER] Error processing ${symbol}: ${err.message}`);
+    return null;
+  }
+}
+
+export async function upsertToSupabase(env: Env, rows: MTFSetupData[]): Promise<void> {
   if (rows.length === 0) return;
 
   const res = await fetch(`${env.SUPABASE_URL}/rest/v1/mtf_screened_stocks`, {
@@ -101,104 +197,22 @@ export async function handleQueue(
   const upsertPayloads: MTFSetupData[] = [];
 
   for (const msg of batch.messages) {
-    const { token, symbol, sector, margin, accessToken } = msg.body;
+    const { token, symbol, sector, margin, accessToken, items } = msg.body;
+
+    const targetItems = items && items.length > 0
+      ? items
+      : (token && symbol ? [{ token, symbol, sector: sector || 'EQUITY', margin: margin || 3.5 }] : []);
 
     try {
-      // STEP A: Fetch 30-minute candles (5+ trading days to ensure >= 65 candles)
-      const candles30m = await fetchScreenerCandles(accessToken, token, '30minute', 10);
-
-      if (candles30m.length < 65) {
-        msg.ack(); // Not enough data — skip silently
-        continue;
-      }
-
-      // STEP B: Run the quantitative gatekeeper
-      const result = detect30mSignals(candles30m);
-      if (!result) {
-        msg.ack(); // No setup — skip
-        continue;
-      }
-
-      // STEP C: 3H / Daily conviction check (lazy evaluation — only fires if 30m passes)
-      const dailyCandles  = await fetchScreenerCandles(accessToken, token, 'day', 40);
-      const is3HAligned   = check3HConviction(dailyCandles);
-      const conviction    = is3HAligned ? 'HIGH' : 'NORMAL';
-
-      // STEP D: Resolve primary signal label
-      const primarySignal = resolvePrimarySignal(result.signals);
-
-      // STEP E: AI Catalyst Confluence (for top-tier setups or high conviction)
-      let aiCatalystSummary = '';
-      let aiCatalystSentiment: 'BULLISH' | 'NEUTRAL' | 'BEARISH' = 'BULLISH';
-
-      const isTopTier =
-        conviction === 'HIGH' ||
-        result.signals.includes('TIGHT_BASE_SQUEEZE') ||
-        result.signals.includes('VOL_EXHAUSTION') ||
-        result.signals.includes('PERFECT_TREND_STACK') ||
-        result.signals.includes('SUPPORT_DIP_BUY') ||
-        result.signals.includes('ZERO_LINE_CROSS');
-
-      if (isTopTier) {
-        try {
-          const aiResult = await generateStockCatalyst(env, symbol, {
-            price: result.price,
-            sector,
-            primarySignal,
-            macdValue: result.macdValue,
-            rsi: result.rsi,
-            adx: result.adx,
-            rvol: result.rvol,
-            atr: result.atr,
-            vwapDist: result.vwapDist,
-            conviction
-          });
-          aiCatalystSummary = aiResult.catalyst;
-          aiCatalystSentiment = aiResult.sentiment;
-        } catch (err: any) {
-          console.warn(`[CONSUMER] AI Catalyst fetch non-fatal error for ${symbol}: ${err?.message}`);
+      for (const item of targetItems) {
+        const setup = await processSingleInstrument(env, item, accessToken);
+        if (setup) {
+          upsertPayloads.push(setup);
         }
       }
-
-      // STEP F: Build setup record
-      const setupData: MTFSetupData = {
-        instrument_token:        token,
-        tradingsymbol:           symbol,
-        sector,
-        current_price:           Number(result.price.toFixed(2)),
-        mtf_margin_multiplier:   margin,
-        distance_from_vwap_pct:  Number(result.vwapDist.toFixed(2)),
-        rsi_14:                  Number(result.rsi.toFixed(2)),
-        macd_value:              Number(result.macdValue.toFixed(4)),
-        macd_signal:             primarySignal,
-        adx_trend:               Number(result.adx.toFixed(2)),
-        rvol:                    Number(result.rvol.toFixed(2)),
-        atr_value:               Number(result.atr.toFixed(2)),
-        suggested_sl:            result.suggestedSL,
-        conviction,
-        ai_catalyst:             aiCatalystSummary || undefined,
-        catalyst_sentiment:      aiCatalystSentiment,
-        updated_at:              new Date().toISOString(),
-      };
-
-      upsertPayloads.push(setupData);
-
-      console.log(
-        `[CONSUMER] ✅ ${symbol}: ${primarySignal} (${conviction}) ` +
-        `MACD=${result.macdValue.toFixed(3)} RSI=${result.rsi.toFixed(1)} ADX=${result.adx.toFixed(1)}`
-      );
-
-      // STEP G: Discord sniper
-      if (isTopTier) {
-        sendDiscordAlert(env, setupData).catch(err =>
-          console.error(`[CONSUMER] Discord alert error for ${symbol}: ${err.message}`)
-        );
-      }
-
       msg.ack();
-
     } catch (err: any) {
-      console.error(`[CONSUMER] Error processing ${symbol}: ${err.message}`);
+      console.error(`[CONSUMER] Error processing batch message: ${err.message}`);
       msg.retry(); // Back to queue — CF will retry up to max_retries
     }
   }

@@ -8,7 +8,7 @@
 export interface Env {
   TRADING_KV: KVNamespace;
   TRADING_DB: D1Database;
-  MTF_QUEUE: Queue<MTFQueueMessage>;
+  MTF_QUEUE?: Queue<MTFQueueMessage>;
 
   // Supabase
   SUPABASE_URL: string;
@@ -50,18 +50,20 @@ export interface AICatalystResult {
   modelUsed: string;
 }
 
-// --- MTF Screener Queue Message ---
+export interface MTFQueueItem {
+  token: string;
+  symbol: string;
+  sector: string;
+  margin: number;
+}
 
-/**
- * Message shape pushed by the Producer (cron) into mtf-screener-queue.
- * Each message represents one stock to be evaluated by a Consumer worker.
- */
 export interface MTFQueueMessage {
-  token: string;       // Upstox instrument_key (e.g. "NSE_EQ|INE002A01018")
-  symbol: string;      // Trading symbol (e.g. "RELIANCE")
-  sector: string;      // Sector label
-  margin: number;      // MTF margin multiplier
+  token?: string;       // Upstox instrument_key (e.g. "NSE_EQ|INE002A01018")
+  symbol?: string;      // Trading symbol (e.g. "RELIANCE")
+  sector?: string;      // Sector label
+  margin?: number;      // MTF margin multiplier
   accessToken: string; // Upstox Bearer token (embedded per-scan)
+  items?: MTFQueueItem[]; // Grouped items to reduce Cloudflare Queue write operations
 }
 
 // --- MTF Screener Data ---
@@ -114,11 +116,6 @@ export interface Candle {
 export const KV_KEYS = {
   UPSTOX_ACCESS_TOKEN: 'upstox_access_token',
   UPSTOX_TOKEN_EXPIRY: 'upstox_token_expiry',
-  DAILY_CANDLE_CACHE:  'candle_cache',
-  // Legacy keys — used by dashboard/OAuth routes in api.ts
-  BOT_STATE:           'bot_state',
-  PENDING_ORDERS:      'pending_orders',
-  BOT_CONFIG:          'bot_config',
 } as const;
 
 // --- Upstox API Response Types ---
@@ -177,48 +174,6 @@ export type TransactionType = 'BUY' | 'SELL';
 export type OptionType = 'CE' | 'PE';
 export type SignalType = 'NONE' | 'BUY_CE' | 'BUY_PE';
 
-export interface OrderPayload {
-  orderId: string;
-  correlationId: string;
-  instrumentToken: string;
-  tradingSymbol: string;
-  optionType: OptionType;
-  strikePrice: number;
-  transactionType: TransactionType;
-  quantity: number;
-  lots: number;
-  orderPrice: number;
-  status: OrderStatus;
-  createdAt: string;
-  marketDepth?: string;
-  timeline?: string;
-}
-
-export interface PollResponse {
-  hasOrders: boolean;
-  orders: OrderPayload[];
-  accessToken: string | null;
-  botStatus: BotStatus;
-}
-
-export interface ConfirmRequest {
-  correlationId: string;
-  upstoxOrderId: string;
-  status: 'FILLED' | 'PARTIALLY_FILLED' | 'REJECTED' | 'CANCELLED';
-  executionPrice: number | null;
-  filledQuantity: number | null;
-  rejectionReason: string | null;
-  marketDepth?: string;
-  timeline?: string;
-}
-
-// Legacy queue message type (kept for any remaining references)
-export interface OrderQueueMessage {
-  type: 'ORDER_STATUS_CHECK' | 'POSITION_CLOSE' | 'DISPATCH_SLICED_ORDER' | 'DISPATCH_EMERGENCY_MARKET';
-  correlationId: string;
-  payload: Record<string, unknown>;
-}
-
 export interface TelemetryEntry {
   id?: number;
   timestamp: string;
@@ -229,63 +184,4 @@ export interface TelemetryEntry {
   signalGenerated: SignalType;
   botStatus: string;
   logMessage: string | null;
-}
-
-export interface BotConfig {
-  maxRiskPct: number;
-  niftyLotSize: number;
-  rolloverOnExpiry: boolean;
-  defaultExpiry: string;
-  maxStrikeLevels: number;
-  strikeInterval: number;
-  squareOffTime: string;
-  paperMode: boolean;
-  maxSlippagePct: number;
-  gexAvoidanceEnabled: boolean;
-  gexStrikeBuffer: number;
-  adxFilterEnabled: boolean;
-  adxThreshold: number;
-  momentumDecayEnabled: boolean;
-}
-
-export interface BotState {
-  status: BotStatus;
-  tradingMode?: 'LIVE' | 'PAPER';
-  lastUpdated: string;
-  activePosition: ActivePosition | null;
-  activeHedgePosition?: ActivePosition | null;
-  lockTimestamp: number | null;
-  lastMacdLine: number | null;
-  // Legacy fields used by dashboard confirmation endpoint
-  lastVoiceAlert?: string;
-  lastVoiceAlertId?: string;
-  lastProfitableTradeId?: string;
-  lastProfitPct?: number;
-  daemonMetrics?: {
-    lastUpdated: number;
-    uptime?: number;
-    cpuUsage?: number;
-    memUsage?: number;
-    scanCount?: number;
-    reqPerSecond?: number;
-    reqPerMinute?: number;
-  };
-}
-
-export interface ActivePosition {
-  correlationId: string;
-  optionType: 'CE' | 'PE';
-  instrumentToken: string;
-  tradingSymbol: string;
-  strikePrice: number;
-  entryPrice: number;
-  quantity: number;
-  lots: number;
-  enteredAt: string;
-  highestPrice?: number;
-  scaleOutDone?: boolean;
-  entryAtr?: number;
-  isStraddleLeg?: boolean;
-  manualHardSL?: number;
-  manualTrailingSL?: number;
 }

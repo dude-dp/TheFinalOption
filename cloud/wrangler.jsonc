@@ -15,22 +15,6 @@
       "database_id": "a3b9df2e-d18b-41a1-82f1-d4369c2bb74d"
     }
   ],
-  // MTF Screener Queue — Producer pushes batches, 5 concurrent consumers process them
-  "queues": {
-    "producers": [
-      { "binding": "MTF_QUEUE", "queue": "mtf-screener-queue" }
-    ],
-    "consumers": [
-      {
-        "queue": "mtf-screener-queue",
-        "max_batch_size": 10,
-        "max_batch_timeout": 5,
-        "max_concurrency": 5,
-        "max_retries": 2,
-        "dead_letter_queue": "mtf-screener-dlq"
-      }
-    ]
-  },
   // Cron Triggers — fires exactly 1 min after each 15/30m candle close (IST offset)
   // 16,31,46,1 at 3-9 UTC  = 09:16-15:01 IST (30m candle cadence)
   // 16,31,35 at 10 UTC      = 15:46, 16:01, 16:05 IST (EOD window)

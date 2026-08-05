@@ -858,39 +858,16 @@
     requestAnimationFrame(step);
   }
 
-  // ==================== API FUEL GAUGE ====================
-  function updateFuelGauge(metrics, daemonAlive) {
+  // ==================== ENGINE STATUS ====================
+  function updateFuelGauge() {
     const fuelFill = document.getElementById('api-fuel-fill');
     const fuelText = document.getElementById('api-fuel-text');
     if (!fuelFill || !fuelText) return;
 
-    if (!daemonAlive) {
-      fuelFill.style.width = '0%';
-      fuelFill.style.backgroundColor = 'var(--text-muted)';
-      fuelText.textContent = 'Offline';
-      fuelText.style.color = 'var(--text-muted)';
-      return;
-    }
-
-    const minRate = metrics.reqPerMinute || 0;
-    const maxMinuteLimit = 200; // API Rate Limit threshold
-    const percent = Math.min((minRate / maxMinuteLimit) * 100, 100);
-
-    fuelFill.style.width = `${percent}%`;
-
-    // Dynamic coloring based on thresholds
-    if (minRate >= 160) {
-      fuelFill.style.backgroundColor = 'var(--accent-sell)';
-      fuelText.style.color = 'var(--accent-sell)';
-    } else if (minRate >= 100) {
-      fuelFill.style.backgroundColor = 'var(--accent-orange)';
-      fuelText.style.color = 'var(--accent-orange)';
-    } else {
-      fuelFill.style.backgroundColor = 'var(--accent-buy)';
-      fuelText.style.color = 'var(--text-primary)';
-    }
-
-    fuelText.textContent = `${minRate}/${maxMinuteLimit}`;
+    fuelFill.style.width = '100%';
+    fuelFill.style.backgroundColor = 'var(--accent-buy)';
+    fuelText.textContent = 'Cloudflare Cron';
+    fuelText.style.color = 'var(--accent-buy)';
   }
 
   // ==================== EQUITY CURVE & TIMERS ====================
@@ -1245,8 +1222,8 @@
       }
     }
 
-    // Live rate metrics from daemon
-    updateFuelGauge(data.daemonMetrics, data.daemonAlive);
+    // Engine Status
+    updateFuelGauge();
 
     // 🟢 Update Live Candle in Chart
     if (data.latestTick) {
