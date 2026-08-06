@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS mtf_screened_stocks (
     conviction VARCHAR NOT NULL DEFAULT 'NORMAL',
     ai_catalyst TEXT,
     catalyst_sentiment VARCHAR(20) DEFAULT 'BULLISH',
+    mtf_alignment JSONB,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -28,6 +29,7 @@ ALTER TABLE mtf_screened_stocks ADD COLUMN IF NOT EXISTS atr_value DECIMAL DEFAU
 ALTER TABLE mtf_screened_stocks ADD COLUMN IF NOT EXISTS conviction VARCHAR DEFAULT 'NORMAL';
 ALTER TABLE mtf_screened_stocks ADD COLUMN IF NOT EXISTS ai_catalyst TEXT;
 ALTER TABLE mtf_screened_stocks ADD COLUMN IF NOT EXISTS catalyst_sentiment VARCHAR(20) DEFAULT 'BULLISH';
+ALTER TABLE mtf_screened_stocks ADD COLUMN IF NOT EXISTS mtf_alignment JSONB;
 
 -- Index: HIGH conviction first, then by MACD momentum
 DROP INDEX IF EXISTS idx_mtf_screened_stocks_macd;

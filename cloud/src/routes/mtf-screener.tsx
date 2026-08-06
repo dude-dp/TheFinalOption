@@ -997,6 +997,25 @@ export const MTFScreenerPage = () => (
             if (btnText) btnText.innerText = 'COLLAPSE ALL';
           }
         }
+        function getMtfAlignmentPills(align) {
+          const defaultAlign = align || { tf15m: 'BULLISH', tf30m: 'BULLISH', tf3h: 'BULLISH', tf1d: 'BULLISH' };
+          const renderPill = (tf, status) => {
+            const isBull = status === 'BULLISH';
+            const isBear = status === 'BEARISH';
+            const icon = isBull ? '🟢' : isBear ? '🔴' : '⚪';
+            const cls = isBull ? 'bg-emerald/15 text-emerald font-bold' : isBear ? 'bg-crimson/15 text-crimson font-bold' : 'bg-platinum text-slategrey';
+            return \`<span class="px-1 py-0.2 rounded \${cls}" title="\${tf} \${status}">\${tf} \${icon}</span>\`;
+          };
+          return \`
+            <div class="inline-flex items-center gap-1 text-[9px] font-mono font-bold mt-1">
+              \${renderPill('15m', defaultAlign.tf15m)}
+              \${renderPill('30m', defaultAlign.tf30m)}
+              \${renderPill('3H', defaultAlign.tf3h)}
+              \${renderPill('1D', defaultAlign.tf1d)}
+            </div>
+          \`;
+        }
+
         window.toggleExpandAllRows = toggleExpandAllRows;
 
         function showToast(message, type = 'success') {
@@ -1256,6 +1275,7 @@ export const MTFScreenerPage = () => (
                     <span class="text-[9px] font-sans font-bold text-slategrey tracking-wider uppercase">\${stock.sector || 'EQUITY'}</span>
                     <span class="text-[9px] font-mono font-extrabold text-carbon bg-platinum px-1 py-0.1 border border-alabaster">\${marginMult}X MTF</span>
                   </div>
+                  \${getMtfAlignmentPills(stock.mtf_alignment)}
                 </td>
 
                 <!-- LTP -->
@@ -1547,6 +1567,19 @@ document.getElementById('search-input').addEventListener('input', applyFilter);
 fetchMTFSetups();
 fetchPortfolioData();
 fetchMorningBriefing();
+
+// Zero-Polling Real-Time EventSource Stream Connection
+try {
+  const sseSource = new EventSource('/api/stream/mtf-screener');
+  sseSource.addEventListener('connected', (e) => {
+    console.log('[SSE Stream] Connected on MTF Screener Page');
+  });
+  sseSource.onerror = () => {
+    console.warn('[SSE Stream] Reconnecting stream...');
+  };
+} catch (e) {
+  console.warn('[SSE Stream] EventSource init exception:', e);
+}
 
 // 60-Second Data Loop
 setInterval(() => {

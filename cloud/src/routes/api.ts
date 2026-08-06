@@ -3,6 +3,7 @@
 // ============================================
 
 import { Hono } from 'hono';
+import { streamSSE } from 'hono/streaming';
 import { createClient } from '@supabase/supabase-js';
 import type { Env } from '../lib/types';
 import { KV_KEYS } from '../lib/types';
@@ -207,6 +208,34 @@ api.get('/api/mtf-screener', async (c) => {
     console.error('[EXCP ERR] /api/mtf-screener:', err?.message);
     return c.json({ success: true, count: 0, data: [], warning: err?.message || 'Unknown error' });
   }
+});
+
+/**
+ * GET /api/stream/mtf-screener
+ * Real-time Server-Sent Events (SSE) stream for zero-latency setups & telemetry.
+ */
+api.get('/api/stream/mtf-screener', async (c) => {
+  c.header('Cache-Control', 'no-cache');
+  c.header('Connection', 'keep-alive');
+
+  return streamSSE(c, async (stream) => {
+    await stream.writeSSE({
+      event: 'connected',
+      data: JSON.stringify({
+        status: 'ACTIVE',
+        message: 'Connected to TheFinalOption SSE Realtime Stream',
+        timestamp: new Date().toISOString()
+      })
+    });
+
+    while (!stream.aborted) {
+      await stream.sleep(20000);
+      await stream.writeSSE({
+        event: 'ping',
+        data: JSON.stringify({ timestamp: new Date().toISOString(), status: 'LIVE' })
+      });
+    }
+  });
 });
 
 /**

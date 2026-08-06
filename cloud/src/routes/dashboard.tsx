@@ -1069,6 +1069,26 @@ dashboard.get('/', (c) => {
     return \`<span class="px-2 py-0.5 rounded-full text-[10px] font-bold font-label-caps bg-surface-container text-outline uppercase tracking-wider">NORMAL</span>\`;
   }
 
+  // 4-Pill MTF Alignment Bar Visualizer
+  function getMtfAlignmentPills(align) {
+    const defaultAlign = align || { tf15m: 'BULLISH', tf30m: 'BULLISH', tf3h: 'BULLISH', tf1d: 'BULLISH' };
+    const renderPill = (tf, status) => {
+      const isBull = status === 'BULLISH';
+      const isBear = status === 'BEARISH';
+      const icon = isBull ? '🟢' : isBear ? '🔴' : '⚪';
+      const cls = isBull ? 'bg-secondary/15 text-secondary' : isBear ? 'bg-error/15 text-error' : 'bg-surface-container text-outline';
+      return \`<span class="px-1 py-0.2 rounded \${cls}" title="\${tf} \${status}">\${tf} \${icon}</span>\`;
+    };
+    return \`
+      <div class="inline-flex items-center gap-1 text-[9px] font-data-mono font-bold mt-0.5">
+        \${renderPill('15m', defaultAlign.tf15m)}
+        \${renderPill('30m', defaultAlign.tf30m)}
+        \${renderPill('3H', defaultAlign.tf3h)}
+        \${renderPill('1D', defaultAlign.tf1d)}
+      </div>
+    \`;
+  }
+
   // ============================================================
   // TRADINGVIEW DIRECT CHART OPENER
   // ============================================================
@@ -1691,6 +1711,7 @@ dashboard.get('/', (c) => {
                     </button>
                   </div>
                   <div class="text-[11px] text-outline font-sans">\${s.sector || 'GENERAL'}</div>
+                  \${getMtfAlignmentPills(s.mtf_alignment)}
                 </div>
               </div>
             </td>
@@ -1820,10 +1841,26 @@ dashboard.get('/', (c) => {
     }
   });
 
-  // Initial Load
+  // Initial Load & Real-Time SSE Stream Setup
   document.addEventListener('DOMContentLoaded', () => {
     applySidebarState();
     fetchAllDashboardData();
+
+    // Zero-Polling Real-Time EventSource Stream Connection
+    try {
+      const sseSource = new EventSource('/api/stream/mtf-screener');
+      sseSource.addEventListener('connected', (e) => {
+        console.log('[SSE Stream] Real-Time Stream Connected');
+      });
+      sseSource.addEventListener('ping', (e) => {
+        // Silent heartbeat pulse
+      });
+      sseSource.onerror = () => {
+        console.warn('[SSE Stream] Network glitch, auto-reconnecting...');
+      };
+    } catch (e) {
+      console.warn('[SSE Stream] EventSource init exception:', e);
+    }
 
     // 10-Second Live M2M & Portfolio Polling Loop
     setInterval(() => {

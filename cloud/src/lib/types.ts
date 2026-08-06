@@ -68,6 +68,13 @@ export interface MTFQueueMessage {
 
 // --- MTF Screener Data ---
 
+export interface MTFAlignmentData {
+  tf15m: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  tf30m: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  tf3h: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  tf1d: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+}
+
 export interface MTFSetupData {
   instrument_token: string;
   tradingsymbol: string;
@@ -85,6 +92,7 @@ export interface MTFSetupData {
   conviction: 'HIGH' | 'NORMAL';
   ai_catalyst?: string;
   catalyst_sentiment?: 'BULLISH' | 'NEUTRAL' | 'BEARISH';
+  mtf_alignment?: MTFAlignmentData;
   updated_at: string;
 }
 
@@ -98,6 +106,7 @@ export interface ScreenerSignalResult {
   rvol: number;
   suggestedSL: number;
   price: number;
+  mtfAlignment?: MTFAlignmentData;
 }
 
 // --- Candle Shape (used by screener math libs) ---

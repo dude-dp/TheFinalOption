@@ -10,7 +10,72 @@ import { calculateADXSeries } from './adx';
 import { calculateATR, calculateSuggestedSL } from './atr';
 import { calculateVWAPDistance } from './vwap';
 import { calculateRVOL } from './rvol';
-import type { Candle, ScreenerSignalResult } from './types';
+import type { Candle, ScreenerSignalResult, MTFAlignmentData } from './types';
+
+// ============================================================
+// MULTI-TIMEFRAME ALIGNMENT COMPUTER (15m, 30m, 3H, 1D)
+// ============================================================
+
+export function calculateMultiTimeframeAlignment(
+  candles30m: Candle[],
+  dailyCandles?: Candle[]
+): MTFAlignmentData {
+  const closes30m = candles30m.map(c => c.close);
+  const price = closes30m[closes30m.length - 1];
+
+  // --- 15m Alignment (Fast Momentum Proxy from 30m Micro-Structure) ---
+  const ema5_30m  = calculateEMA(closes30m, 5);
+  const ema10_30m = calculateEMA(closes30m, 10);
+  const currE5    = ema5_30m[ema5_30m.length - 1] ?? price;
+  const currE10   = ema10_30m[ema10_30m.length - 1] ?? price;
+
+  const tf15m: 'BULLISH' | 'BEARISH' | 'NEUTRAL' =
+    price > currE5 && currE5 >= currE10 ? 'BULLISH' :
+    price < currE5 && currE5 <= currE10 ? 'BEARISH' : 'NEUTRAL';
+
+  // --- 30m Alignment ---
+  const { macdLine: macd30m } = calculateMACD(closes30m);
+  const currentMacd30m = macd30m[macd30m.length - 1] ?? 0;
+  const rsi30m = calculateRSI(closes30m, 14);
+  const currRsi = rsi30m[rsi30m.length - 1] ?? 50;
+
+  const tf30m: 'BULLISH' | 'BEARISH' | 'NEUTRAL' =
+    currentMacd30m > 0 || currRsi > 55 ? 'BULLISH' :
+    currentMacd30m < 0 && currRsi < 45 ? 'BEARISH' : 'NEUTRAL';
+
+  // --- 3H & 1D Alignment (from Daily / Multi-Day Structure) ---
+  let tf3h: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+  let tf1d: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+
+  if (dailyCandles && dailyCandles.length >= 10) {
+    const dailyCloses = dailyCandles.map(c => c.close);
+    const { macdLine: macdDaily } = calculateMACD(dailyCloses);
+    const currMacdDaily = macdDaily[macdDaily.length - 1] ?? 0;
+    const prevMacdDaily = macdDaily[macdDaily.length - 2] ?? 0;
+
+    const ema9Daily  = calculateEMA(dailyCloses, 9);
+    const ema21Daily = calculateEMA(dailyCloses, 21);
+    const currE9D    = ema9Daily[ema9Daily.length - 1] ?? price;
+    const currE21D   = ema21Daily[ema21Daily.length - 1] ?? price;
+
+    tf3h = (currMacdDaily > 0 || (prevMacdDaily < 0 && currMacdDaily > 0)) ? 'BULLISH' :
+           currMacdDaily < 0 ? 'BEARISH' : 'NEUTRAL';
+
+    tf1d = (price > currE9D && currE9D > currE21D) ? 'BULLISH' :
+           price < currE21D ? 'BEARISH' : 'NEUTRAL';
+  } else {
+    // Fallback using 30m macro EMAs if daily candles not available in immediate scope
+    const ema21 = calculateEMA(closes30m, 21);
+    const ema50 = calculateEMA(closes30m, 50);
+    const currE21 = ema21[ema21.length - 1] ?? price;
+    const currE50 = ema50[ema50.length - 1] ?? price;
+
+    tf3h = price > currE21 ? 'BULLISH' : price < currE21 ? 'BEARISH' : 'NEUTRAL';
+    tf1d = currE21 > currE50 ? 'BULLISH' : 'NEUTRAL';
+  }
+
+  return { tf15m, tf30m, tf3h, tf1d };
+}
 
 // ============================================================
 // CANDLE PARSER — converts raw Upstox API array to Candle[]
@@ -34,7 +99,7 @@ export function parseUpstoxCandles(rawCandles: any[][]): Candle[] {
 // The quantitative gatekeeper. Returns null if no setup exists.
 // ============================================================
 
-export function detect30mSignals(candles: Candle[]): ScreenerSignalResult | null {
+export function detect30mSignals(candles: Candle[], dailyCandles?: Candle[]): ScreenerSignalResult | null {
   const closes = candles.map(c => c.close);
   // Increased from 35 to 65 to allow for 5-Day Base Depth & 50 EMA calculations
   if (closes.length < 65) return null;
@@ -159,6 +224,8 @@ export function detect30mSignals(candles: Candle[]): ScreenerSignalResult | null
     if (prevE9 <= prevE21 && currE9 > currE21) signals.push('EMA_GOLDEN_CROSS');
   }
 
+  const mtfAlignment = calculateMultiTimeframeAlignment(candles, dailyCandles);
+
   return {
     signals,
     macdValue: currentMacd30m,
@@ -168,7 +235,8 @@ export function detect30mSignals(candles: Candle[]): ScreenerSignalResult | null
     vwapDist,
     rvol,
     suggestedSL,
-    price
+    price,
+    mtfAlignment
   };
 }
 

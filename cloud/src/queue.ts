@@ -78,16 +78,17 @@ export async function processSingleInstrument(
 ): Promise<MTFSetupData | null> {
   const { token, symbol, sector, margin } = inst;
   try {
-    // STEP A: Fetch 30-minute candles
+    // STEP A: Fetch 30-minute & daily candles
     const candles30m = await fetchScreenerCandles(accessToken, token, '30minute', 10);
     if (candles30m.length < 65) return null;
 
-    // STEP B: Quantitative gatekeeper
-    const result = detect30mSignals(candles30m);
+    const dailyCandles = await fetchScreenerCandles(accessToken, token, 'day', 40);
+
+    // STEP B: Quantitative gatekeeper with MTF alignment
+    const result = detect30mSignals(candles30m, dailyCandles);
     if (!result) return null;
 
     // STEP C: 3H / Daily conviction check
-    const dailyCandles = await fetchScreenerCandles(accessToken, token, 'day', 40);
     const is3HAligned  = check3HConviction(dailyCandles);
     const conviction   = is3HAligned ? 'HIGH' : 'NORMAL';
 
@@ -145,6 +146,7 @@ export async function processSingleInstrument(
       conviction,
       ai_catalyst:             aiCatalystSummary || undefined,
       catalyst_sentiment:      aiCatalystSentiment,
+      mtf_alignment:           result.mtfAlignment,
       updated_at:              new Date().toISOString(),
     };
 
