@@ -3,14 +3,7 @@
 // + Suggested Stop Loss Calculator
 // ============================================
 
-export interface Candle {
-  high: number;
-  low: number;
-  close: number;
-  open?: number;
-  volume?: number;
-  timestamp?: string;
-}
+import type { Candle } from './types';
 
 /**
  * ATR (14) using Wilder's Smoothing (RMA).
@@ -42,14 +35,6 @@ export function calculateATR(candles: Candle[], period: number = 14): number[] {
   }
 
   return atr;
-}
-
-/**
- * Returns an array of ATR values — alias used by dashboard routes.
- * Identical to calculateATR; exposed under a separate name for backwards compat.
- */
-export function calculateATRArray(candles: Candle[], period: number = 14): number[] {
-  return calculateATR(candles, period);
 }
 
 /**

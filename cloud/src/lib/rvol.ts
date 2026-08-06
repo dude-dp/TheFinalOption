@@ -1,10 +1,12 @@
+import type { Candle } from './types';
+
 /**
  * Relative Volume (RVOL)
  * Compares current candle volume against the average volume at the same
  * time-of-day from historical candles in the same dataset.
  * Returns a ratio: 1.0 = average, 2.0 = double average, etc.
  */
-export function calculateRVOL(candles: any[]): number {
+export function calculateRVOL(candles: Candle[]): number {
   if (!candles || candles.length < 2) return 1.0;
 
   const currentCandle = candles[candles.length - 1];

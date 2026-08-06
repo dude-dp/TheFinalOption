@@ -6,7 +6,7 @@
 // The Consumer handles all heavy computation.
 // ============================================
 
-import type { Env, MTFQueueMessage } from './lib/types';
+import type { Env } from './lib/types';
 import { createClient } from '@supabase/supabase-js';
 import { logInfo, logError, logWarn } from './lib/logger';
 import { getTodayDateStr } from './lib/time';
@@ -141,27 +141,38 @@ async function rotateAndClearOldSetups(env: Env): Promise<void> {
 // Called by: export default → scheduled() or POST/GET /api/mtf-screener/trigger
 // ============================================================
 
-export async function handleScheduled(env: Env, forceRun = false, offset = 0): Promise<void> {
-  logInfo(env, `[SCREENER] ${forceRun ? 'On-demand/Manual' : 'Cron'} triggered — booting direct MTF Screener pipeline (offset ${offset})...`);
+export async function handleScheduled(env: Env, forceRun = false, requestedOffset?: number): Promise<void> {
+  // 1. Resolve offset — automatically rotate through KV if not specified
+  let currentOffset = requestedOffset !== undefined ? requestedOffset : 0;
+  if (!forceRun && requestedOffset === undefined && env.TRADING_KV) {
+    try {
+      const savedOffset = await env.TRADING_KV.get('mtf_screener_offset');
+      if (savedOffset) {
+        currentOffset = parseInt(savedOffset, 10) || 0;
+      }
+    } catch {/* non-critical fallback to 0 */}
+  }
 
-  // 1. Market hours gate (bypassed if forceRun is true or offset > 0)
-  if (!forceRun && offset === 0 && !isMarketHours()) {
+  logInfo(env, `[SCREENER] ${forceRun ? 'On-demand/Manual' : 'Cron'} triggered — booting direct MTF Screener pipeline (Offset ${currentOffset})...`);
+
+  // 2. Market hours gate (bypassed if forceRun is true)
+  if (!forceRun && !isMarketHours()) {
     logInfo(env, '[SCREENER] Outside market hours. Skipping scan.');
     return;
   }
 
-  // 2. Resolve Upstox access token FIRST
+  // 3. Resolve Upstox access token FIRST
   const accessToken = await resolveAccessToken(env);
   if (!accessToken) {
     logError(env, '[SCREENER] No Upstox access token found in KV or Supabase. Aborting scan.');
     return;
   }
 
-  // 3. Fetch watchlist instruments from Supabase in chunks of 40 (to satisfy Cloudflare Worker subrequest quota)
+  // 4. Fetch watchlist instruments from Supabase with limit=40 and offset
   let instruments: any[] = [];
   try {
     const res = await fetch(
-      `${env.SUPABASE_URL}/rest/v1/mtf_instrument_master?is_active=eq.true&select=instrument_token,tradingsymbol,sector,mtf_bracket&order=liquidity_tier.asc,tradingsymbol.asc&limit=40&offset=${offset}`,
+      `${env.SUPABASE_URL}/rest/v1/mtf_instrument_master?is_active=eq.true&select=instrument_token,tradingsymbol,sector,mtf_bracket&order=liquidity_tier.asc,tradingsymbol.asc&limit=40&offset=${currentOffset}`,
       {
         headers: {
           'apikey':        env.SUPABASE_SERVICE_KEY,
@@ -174,28 +185,52 @@ export async function handleScheduled(env: Env, forceRun = false, offset = 0): P
       instruments = await res.json() as any[];
     }
   } catch (err: any) {
-    logError(env, `[SCREENER] Primary instrument fetch error (offset ${offset}): ${err.message}`);
+    logError(env, `[SCREENER] Primary instrument fetch error (Offset ${currentOffset}): ${err.message}`);
   }
 
-  // Fallback 1: Use default watchlist if Supabase query returned 0 at offset 0
-  if ((!instruments || instruments.length === 0) && offset === 0) {
+  // If we reached the end of the 1,000+ stocks, wrap around to offset 0
+  if ((!instruments || instruments.length === 0) && currentOffset > 0) {
+    logInfo(env, `[SCREENER] Reached end of instrument master at offset ${currentOffset}. Wrapping around to Offset 0.`);
+    currentOffset = 0;
+    try {
+      const resWrap = await fetch(
+        `${env.SUPABASE_URL}/rest/v1/mtf_instrument_master?is_active=eq.true&select=instrument_token,tradingsymbol,sector,mtf_bracket&order=liquidity_tier.asc,tradingsymbol.asc&limit=40&offset=0`,
+        {
+          headers: {
+            'apikey':        env.SUPABASE_SERVICE_KEY,
+            'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+          }
+        }
+      );
+      if (resWrap.ok) {
+        instruments = await resWrap.json() as any[];
+      }
+    } catch {/* fall through */}
+  }
+
+  // Fallback: Use default watchlist if Supabase table is empty
+  if (!instruments || instruments.length === 0) {
     logWarn(env, '[SCREENER] Supabase instrument table empty/unreachable. Falling back to default high-volume watchlist.');
     instruments = DEFAULT_WATCHLIST;
   }
 
-  if (!instruments || instruments.length === 0) {
-    logInfo(env, `[SCREENER] Full scan complete. No more instruments found at offset ${offset}.`);
-    return;
+  logInfo(env, `[SCREENER] Rotating Scan (Offset ${currentOffset}): Loaded ${instruments.length} instruments from Supabase. Direct scanning candles...`);
+
+  // Save NEXT rotating offset to KV for the next scheduled cron run
+  if (env.TRADING_KV && !forceRun) {
+    const nextOffset = currentOffset + instruments.length;
+    try {
+      await env.TRADING_KV.put('mtf_screener_offset', nextOffset.toString());
+      logInfo(env, `[SCREENER] Next scheduled cron will scan Offset ${nextOffset}.`);
+    } catch {/* non-critical */}
   }
 
-  logInfo(env, `[SCREENER] Chunk offset ${offset}: Loaded ${instruments.length} instruments from Supabase. Direct scanning candles...`);
-
-  // 4. Archive old active setups ONLY on the initial chunk (offset 0)
-  if (offset === 0) {
+  // 5. Clean up old active setups on offset 0 wrap-around
+  if (currentOffset === 0) {
     await rotateAndClearOldSetups(env);
   }
 
-  // 5. Direct parallel execution (batch chunks of 5 instruments)
+  // 6. Direct parallel execution (batch chunks of 5 instruments)
   const CONCURRENCY = 5;
   let chunkPassingCount = 0;
 
@@ -213,30 +248,12 @@ export async function handleScheduled(env: Env, forceRun = false, offset = 0): P
 
     if (batchSetups.length > 0) {
       chunkPassingCount += batchSetups.length;
-      // Upsert batch results immediately so setups populate Supabase and dashboard in real-time
+      // Insert batch results immediately into Supabase mtf_screened_stocks
       await upsertToSupabase(env, batchSetups);
     }
   }
 
-  logInfo(env, `[SCREENER] Chunk offset ${offset} complete: ${chunkPassingCount} setups found in this chunk.`);
-
-  // 6. Automatically chain next chunk if 40 instruments were processed
-  if (instruments.length === 40) {
-    const nextOffset = offset + 40;
-    logInfo(env, `[SCREENER] Chaining next scan chunk at offset ${nextOffset}...`);
-    try {
-      const triggerUrl = `https://thefinaloption.thefinaloptionautomation.workers.dev/api/mtf-screener/trigger?offset=${nextOffset}&forceRun=${forceRun ? 'true' : 'false'}`;
-      await fetch(triggerUrl, {
-        headers: {
-          'Authorization': `Basic ${btoa('vdineshprabu:Healthywealth007#')}`
-        }
-      });
-    } catch (err: any) {
-      logWarn(env, `[SCREENER] Failed to trigger next scan chunk at offset ${nextOffset}: ${err.message}`);
-    }
-  } else {
-    logInfo(env, `[SCREENER] ✅ FULL SCAN COMPLETED across all instruments in Supabase master table!`);
-  }
+  logInfo(env, `[SCREENER] Rotating Scan (Offset ${currentOffset}) complete: ${chunkPassingCount} setups found & inserted to Supabase.`);
 
   // 7. Update last_scan_time in system_controls
   try {

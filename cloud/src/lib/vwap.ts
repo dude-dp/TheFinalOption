@@ -1,3 +1,5 @@
+import type { Candle } from './types';
+
 /**
  * VWAP — Volume Weighted Average Price
  *
@@ -9,9 +11,10 @@
  * VWAP resets at the start of every calendar day, matching the intraday session.
  */
 
-export function calculateVWAP(candles: any[]): number {
+export function calculateVWAP(candles: Candle[]): number {
   if (!candles || candles.length === 0) return 0;
   const lastCandle = candles[candles.length - 1];
+  if (!lastCandle.timestamp) return 0;
   const todayStr = new Date(lastCandle.timestamp).toISOString().split('T')[0];
   let sumPV = 0;
   let sumV = 0;
@@ -30,29 +33,10 @@ export function calculateVWAP(candles: any[]): number {
  * Returns the percentage distance of the last close from VWAP.
  * Formula: ((LTP - VWAP) / VWAP) × 100
  */
-export function calculateVWAPDistance(candles: any[]): number {
+export function calculateVWAPDistance(candles: Candle[]): number {
   if (!candles || candles.length === 0) return 0;
-
   const lastCandle = candles[candles.length - 1];
-  if (!lastCandle.timestamp) return 0;
-
-  const todayStr = new Date(lastCandle.timestamp).toISOString().split('T')[0];
-  let sumPV = 0;
-  let sumV = 0;
-
-  for (const c of candles) {
-    if (c.timestamp) {
-      const cDate = new Date(c.timestamp).toISOString().split('T')[0];
-      if (cDate === todayStr) {
-        const typicalPrice = (c.high + c.low + c.close) / 3;
-        const volume = c.volume || 1;
-        sumPV += typicalPrice * volume;
-        sumV += volume;
-      }
-    }
-  }
-
-  const vwap = sumV === 0 ? lastCandle.close : sumPV / sumV;
+  const vwap = calculateVWAP(candles);
   if (!vwap || vwap === 0) return 0;
 
   return Number(((lastCandle.close - vwap) / vwap * 100).toFixed(2));

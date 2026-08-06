@@ -5,7 +5,7 @@
 //   calculateADXSeries() → full array (used by screener)
 // ============================================
 
-import type { Candle } from './atr';
+import type { Candle } from './types';
 
 /**
  * Returns the full ADX series aligned to the input candles array.
@@ -67,13 +67,4 @@ export function calculateADXSeries(candles: Candle[], period = 14): number[] {
   }
 
   return result;
-}
-
-/**
- * Returns the latest ADX scalar value.
- * Used by the dashboard and legacy cron references.
- */
-export function calculateADX(candles: Candle[], period = 14): number {
-  const series = calculateADXSeries(candles, period);
-  return series[series.length - 1] ?? 0;
 }

@@ -120,28 +120,6 @@ export const KV_KEYS = {
 
 // --- Upstox API Response Types ---
 
-export interface UpstoxCandle {
-  timestamp: string;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-  oi: number;
-}
-
-export interface UpstoxOptionChainEntry {
-  instrumentKey: string;
-  strikePrice: number;
-  expiryDate: string;
-  optionType: string;
-  ltp: number;
-  tradingSymbol: string;
-  lotSize: number;
-  openInterest: number;
-  theta: number;
-}
-
 export interface UpstoxFundsResponse {
   availableMargin: number;
   usedMargin: number;

@@ -3,11 +3,10 @@
 // Market data, options, funds, positions
 // ============================================
 
-import type { UpstoxCandle, UpstoxOptionChainEntry, UpstoxFundsResponse } from './types';
+import type { UpstoxFundsResponse } from './types';
 
 const BASE_URL = 'https://api.upstox.com';
 const HFT_URL = 'https://api-hft.upstox.com';
-const NIFTY_INDEX_KEY = 'NSE_INDEX|Nifty 50';
 
 // --- Helper ---
 
@@ -42,99 +41,6 @@ async function upstoxPost(path: string, token: string, body: any): Promise<any> 
     throw new Error(`Upstox POST ${path} failed (${res.status}): ${text}`);
   }
   return res.json();
-}
-
-// --- Historical Candles ---
-
-/**
- * Fetch 1-minute historical candles for NIFTY 50 Index.
- * Returns candles oldest-first for MACD calculation.
- */
-export async function fetchNiftyCandles(
-  token: string,
-  toDate: string // YYYY-MM-DD
-): Promise<UpstoxCandle[]> {
-  const encodedKey = encodeURIComponent(NIFTY_INDEX_KEY);
-  const path = `/v2/historical-candle/intraday/${encodedKey}/1minute`;
-  const data = await upstoxGet(path, token);
-
-  if (!data?.data?.candles) return [];
-
-  // Upstox returns [timestamp, O, H, L, C, V, OI] arrays, newest first
-  const raw: any[][] = data.data.candles;
-  const candles: UpstoxCandle[] = raw.reverse().map((c: any[]) => ({
-    timestamp: c[0],
-    open: c[1],
-    high: c[2],
-    low: c[3],
-    close: c[4],
-    volume: c[5],
-    oi: c[6] || 0,
-  }));
-
-  return candles;
-}
-
-// --- Option Chain ---
-
-/**https://api.upstox.com/v2/historical-candle/intraday/NSE_INDEX%7CNifty%2050/1minute
- * Fetch the option chain for NIFTY at a given expiry.
- * Returns entries filtered to relevant strikes.
- */
-export async function getOptionChain(
-  token: string,
-  expiryDate: string,
-  kv?: KVNamespace
-): Promise<UpstoxOptionChainEntry[]> {
-  const cacheKey = `option_chain_${expiryDate}`;
-  if (kv) {
-    const cached = await kv.get(cacheKey, 'json');
-    if (cached) return cached as UpstoxOptionChainEntry[];
-  }
-
-  const encodedKey = encodeURIComponent(NIFTY_INDEX_KEY);
-  const path = `/v2/option/chain?instrument_key=${encodedKey}&expiry_date=${expiryDate}`;
-  const data = await upstoxGet(path, token);
-
-  if (!data?.data) return [];
-
-  const entries: UpstoxOptionChainEntry[] = [];
-
-  for (const item of data.data) {
-    // Each item has call_options and put_options
-    if (item.call_options?.market_data) {
-      entries.push({
-        instrumentKey: item.call_options.instrument_key,
-        strikePrice: item.strike_price,
-        expiryDate: item.expiry,
-        optionType: 'CE',
-        ltp: item.call_options.market_data.ltp || 0,
-        tradingSymbol: item.call_options.trading_symbol || '',
-        lotSize: item.call_options.lot_size || 65,
-        openInterest: item.call_options.market_data.oi || 0,
-        theta: item.call_options.option_greeks?.theta || 0,
-      });
-    }
-    if (item.put_options?.market_data) {
-      entries.push({
-        instrumentKey: item.put_options.instrument_key,
-        strikePrice: item.strike_price,
-        expiryDate: item.expiry,
-        optionType: 'PE',
-        ltp: item.put_options.market_data.ltp || 0,
-        tradingSymbol: item.put_options.trading_symbol || '',
-        lotSize: item.put_options.lot_size || 65,
-        openInterest: item.put_options.market_data.oi || 0,
-        theta: item.put_options.option_greeks?.theta || 0,
-      });
-    }
-  }
-
-  if (kv && entries.length > 0) {
-    await kv.put(cacheKey, JSON.stringify(entries), { expirationTtl: 25200 });
-  }
-
-  return entries;
 }
 
 // --- Funds & Margin ---
@@ -283,68 +189,6 @@ export async function exchangeCodeForToken(
     accessToken: data.access_token,
     expiresIn: data.expires_in || 86400,
   };
-}
-
-// ============================================
-// Notifications
-// ============================================
-export async function notifyDiscord(webhookUrl: string | undefined, message: string): Promise<void> {
-  if (!webhookUrl) return; // Fail silently if not configured
-  
-  try {
-    await fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        username: "TheFinalOption Bot",
-        // Optional: Adds a flame icon to the bot's avatar
-        avatar_url: "https://raw.githubusercontent.com/tabler/icons/master/icons/flame.svg",
-        content: message
-      }),
-    });
-  } catch (error) {
-    console.error('Discord webhook failed:', error);
-  }
-}
-
-/**
- * Fetches historical 1-minute candles for a specific date range.
- * Dates must be in YYYY-MM-DD format.
- */
-export async function fetchHistoricalCandlesRange(accessToken: string, fromDate: string, toDate: string): Promise<any[]> {
-  const instrumentKey = encodeURIComponent('NSE_INDEX|Nifty 50');
-  // Upstox URL format: /v2/historical-candle/{instrumentKey}/{interval}/{to_date}/{from_date}
-  const url = `https://api.upstox.com/v2/historical-candle/${instrumentKey}/1minute/${toDate}/${fromDate}`;
-
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      'Accept': 'application/json',
-      'Authorization': `Bearer ${accessToken}`,
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    }
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Upstox API Error: ${response.status} - ${errorText}`);
-  }
-
-  const data: any = await response.json();
-  if (data.status !== 'success' || !data.data || !data.data.candles) {
-    return [];
-  }
-
-  // Upstox historical format is an array of arrays: [timestamp, open, high, low, close, volume, oi]
-  // We need to map it to our standard object and convert the timestamp to a standard ISO string.
-  return data.data.candles.map((c: any[]) => ({
-    timestamp: new Date(c[0]).toISOString(),
-    open: c[1],
-    high: c[2],
-    low: c[3],
-    close: c[4],
-    volume: c[5] || 0
-  })).reverse(); // Upstox returns newest first; reverse to chronological ASC
 }
 
 // ============================================

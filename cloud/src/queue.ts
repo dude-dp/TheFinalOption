@@ -6,7 +6,7 @@
 // No sleep() needed — queue delivery IS the throttle.
 // ============================================
 
-import type { Env, MTFQueueMessage, MTFSetupData } from './lib/types';
+import type { Env, MTFSetupData } from './lib/types';
 import { createClient } from '@supabase/supabase-js';
 import { logInfo, logError } from './lib/logger';
 import { detect30mSignals, check3HConviction, resolvePrimarySignal } from './lib/mtf-screener-logic';
